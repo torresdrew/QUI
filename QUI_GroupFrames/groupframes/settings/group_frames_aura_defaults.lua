@@ -3,14 +3,6 @@ local ADDON_NAME, ns = ...
 local AuraDefaults = ns.QUI_GroupFramesAuraDefaults or {}
 ns.QUI_GroupFramesAuraDefaults = AuraDefaults
 
--- The shipped default filter strips (debuffs + buffs) for the all-specs ("*")
--- bucket. Ported byte-for-byte from the old groupframes_aura_model.lua
--- The shipped default strip bucket DEFINITION lives in the always-loaded
--- model shim (groupframes_aura_model.lua) — the runtime seed path latches
--- elementsSeeded, so an Options-only definition would let an Options-disabled
--- install latch an EMPTY bucket and permanently lose the shipped strips.
--- This delegate keeps the settings-side name (editor capability wiring
--- passes AuraDefaults.DefaultStripBucket as defaultBucketFn).
 function AuraDefaults.DefaultStripBucket(frameType)
     return ns.QUI_GroupFramesAuraModel.DefaultStripBucket(frameType)
 end
@@ -32,8 +24,6 @@ local function GetCDMAuraEntries()
 end
 
 local function IsKnownCDMSuggestion(entry)
-    -- CDM exposes the full Blizzard catalog here; only known entries belong in
-    -- this class/spec suggestion strip.
     return entry and entry.isKnown == true
 end
 
@@ -94,12 +84,6 @@ local function DeduplicatePresets(presets)
     return deduped
 end
 
--- Suggestion presets for the tracked-auras editor and the setup wizard.
--- CDM catalog only since the healerHoTs-seed removal (2026-07-23, spec
--- docs/superpowers/specs/2026-07-23-healerhots-seed-removal-design.md):
--- the hand-curated SPEC_AURA_PRESETS table is gone — Blizzard's own
--- isKnown-filtered CDM catalog is the sole suggestion source, and users
--- build tracked elements themselves.
 function AuraDefaults.GetDefaultPresets(options)
     options = options or {}
     local cdmEntries = options.cdmAuraEntries

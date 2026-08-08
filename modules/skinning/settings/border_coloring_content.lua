@@ -1,9 +1,3 @@
---[[
-    QUI Options - Border Coloring Page
-    BuildBorderColoringTab: Global Border section + per-module rows from BorderRegistry.
-    Registered as feature "borderColoringPage" in the appearance category.
-]]
-
 local _, ns = ...
 local QUI = QUI
 local GUI = QUI.GUI
@@ -17,10 +11,6 @@ local Schema = Settings and Settings.Schema
 
 local BORDER_COLORING_SUBPAGE_INDEX = 11
 
----------------------------------------------------------------------------
--- V3 layout helpers (mirrored from skinning_content.lua)
----------------------------------------------------------------------------
--- Shared provider-panel layout scaffold (core/settings_layout_shared.lua).
 local function MakeLayout(content)
     return ns.QUI_SettingsLayoutShared.MakeLayout(content)
 end
@@ -38,9 +28,6 @@ local function RefreshBorderColoring()
     end
 end
 
----------------------------------------------------------------------------
--- BUILD FUNCTION
----------------------------------------------------------------------------
 local function BuildBorderColoringTab(tabContent)
     local db = Shared.GetDB()
 
@@ -59,7 +46,6 @@ local function BuildBorderColoringTab(tabContent)
     local general = db.general
     local profile = db
 
-    -- Ensure defaults for the global border keys
     if general.hideSkinBorders == nil then general.hideSkinBorders = false end
     if general.skinBorderColorSource == nil then
         general.skinBorderColorSource = general.skinBorderUseClassColor and "class" or "theme"
@@ -67,7 +53,6 @@ local function BuildBorderColoringTab(tabContent)
 
     local L = MakeLayout(tabContent)
 
-    -- Global Border section
     L.headerAt(ns.L["Global Border"])
     local sGB = L.sectionAt()
 
@@ -99,10 +84,8 @@ local function BuildBorderColoringTab(tabContent)
     )
     L.closeSection(sGB)
 
-    -- Per-module sections grouped by category
     local CATEGORY_ORDER = { "Skinning", "Unit Frames", "Resource Bars", "CDM", "Trackers", "HUD" }
 
-    -- Build category -> entries map
     local byCategory = {}
     Helpers.BorderRegistry.Each(function(e)
         local cat = e.category or "Other"
@@ -119,8 +102,6 @@ local function BuildBorderColoringTab(tabContent)
             local cells = {}
             for _, e in ipairs(entries) do
                 if e.multi then
-                    -- Multi-instance: bind the control to the first instance, but
-                    -- bulk-copy its chosen source/color to ALL instances on change.
                     local insts = e.instances and e.instances(profile) or {}
                     local rep = insts[1]
                     if rep then
@@ -169,7 +150,6 @@ local function BuildBorderColoringTab(tabContent)
                     end
                 end
             end
-            -- Emit rows in pairs
             local i = 1
             while i <= #cells do
                 local left  = cells[i]
@@ -189,9 +169,6 @@ local function BuildBorderColoringTab(tabContent)
     L.finish()
 end
 
----------------------------------------------------------------------------
--- Export
----------------------------------------------------------------------------
 ns.QUI_BorderColoringOptions = {
     BuildBorderColoringTab = BuildBorderColoringTab,
 }

@@ -65,9 +65,10 @@ local function loadLoader(ns)
     return ns.AddonLoader
 end
 
--- 1) Manifest shape: 13 entries, classes valid, folders unique;
---    legacyFlag present on exactly QUI_Chat, QUI_GroupFrames, QUI_Bags, absent on
---    folder entries; 5 coreModule entries (minimap/infobar/alts/datatexts/skinning).
+-- 1) Manifest shape: 14 entries, classes valid, folders unique;
+--    legacyFlag present on exactly QUI_Bags, QUI_Chat, QUI_GroupFrames,
+--    QUI_Nameplates, absent on other folder entries; 5 coreModule entries
+--    (minimap/infobar/alts/datatexts/skinning).
 do
     local ns = newEnv()
     loadLoader(ns)

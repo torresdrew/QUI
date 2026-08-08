@@ -1,22 +1,3 @@
----------------------------------------------------------------------------
--- Alts currencies tab. ONE selected character at a time (reputations-tab
--- pattern: same selector chrome, same row pool/wheel scroll); the list is
--- the union of currencyIDs seen across ALL characters so gaps show. Store
--- holds quantities only (rec.currencies = { [id] = qty }, scan_currencies);
--- name/icon/max resolve LIVE per session through
--- C_CurrencyInfo.GetCurrencyInfo (MayReturnNothing — unresolvable IDs fall
--- back to "Currency <id>" with no icon) and are session-cached.
--- Rows honor alts.currencyFilter ([id] = false hides, absent = visible);
--- the top-right Filter button opens the shared searchable checkbox popup
--- (filter_popup.lua: search box + Select all/Deselect all on matched rows)
--- editing that map in place (the options panel's "Currencies Tab" section
--- shares the key).
---
--- Pure helpers exported on Alts.CurrenciesView for headless tests:
---   FormatQuantity(qty, max) → value-cell string
---   BuildDisplayRows(characters, names, filter) → sorted { currencyID, label } list
--- Frame parts are NOT tested (no WoW frame API headless).
----------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 
 local Shared = ns.AltsViewShared
@@ -34,21 +15,15 @@ Alts.CurrenciesView = CurrenciesView
 
 local ROW_H, FOOTER_H = 22, 22
 local CELL_PAD = 6
-local NAME_W = 280   -- icon + currency name column width
+local NAME_W = 280
 local ICON_SIZE = 16
 
----------------------------------------------------------------------------
--- Pure helpers (tested headless).
----------------------------------------------------------------------------
-
---- 1234567 → "1,234,567" (FormatGold's separator idiom, no suffix).
 local function CommaNumber(n)
     local s = tostring(math.floor(n or 0))
     local formatted = s:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
     return formatted
 end
 
---- Value cell for a quantity (nil → "—"); max > 0 appends " / max".
 function CurrenciesView.FormatQuantity(qty, max)
     if not qty then return "—" end
     local text = CommaNumber(qty)
@@ -58,13 +33,6 @@ function CurrenciesView.FormatQuantity(qty, max)
     return text
 end
 
---- Union of currencyIDs across all characters' rec.currencies, sorted by
---- display name (names[id] or "Currency <id>"), ties by id. Returns ordered
---- array of { currencyID = id, label = name }.
---- characters: { [key] = rec } (only rec.currencies used)
---- names:      [currencyID] = name (or nil → fallback label)
---- filter:     optional visibility map; [id] == false hides that currency
----             (alts.currencyFilter shape — absent/true = visible)
 function CurrenciesView.BuildDisplayRows(characters, names, filter)
     names = names or {}
     local seen = {}
@@ -87,14 +55,6 @@ function CurrenciesView.BuildDisplayRows(characters, names, filter)
     return rows
 end
 
----------------------------------------------------------------------------
--- Frame parts (no headless test).
----------------------------------------------------------------------------
-
-
-
-
-
 local function Builder(parent)
     local Store = ns.Storage and ns.Storage.Store
     local Bus   = ns.Storage and ns.Storage.Bus
@@ -103,21 +63,19 @@ local function Builder(parent)
 
     local view        = { frame = frame }
     local offset      = 0
-    local scrollbar          -- vertical scroll bar (created below)
+    local scrollbar
     local rows        = {}
     local rowPool     = {}
     local selectedKey = nil
 
     local cachedChars = {}
-    -- Session cache of live lookups: [id] = { name, icon, max, account }.
-    -- false = lookup returned nothing (don't re-query every Refresh).
     local liveInfo = {}
 
     local function ResolveInfo(id)
         local cached = liveInfo[id]
         if cached ~= nil then return cached or nil end
         local info = C_CurrencyInfo and C_CurrencyInfo.GetCurrencyInfo
-            and C_CurrencyInfo.GetCurrencyInfo(id) -- MayReturnNothing
+            and C_CurrencyInfo.GetCurrencyInfo(id)
         if info and info.name then
             cached = {
                 name = info.name,
@@ -139,12 +97,10 @@ local function Builder(parent)
         return math.max(1, math.floor(usable / ROW_H))
     end
 
-    -- footer
     local footer = MakeFS(frame, 11)
     footer:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", CELL_PAD, 4)
     footer:SetTextColor(0.8, 0.8, 0.8)
 
-    ---- character selector (top-left; reputations-tab dropdown chrome) ------
     local selector = CreateFrame("Button", nil, frame)
     selector:SetHeight(22)
     selector:SetWidth(200)
@@ -207,9 +163,6 @@ local function Builder(parent)
         end)
     end)
 
-    ---- filter button (top-right; selector chrome) --------------------------
-    -- Edits alts.currencyFilter in place ([id] = false hides, absent shows);
-    -- the options panel's "Currencies Tab" section writes the same key.
     local filterBtn = CreateFrame("Button", nil, frame)
     filterBtn:SetHeight(22)
     filterBtn:SetWidth(70)
@@ -228,13 +181,10 @@ local function Builder(parent)
     filterLabel:SetText("Filter")
     filterLabel:SetTextColor(0.9, 0.9, 0.9)
 
-    ---- filter popup (shared searchable checkbox popup; filter_popup.lua) ---
     Alts.FilterPopup.Attach({
         tabFrame = frame,
         anchorButton = filterBtn,
         getRows = function()
-            -- UNFILTERED union so hidden entries stay listed (re-checkable);
-            -- false name-cache entries fall through to the fallback label
             local names = {}
             for _, rec in pairs(cachedChars) do
                 if type(rec.currencies) == "table" then
@@ -267,7 +217,6 @@ local function Builder(parent)
         onChanged = function() view.Refresh() end,
     })
 
-    ---- row pool ------------------------------------------------------------
     local function GetRow(i)
         local r = rowPool[i]
         if r then return r end
@@ -289,8 +238,6 @@ local function Builder(parent)
         r._name  = MakeFS(r, 11)
         r._name:SetPoint("LEFT", r, "LEFT", CELL_PAD + ICON_SIZE + 6, 0)
         r._value = MakeFS(r, 11)
-        -- Right-click hides the currency (alts.currencyFilter[id] = false);
-        -- re-show via the Filter button. Matches the popup's setChecked.
         r:RegisterForClicks("LeftButtonUp", "RightButtonUp")
         r:SetScript("OnClick", function(self, button)
             if button ~= "RightButton" then return end
@@ -307,14 +254,12 @@ local function Builder(parent)
         return r
     end
 
-    ---- render ---------------------------------------------------------------
     local function RenderRows()
         local visible = VisibleRows()
         local maxOff  = math.max(0, #rows - visible)
         if offset > maxOff then offset = maxOff end
         if offset < 0 then offset = 0 end
 
-        -- selector is 22px tall at top; rows start 28px below TOPLEFT
         local topY = -28
         local selRec = selectedKey and cachedChars[selectedKey]
 
@@ -388,9 +333,7 @@ local function Builder(parent)
             selectedKey = ChooseDefaultKey(cachedChars)
         end
 
-        -- Resolve names first so BuildDisplayRows sorts by display name.
         local names = {}
-        -- unfiltered count just for the footer's hidden tally (one row per unique currency ID)
         local total = 0
         do
             local seen = {}
@@ -418,8 +361,6 @@ local function Builder(parent)
         end
     end
 
-    -- vertical scroll bar: rows start 28px below the top (selector chrome) and
-    -- stop above the footer count line.
     scrollbar = Shared.CreateScrollBar(frame, {
         orientation = "vertical",
         onScroll = function(n) offset = n; RenderRows() end,
@@ -427,7 +368,6 @@ local function Builder(parent)
     scrollbar.track:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -2, -28)
     scrollbar.track:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -2, FOOTER_H)
 
-    -- mouse-wheel scroll
     frame:EnableMouseWheel(true)
     frame:SetScript("OnMouseWheel", function(_, delta)
         local maxOff = math.max(0, #rows - VisibleRows())
@@ -437,7 +377,6 @@ local function Builder(parent)
         RenderRows()
     end)
 
-    -- Bus subscriptions: refresh only when visible
     if Bus and Bus.Subscribe then
         local function OnBus()
             if frame:IsVisible() then view.Refresh() end

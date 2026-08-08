@@ -1,30 +1,20 @@
 local addonName, ns = ...
 
--- Master skinning gate (skinning.enabled): disabled + /reload installs no QUI
--- skin hooks for this file. Default ON; reload-required. See core/uikit.lua.
 if ns.IsSkinningEnabled and not ns.IsSkinningEnabled() then return end
 
 local GetCore = ns.Helpers.GetCore
 local Helpers = ns.Helpers
 local SkinBase = ns.SkinBase
 
----------------------------------------------------------------------------
--- INSTANCE FRAMES SKINNING (PVE, Dungeons & Raids, PVP, M+ Dungeons)
----------------------------------------------------------------------------
-
--- Hide all Blizzard decorations on PVEFrame (following character.lua/inspect.lua patterns)
 local function HidePVEDecorations()
     local PVEFrame = _G.PVEFrame
     if not PVEFrame then return end
 
-    -- Main frame shadows (contains vertical divider line)
     if PVEFrame.shadows then
         PVEFrame.shadows:Hide()
-        -- Also strip all textures inside shadows frame
         SkinBase.StripTextures(PVEFrame.shadows)
     end
 
-    -- Blue menu backgrounds and decorations (from PVEFrame.xml)
     if _G.PVEFrameBlueBg then _G.PVEFrameBlueBg:Hide() end
     if _G.PVEFrameTLCorner then _G.PVEFrameTLCorner:Hide() end
     if _G.PVEFrameTRCorner then _G.PVEFrameTRCorner:Hide() end
@@ -39,13 +29,11 @@ local function HidePVEDecorations()
 
     SkinBase.HidePortraitFrameChrome(PVEFrame)
 
-    -- PVE-specific full-inset hide and legacy globals not on the template.
     if _G.PVEFrameLeftInset then _G.PVEFrameLeftInset:Hide() end
     if PVEFrame.Inset then PVEFrame.Inset:Hide() end
     if _G.PVEFramePortrait then _G.PVEFramePortrait:Hide() end
     if _G.PVEFrameTitleBg then _G.PVEFrameTitleBg:Hide() end
 
-    -- PortraitFrame border textures
     if _G.PVEFrameTopBorder then _G.PVEFrameTopBorder:Hide() end
     if _G.PVEFrameTopRightCorner then _G.PVEFrameTopRightCorner:Hide() end
     if _G.PVEFrameRightBorder then _G.PVEFrameRightBorder:Hide() end
@@ -57,32 +45,21 @@ local function HidePVEDecorations()
     if _G.PVEFrameBtnCornerRight then _G.PVEFrameBtnCornerRight:Hide() end
     if _G.PVEFrameButtonBottomBorder then _G.PVEFrameButtonBottomBorder:Hide() end
 
-    -- Additional backgrounds
     if _G.PVEFrameBg then _G.PVEFrameBg:Hide() end
     if _G.PVEFrameBackground then _G.PVEFrameBackground:Hide() end
     if _G.PVEFrameInset then _G.PVEFrameInset:Hide() end
     if _G.PVEFrameNineSlice then _G.PVEFrameNineSlice:Hide() end
 
-    -- Strip all remaining textures from main frame
     SkinBase.StripTextures(PVEFrame)
 end
 
--- Boosted button background colors (slightly lighter than the panel background)
 local function ButtonBoostColors(bgr, bgg, bgb)
     return math.min(bgr + SkinBase.CHROME.BUTTON_BOOST, 1),
            math.min(bgg + SkinBase.CHROME.BUTTON_BOOST, 1),
            math.min(bgb + SkinBase.CHROME.BUTTON_BOOST, 1)
 end
 
--- Install the standard skinColor-based hover brighten/restore border hooks.
--- Reads the stored "backdrop"/"skinColor" frame data set by the styler.
 local function AddSkinColorHoverBorder(button)
-    -- The backdrop is data-seeded (StyleGroupFinderButton -> ApplyFullBackdrop),
-    -- so a bare SetBackdropBorderColor is discarded when RefreshPixelBackdrop
-    -- rebuilds on the next scale refresh (border snaps back mid-hover). Route
-    -- the recolor through SkinBase.SetBackdropColors (persists data.* + re-renders,
-    -- border-only via nil bg) and brighten via the shared HoverBrightenColor —
-    -- matching keystone.lua StyleButton and this file's UpdateGroupFinderButtonColors.
     button:HookScript("OnEnter", function(self)
         local bd = SkinBase.GetFrameData(self, "backdrop")
         local sc = SkinBase.GetFrameData(self, "skinColor")
@@ -99,17 +76,14 @@ local function AddSkinColorHoverBorder(button)
     end)
 end
 
--- Style GroupFinder buttons (LFD, Raid Finder, Premade Groups on the left)
 local function StyleGroupFinderButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     if not button or SkinBase.IsStyled(button) then return end
 
-    -- Hide default textures - check both lowercase (11.x) and uppercase (12.x PTR) keys
     if button.ring then button.ring:Hide() end
     if button.Ring then button.Ring:Hide() end
     if button.bg then button.bg:SetAlpha(0) end
     if button.Background then button.Background:Hide() end
 
-    -- Create backdrop for button
     local backdrop = SkinBase.GetFrameData(button, "backdrop")
     if not backdrop then
         backdrop = CreateFrame("Frame", nil, button, "BackdropTemplate")
@@ -122,14 +96,12 @@ local function StyleGroupFinderButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga
     local btnBgR, btnBgG, btnBgB = ButtonBoostColors(bgr, bgg, bgb)
     SkinBase.ApplyFullBackdrop(backdrop, sr, sg, sb, sa, btnBgR, btnBgG, btnBgB, 1)
 
-    -- Style the icon
     if button.icon then
         button.icon:SetSize(40, 40)
         button.icon:ClearAllPoints()
         button.icon:SetPoint("LEFT", 8, 0)
         button.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
-        -- Add icon border
         local iconBackdrop = SkinBase.GetFrameData(button.icon, "backdrop")
         if not iconBackdrop then
             iconBackdrop = CreateFrame("Frame", nil, button, "BackdropTemplate")
@@ -142,7 +114,6 @@ local function StyleGroupFinderButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga
         end
     end
 
-    -- Store colors for hover
     SkinBase.SetFrameData(button, "skinColor", { sr, sg, sb, sa })
 
     if button.name then
@@ -154,24 +125,18 @@ local function StyleGroupFinderButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga
     SkinBase.MarkStyled(button)
 end
 
--- Skin PVEFrame (main container)
 local function SkinPVEFrame()
     local PVEFrame = _G.PVEFrame
     if not PVEFrame or SkinBase.IsSkinned(PVEFrame) then return end
 
     local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
 
-    -- Hide all Blizzard decorations
     HidePVEDecorations()
 
-    -- Create main backdrop
     SkinBase.CreateBackdrop(PVEFrame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
 
-    -- Style close button
     SkinBase.SkinCloseButton(PVEFrame.CloseButton or _G.PVEFrameCloseButton)
 
-    -- Style tabs (SkinTabGroup adds selected-state highlighting, matching the
-    -- other skinned frames — the active PVE tab is now indicated).
     local pveTabs = {}
     for i = 1, 4 do
         local tab = _G["PVEFrameTab" .. i]
@@ -179,9 +144,6 @@ local function SkinPVEFrame()
     end
     SkinBase.SkinTabGroup(pveTabs, PVEFrame)
 
-    -- Reposition tabs: left justify and tighten spacing
-    -- Blizzard default: Tab1 at x=19, Tab2-3 at -16px overlap, Tab4 at +3px gap
-    -- QUI: Tab1 at x=-3, tabs at -5px spacing
     local pveTab1, pveTab2, pveTab3 = _G.PVEFrameTab1, _G.PVEFrameTab2, _G.PVEFrameTab3
     if pveTab1 then
         pveTab1:ClearAllPoints()
@@ -196,9 +158,6 @@ local function SkinPVEFrame()
         pveTab3:SetPoint("TOPLEFT", pveTab2 or pveTab1 or PVEFrame, "TOPRIGHT", -5, 0)
     end
 
-    -- Hook to reposition Tab4 (Delves) - Blizzard repositions it dynamically
-    -- Note: Tab4 may not exist in all WoW versions (e.g., 12.x beta)
-    -- TAINT SAFETY: Defer to break taint chain from secure context.
     hooksecurefunc("PVEFrame_ShowFrame", function()
         C_Timer.After(0, function()
             local tab4 = _G.PVEFrameTab4
@@ -212,7 +171,6 @@ local function SkinPVEFrame()
         end)
     end)
 
-    -- Style GroupFinder buttons
     local GroupFinderFrame = _G.GroupFinderFrame
     if GroupFinderFrame then
         for i = 1, 4 do
@@ -226,12 +184,10 @@ local function SkinPVEFrame()
     SkinBase.MarkSkinned(PVEFrame)
 end
 
--- Hide LFD decorations
 local function HideLFDDecorations()
     local LFDQueueFrame = _G.LFDQueueFrame
     if not LFDQueueFrame then return end
 
-    -- LFDParentFrame (the container for LFD content)
     if _G.LFDParentFrame then
         SkinBase.StripTextures(_G.LFDParentFrame)
     end
@@ -240,32 +196,24 @@ local function HideLFDDecorations()
         _G.LFDParentFrameInset:Hide()
     end
 
-    -- Background and inset
     if LFDQueueFrame.Bg then LFDQueueFrame.Bg:Hide() end
     if LFDQueueFrame.Background then LFDQueueFrame.Background:Hide() end
     if LFDQueueFrame.NineSlice then LFDQueueFrame.NineSlice:Hide() end
 
-    -- Global decorations
     if _G.LFDQueueFrameBackground then _G.LFDQueueFrameBackground:Hide() end
     if _G.LFDQueueFrameRandomScrollFrameScrollBarBorder then
         _G.LFDQueueFrameRandomScrollFrameScrollBarBorder:Hide()
     end
 
-    -- (Removed dead LFDQueueFrame.Dropdown.Left/Right/Middle:SetAlpha(0) — that
-    -- legacy 3-slice dropdown art no longer exists in 12.x; the live TypeDropdown
-    -- is already skinned canonically elsewhere.)
-
     SkinBase.StripTextures(LFDQueueFrame)
 end
 
--- Hide Raid Finder decorations
 local function HideRaidFinderDecorations()
     local RaidFinderFrame = _G.RaidFinderFrame
     if not RaidFinderFrame then return end
 
     SkinBase.StripTextures(RaidFinderFrame)
 
-    -- Role background (gradient texture behind role buttons)
     if _G.RaidFinderFrameRoleBackground then
         _G.RaidFinderFrameRoleBackground:Hide()
     end
@@ -273,71 +221,56 @@ local function HideRaidFinderDecorations()
         RaidFinderFrame.RoleBackground:Hide()
     end
 
-    -- Role inset (top inset around role buttons) - hide the entire frame
     local roleInset = _G.RaidFinderFrameRoleInset or (RaidFinderFrame.Inset)
     if roleInset then
         SkinBase.StripTextures(roleInset)
         roleInset:Hide()
     end
 
-    -- Bottom inset (around raid selection area) - hide the entire frame
     local bottomInset = _G.RaidFinderFrameBottomInset
     if bottomInset then
         SkinBase.StripTextures(bottomInset)
         bottomInset:Hide()
     end
 
-    -- Queue frame
     local RaidFinderQueueFrame = _G.RaidFinderQueueFrame
     if RaidFinderQueueFrame then
         SkinBase.StripTextures(RaidFinderQueueFrame)
         if RaidFinderQueueFrame.Bg then RaidFinderQueueFrame.Bg:Hide() end
         if RaidFinderQueueFrame.Background then RaidFinderQueueFrame.Background:Hide() end
 
-        -- Hide scroll frame background if present
         local scrollFrame = _G.RaidFinderQueueFrameScrollFrame
         if scrollFrame then
             SkinBase.StripTextures(scrollFrame)
         end
     end
 
-    -- Background (quest paper texture)
     if _G.RaidFinderQueueFrameBackground then _G.RaidFinderQueueFrameBackground:Hide() end
 
-    -- Also try common child patterns
     for _, name in ipairs({"NineSlice", "Bg", "Border", "Background", "InsetBorderTop", "InsetBorderBottom", "InsetBorderLeft", "InsetBorderRight"}) do
         local child = RaidFinderFrame[name]
         if child and child.Hide then child:Hide() end
     end
 end
 
--- Skin LFDQueueFrame (Dungeon Finder)
 local function SkinLFDFrame()
     local LFDQueueFrame = _G.LFDQueueFrame
     if not LFDQueueFrame or SkinBase.IsSkinned(LFDQueueFrame) then return end
 
-    -- Hide Blizzard decorations
     HideLFDDecorations()
 
-    -- Style role buttons - hide decorative elements
     local roles = { "Tank", "Healer", "DPS" }
     for _, role in ipairs(roles) do
         local button = _G["LFDQueueFrameRoleButton" .. role]
         if button then
-            -- Hide the background texture (causes doubled icon appearance)
             if button.background then button.background:SetAlpha(0) end
             if button.Background then button.Background:SetAlpha(0) end
-            -- Also check for global name pattern
             local bgTex = _G["LFDQueueFrameRoleButton" .. role .. "Background"]
             if bgTex then bgTex:SetAlpha(0) end
 
             if button.shortageBorder then button.shortageBorder:SetAlpha(0) end
             if button.cover then button.cover:SetAlpha(0) end
             if button.checkButton then
-                -- Canonical QUI checkbox (was a bare NormalTexture/PushedTexture
-                -- clear that left no QUI box, a flashing hover glow, and an
-                -- un-tinted checkmark). SkinCheckBox hides the box art, draws the
-                -- QUI backdrop, and accent-tints the check.
                 SkinBase.SkinCheckBox(button.checkButton)
             end
             local incentiveIcon = _G["LFDQueueFrameRoleButton" .. role .. "IncentiveIcon"]
@@ -345,12 +278,10 @@ local function SkinLFDFrame()
         end
     end
 
-    -- Style find group button
     if _G.LFDQueueFrameFindGroupButton then
         SkinBase.SkinButton(_G.LFDQueueFrameFindGroupButton, { font = true })
     end
 
-    -- Style type dropdown
     local typeDropdown = LFDQueueFrame.TypeDropdown or _G.LFDQueueFrameTypeDropdown
     if typeDropdown then
         typeDropdown:SetWidth(200)
@@ -358,15 +289,10 @@ local function SkinLFDFrame()
         SkinBase.LockDropdownText(typeDropdown)
     end
 
-    -- Specific-dungeon selection list: pooled ScrollBox rows get their font
-    -- OBJECT swapped on hover/selection/re-bind, reverting the one-shot
-    -- SkinFrameText below. Re-lock the QUI font as each row is acquired.
     local specificList = LFDQueueFrame.Specific
     if specificList and specificList.ScrollBox then
         SkinBase.HookScrollBoxRowFonts(specificList.ScrollBox, 2)
     end
-    -- Follower (story-mode) dungeon list is a SEPARATE ScrollBox with the same
-    -- row font-object revert (LFDFrame.lua:48 / LFDQueueFrameFollowerList_InitButton).
     local followerList = LFDQueueFrame.Follower
     if followerList and followerList.ScrollBox then
         SkinBase.HookScrollBoxRowFonts(followerList.ScrollBox, 2)
@@ -375,20 +301,16 @@ local function SkinLFDFrame()
     SkinBase.MarkSkinned(LFDQueueFrame)
 end
 
--- Skin RaidFinderQueueFrame (Raid Finder)
 local function SkinRaidFinderFrame()
     local RaidFinderQueueFrame = _G.RaidFinderQueueFrame
     if not RaidFinderQueueFrame or SkinBase.IsSkinned(RaidFinderQueueFrame) then return end
 
-    -- Hide Blizzard decorations
     HideRaidFinderDecorations()
 
-    -- Style role buttons - hide decorative elements (same as LFD)
     local roles = { "Tank", "Healer", "DPS" }
     for _, role in ipairs(roles) do
         local button = _G["RaidFinderQueueFrameRoleButton" .. role]
         if button then
-            -- Hide the background texture (causes doubled icon appearance)
             if button.background then button.background:SetAlpha(0) end
             if button.Background then button.Background:SetAlpha(0) end
             local bgTex = _G["RaidFinderQueueFrameRoleButton" .. role .. "Background"]
@@ -397,7 +319,6 @@ local function SkinRaidFinderFrame()
             if button.shortageBorder then button.shortageBorder:SetAlpha(0) end
             if button.cover then button.cover:SetAlpha(0) end
             if button.checkButton then
-                -- Canonical QUI checkbox (matches the LFD role buttons above).
                 SkinBase.SkinCheckBox(button.checkButton)
             end
             local incentiveIcon = _G["RaidFinderQueueFrameRoleButton" .. role .. "IncentiveIcon"]
@@ -405,12 +326,10 @@ local function SkinRaidFinderFrame()
         end
     end
 
-    -- Style find raid button
     if _G.RaidFinderFrameFindRaidButton then
         SkinBase.SkinButton(_G.RaidFinderFrameFindRaidButton, { font = true })
     end
 
-    -- Style selection dropdown
     local selectionDropdown = RaidFinderQueueFrame.SelectionDropdown
     if selectionDropdown then
         selectionDropdown:SetWidth(200)
@@ -421,17 +340,14 @@ local function SkinRaidFinderFrame()
     SkinBase.MarkSkinned(RaidFinderQueueFrame)
 end
 
--- Hide LFGList decorations
 local function HideLFGListDecorations()
     local LFGListFrame = _G.LFGListFrame
     if not LFGListFrame then return end
 
-    -- Main frame decorations
     if LFGListFrame.Bg then LFGListFrame.Bg:Hide() end
     if LFGListFrame.Background then LFGListFrame.Background:Hide() end
     if LFGListFrame.NineSlice then LFGListFrame.NineSlice:Hide() end
 
-    -- Category selection decorations
     if LFGListFrame.CategorySelection then
         local cs = LFGListFrame.CategorySelection
         if cs.Inset then
@@ -441,7 +357,6 @@ local function HideLFGListDecorations()
         SkinBase.StripTextures(cs)
     end
 
-    -- Search panel decorations
     if LFGListFrame.SearchPanel then
         local sp = LFGListFrame.SearchPanel
         if sp.ResultsInset then
@@ -454,7 +369,6 @@ local function HideLFGListDecorations()
         SkinBase.StripTextures(sp)
     end
 
-    -- Application viewer decorations
     if LFGListFrame.ApplicationViewer then
         local av = LFGListFrame.ApplicationViewer
         if av.Inset then
@@ -465,7 +379,6 @@ local function HideLFGListDecorations()
         SkinBase.StripTextures(av)
     end
 
-    -- Entry creation decorations
     if LFGListFrame.EntryCreation then
         local ec = LFGListFrame.EntryCreation
         if ec.Inset then
@@ -478,7 +391,6 @@ local function HideLFGListDecorations()
     SkinBase.StripTextures(LFGListFrame)
 end
 
--- Skin LFGListFrame (Premade Groups)
 local function SkinLFGListFrame()
     local LFGListFrame = _G.LFGListFrame
     if not LFGListFrame or SkinBase.IsSkinned(LFGListFrame) then return end
@@ -486,10 +398,8 @@ local function SkinLFGListFrame()
     local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
     local actionTextColor = { 1.0, 0.82, 0.0, 1 }
 
-    -- Hide Blizzard decorations
     HideLFGListDecorations()
 
-    -- Style category selection
     if LFGListFrame.CategorySelection then
         local cs = LFGListFrame.CategorySelection
         local function StyleCategoryNavButtons()
@@ -503,9 +413,6 @@ local function SkinLFGListFrame()
             end
         end
         StyleCategoryNavButtons()
-        -- Style category buttons. Re-style on every UpdateCategoryButtons: the set
-        -- can grow mid-session (LFGListCategorySelection_AddButton lazily creates new
-        -- buttons), so a one-shot loop misses later additions.
         local function StyleCategoryButtons()
             if not cs.CategoryButtons then return end
             for _, catButton in pairs(cs.CategoryButtons) do
@@ -536,7 +443,6 @@ local function SkinLFGListFrame()
         end
     end
 
-    -- Style search panel
     if LFGListFrame.SearchPanel then
         local sp = LFGListFrame.SearchPanel
         if sp.BackButton then
@@ -548,27 +454,15 @@ local function SkinLFGListFrame()
         if sp.RefreshButton then
             SkinBase.SkinButton(sp.RefreshButton, { font = true })
         end
-        -- Canonical editbox (was raw StripTextures + CreateBackdrop with no font
-        -- lock); SkinEditBox adds the QUI backdrop + locks the font + tags it
-        -- "editbox" so RefreshWidget recolors it on theme change.
         if sp.SearchBox then
             SkinBase.SkinEditBox(sp.SearchBox)
         end
-        -- Style filter button
         if sp.FilterButton then
             SkinBase.SkinButton(sp.FilterButton, { font = true })
         end
-        -- Search-result rows are pooled ScrollBox buttons whose font OBJECT is
-        -- swapped on hover/selection/re-bind, reverting the one-shot
-        -- SkinFrameText. Re-lock the QUI font as each row is acquired.
         if sp.ScrollBox then
             SkinBase.HookScrollBoxRowFonts(sp.ScrollBox, 2)
         end
-        -- Autocomplete result buttons (lazily created in UpdateAutoComplete) carry
-        -- NormalFont/HighlightFont = stock GameFontHighlightSmall, so the engine
-        -- swaps to the stock highlight font OBJECT on hover — a Lock* SetFontObject
-        -- hook never sees that internal swap. Drive the buttons' font objects after
-        -- every autocomplete rebuild (covers newly created buttons too).
         if sp.AutoCompleteFrame and type(_G.LFGListSearchPanel_UpdateAutoComplete) == "function"
             and not SkinBase.GetFrameData(sp, "qAutoCompleteFontHooked") then
             hooksecurefunc("LFGListSearchPanel_UpdateAutoComplete", function(panel)
@@ -582,11 +476,8 @@ local function SkinLFGListFrame()
         end
     end
 
-    -- Style application viewer
     if LFGListFrame.ApplicationViewer then
         local av = LFGListFrame.ApplicationViewer
-        -- Applicant rows are pooled (LFGListApplicantTemplate) and cold-acquired after
-        -- the one-shot frame skin, so freshly painted rows keep the stock font.
         if av.ScrollBox then
             SkinBase.HookScrollBoxRowFonts(av.ScrollBox, 3)
         end
@@ -606,7 +497,6 @@ local function SkinLFGListFrame()
         end
     end
 
-    -- Style entry creation
     if LFGListFrame.EntryCreation then
         local ec = LFGListFrame.EntryCreation
         if ec.ListGroupButton then
@@ -620,17 +510,14 @@ local function SkinLFGListFrame()
     SkinBase.MarkSkinned(LFGListFrame)
 end
 
--- Hide Challenges decorations
 local function HideChallengesDecorations()
     local ChallengesFrame = _G.ChallengesFrame
     if not ChallengesFrame then return end
 
-    -- Main background and decorations
     if ChallengesFrame.Background then ChallengesFrame.Background:Hide() end
     if ChallengesFrame.Bg then ChallengesFrame.Bg:Hide() end
     if ChallengesFrame.NineSlice then ChallengesFrame.NineSlice:Hide() end
 
-    -- Seasonal affix frame
     if ChallengesFrame.SeasonChangeNoticeFrame then
         SkinBase.StripTextures(ChallengesFrame.SeasonChangeNoticeFrame)
     end
@@ -638,15 +525,12 @@ local function HideChallengesDecorations()
     SkinBase.StripTextures(ChallengesFrame)
 end
 
--- Style dungeon icon frame for M+
 local function StyleDungeonIcon(icon, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     if not icon or SkinBase.IsStyled(icon) then return end
 
-    -- Hide default backgrounds
     if icon.Bg then icon.Bg:SetAlpha(0) end
     if icon.Background then icon.Background:SetAlpha(0) end
 
-    -- Style the icon texture
     if icon.Icon then
         icon.Icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
@@ -662,20 +546,16 @@ local function StyleDungeonIcon(icon, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         end
     end
 
-    -- Store colors
     SkinBase.SetFrameData(icon, "skinColor", { sr, sg, sb, sa })
 
     SkinBase.MarkStyled(icon)
 end
 
--- Style affix icon for M+
 local function StyleAffixIcon(affix, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     if not affix or SkinBase.IsStyled(affix) then return end
 
-    -- Hide border texture
     if affix.Border then affix.Border:SetAlpha(0) end
 
-    -- Style portrait/icon
     if affix.Portrait then
         affix.Portrait:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
@@ -694,17 +574,14 @@ local function StyleAffixIcon(affix, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     SkinBase.MarkStyled(affix)
 end
 
--- Skin ChallengesFrame (M+ Dungeons tab)
 local function SkinChallengesFrame()
     local ChallengesFrame = _G.ChallengesFrame
     if not ChallengesFrame or SkinBase.IsSkinned(ChallengesFrame) then return end
 
     local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
 
-    -- Hide Blizzard decorations
     HideChallengesDecorations()
 
-    -- Style the weekly best frame
     if ChallengesFrame.WeeklyInfo then
         local wi = ChallengesFrame.WeeklyInfo
         if wi.Child then
@@ -712,28 +589,20 @@ local function SkinChallengesFrame()
                 local chest = wi.Child.WeeklyChest
                 if chest.Highlight then chest.Highlight:SetAlpha(0) end
             end
-            -- Style the weekly-info label. The WeeklyInfo.Child label is parentKey
-            -- "ThisWeekLabel" (Blizzard_ChallengesUI/Mainline:791); there is no .Label
-            -- field, so the prior wi.Child.Label block was a dead no-op.
             if wi.Child.ThisWeekLabel then
-                -- Canonical face (size>0 guard + CJK fallback); lock so the M+ UI's
-                -- per-SetUp font-object re-assert doesn't revert it.
                 SkinBase.SkinFontString(wi.Child.ThisWeekLabel, { size = 14, outline = "OUTLINE", fontOnly = true })
                 SkinBase.LockFontObject(wi.Child.ThisWeekLabel)
             end
         end
     end
 
-    -- Style dungeon icons (dynamically created)
     if ChallengesFrame.DungeonIcons then
         for _, icon in pairs(ChallengesFrame.DungeonIcons) do
             StyleDungeonIcon(icon, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         end
     end
 
-    -- Hook to style new dungeon icons when they're created/updated
     if ChallengesFrame.Update and not SkinBase.GetFrameData(ChallengesFrame, "updateHooked") then
-        -- TAINT SAFETY: Defer to break taint chain from secure Update context.
         hooksecurefunc(ChallengesFrame, "Update", function(self)
             C_Timer.After(0, function()
                 if self.DungeonIcons then
@@ -747,7 +616,6 @@ local function SkinChallengesFrame()
         SkinBase.SetFrameData(ChallengesFrame, "updateHooked", true)
     end
 
-    -- Style affix frames (check for container first)
     if ChallengesFrame.WeeklyInfo and ChallengesFrame.WeeklyInfo.Child then
         local affixContainer = ChallengesFrame.WeeklyInfo.Child.AffixesContainer
         if affixContainer and affixContainer.Affixes then
@@ -757,7 +625,6 @@ local function SkinChallengesFrame()
         end
     end
 
-    -- Also check direct affix references (older pattern)
     for i = 1, 4 do
         local affix = ChallengesFrame["Affix" .. i]
         if affix then
@@ -768,22 +635,18 @@ local function SkinChallengesFrame()
     SkinBase.MarkSkinned(ChallengesFrame)
 end
 
--- Hide PVP decorations
 local function HidePVPDecorations()
     local PVPQueueFrame = _G.PVPQueueFrame
     if not PVPQueueFrame then return end
 
-    -- Main frame decorations
     if PVPQueueFrame.Bg then PVPQueueFrame.Bg:Hide() end
     if PVPQueueFrame.Background then PVPQueueFrame.Background:Hide() end
     if PVPQueueFrame.NineSlice then PVPQueueFrame.NineSlice:Hide() end
 
-    -- HonorInset decorations
     if PVPQueueFrame.HonorInset then
         if PVPQueueFrame.HonorInset.NineSlice then PVPQueueFrame.HonorInset.NineSlice:Hide() end
     end
 
-    -- Honor frame decorations
     if _G.HonorFrame then
         local hf = _G.HonorFrame
         if hf.Bg then hf.Bg:Hide() end
@@ -793,7 +656,6 @@ local function HidePVPDecorations()
             hf.Inset:Hide()
             if hf.Inset.NineSlice then hf.Inset.NineSlice:Hide() end
         end
-        -- BonusFrame decorations
         if hf.BonusFrame then
             if hf.BonusFrame.ShadowOverlay then hf.BonusFrame.ShadowOverlay:Hide() end
             if hf.BonusFrame.WorldBattlesTexture then hf.BonusFrame.WorldBattlesTexture:Hide() end
@@ -802,7 +664,6 @@ local function HidePVPDecorations()
         SkinBase.StripTextures(hf)
     end
 
-    -- Conquest frame decorations
     if _G.ConquestFrame then
         local cf = _G.ConquestFrame
         if cf.Bg then cf.Bg:Hide() end
@@ -819,26 +680,17 @@ local function HidePVPDecorations()
     SkinBase.StripTextures(PVPQueueFrame)
 end
 
--- Style PVP bonus/activity button (right side activity buttons)
 local function StylePVPActivityButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     if not button or SkinBase.IsStyled(button) then return end
 
-    -- Hide default textures. 12.x activity templates (PVPCasualActivityButton /
-    -- PVPRatedActivityButtonTemplate) draw the button art via NormalTexture /
-    -- PushedTexture / HighlightTexture atlases — there are NO .Bg/.Border/.Ring
-    -- keys. Clear the texture CONTENT (not just alpha): HonorFrameBonusFrame_-
-    -- SetButtonState re-asserts NormalTexture:SetAlpha(1/0.5) on every queue
-    -- refresh, so SetAlpha(0) would be reverted; SetTexture(nil) sticks.
     if button.NormalTexture then button.NormalTexture:SetTexture(nil) end
     local pushed = button.GetPushedTexture and button:GetPushedTexture()
     if pushed then pushed:SetTexture(nil) end
     if button.HighlightTexture then button.HighlightTexture:SetTexture(nil) end
-    -- Legacy keys (older clients / other templates)
     if button.Bg then button.Bg:Hide() end
     if button.Border then button.Border:Hide() end
     if button.Ring then button.Ring:Hide() end
 
-    -- Create backdrop
     local backdrop = SkinBase.GetFrameData(button, "backdrop")
     if not backdrop then
         backdrop = CreateFrame("Frame", nil, button, "BackdropTemplate")
@@ -854,13 +706,11 @@ local function StylePVPActivityButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga
     Helpers.SetFrameBackdropColor(backdrop, btnBgR, btnBgG, btnBgB, 1)
     Helpers.SetFrameBackdropBorderColor(backdrop, sr, sg, sb, sa)
 
-    -- Style selected texture
     if button.SelectedTexture then
         button.SelectedTexture:SetColorTexture(sr, sg, sb, 0.2)
         SkinBase.DisablePixelSnap(button.SelectedTexture)
     end
 
-    -- Style reward icon if present
     if button.Reward then
         local reward = button.Reward
         if reward.Border then reward.Border:Hide() end
@@ -880,7 +730,6 @@ local function StylePVPActivityButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga
         end
     end
 
-    -- Store colors for hover
     SkinBase.SetFrameData(button, "skinColor", { sr, sg, sb, sa })
 
     AddSkinColorHoverBorder(button)
@@ -888,11 +737,9 @@ local function StylePVPActivityButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga
     SkinBase.MarkStyled(button)
 end
 
--- Style PVP role icon button
 local function StylePVPRoleIcon(roleIcon, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     if not roleIcon or SkinBase.IsStyled(roleIcon) then return end
 
-    -- Hide decorations
     if roleIcon.background then roleIcon.background:SetAlpha(0) end
     if roleIcon.Background then roleIcon.Background:SetAlpha(0) end
     if roleIcon.shortageBorder then roleIcon.shortageBorder:SetAlpha(0) end
@@ -901,16 +748,13 @@ local function StylePVPRoleIcon(roleIcon, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     SkinBase.MarkStyled(roleIcon)
 end
 
--- Style specific battleground list button (PVPSpecificBattlegroundButtonTemplate)
 local function StyleSpecificBGButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     if not button or SkinBase.IsStyled(button) then return end
 
-    -- Hide default textures
     if button.Bg then button.Bg:Hide() end
     if button.Border then button.Border:Hide() end
     if button.HighlightTexture then button.HighlightTexture:SetAlpha(0) end
 
-    -- Create backdrop
     local backdrop = SkinBase.GetFrameData(button, "backdrop")
     if not backdrop then
         backdrop = CreateFrame("Frame", nil, button, "BackdropTemplate")
@@ -926,14 +770,12 @@ local function StyleSpecificBGButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     Helpers.SetFrameBackdropColor(backdrop, btnBgR, btnBgG, btnBgB, 0.9)
     Helpers.SetFrameBackdropBorderColor(backdrop, sr, sg, sb, sa)
 
-    -- Style selected texture
     if button.SelectedTexture then
         button.SelectedTexture:SetColorTexture(sr, sg, sb, 0.3)
         SkinBase.DisablePixelSnap(button.SelectedTexture)
         button.SelectedTexture:SetAllPoints()
     end
 
-    -- Style icon border
     if button.Icon then
         button.Icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         local iconBackdrop = SkinBase.GetFrameData(button.Icon, "backdrop")
@@ -948,7 +790,6 @@ local function StyleSpecificBGButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         end
     end
 
-    -- Add hover highlight
     button:HookScript("OnEnter", function(self)
         local bd = SkinBase.GetFrameData(self, "backdrop")
         if bd then
@@ -962,21 +803,16 @@ local function StyleSpecificBGButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         end
     end)
 
-    -- Row fonts: these pooled rows only SetText their NameText/InfoText/SizeText
-    -- (stock GameFontNormal*) and are cold-acquired after the one-shot frame skin.
-    -- Skin this button directly because the rest of its chrome is styled here.
     -- HookScrollBoxAcquired composes callbacks through SkinBase.
     SkinBase.MarkStyled(button)
 end
 
--- Style PVP conquest bar
 local function StyleConquestBar(bar, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     if not bar or SkinBase.IsStyled(bar) then return end
 
     if bar.Border then bar.Border:Hide() end
     if bar.Background then bar.Background:Hide() end
 
-    -- Create backdrop
     local backdrop = SkinBase.GetFrameData(bar, "backdrop")
     if not backdrop then
         backdrop = CreateFrame("Frame", nil, bar, "BackdropTemplate")
@@ -990,7 +826,6 @@ local function StyleConquestBar(bar, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     Helpers.SetFrameBackdropColor(backdrop, bgr, bgg, bgb, 0.8)
     Helpers.SetFrameBackdropBorderColor(backdrop, sr, sg, sb, sa)
 
-    -- Style reward icon
     if bar.Reward then
         if bar.Reward.Ring then bar.Reward.Ring:Hide() end
         if bar.Reward.CircleMask then bar.Reward.CircleMask:Hide() end
@@ -1002,20 +837,14 @@ local function StyleConquestBar(bar, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     SkinBase.MarkStyled(bar)
 end
 
--- Helper: Get role icons from a frame (handles both 11.x and 12.x API)
--- 11.x: frame.TankIcon, frame.HealerIcon, frame.DPSIcon
--- 12.x: frame.RoleList.TankIcon, frame.RoleList.HealerIcon, frame.RoleList.DPSIcon
 local function GetRoleIcons(frame)
     if not frame then return nil, nil, nil end
-    -- Try 12.x structure first (RoleList)
     if frame.RoleList then
         return frame.RoleList.TankIcon, frame.RoleList.HealerIcon, frame.RoleList.DPSIcon
     end
-    -- Fall back to 11.x structure
     return frame.TankIcon, frame.HealerIcon, frame.DPSIcon
 end
 
--- Style role icons for a PVP frame (handles both API versions)
 local function StylePVPFrameRoleIcons(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     local tankIcon, healerIcon, dpsIcon = GetRoleIcons(frame)
     if tankIcon then StylePVPRoleIcon(tankIcon, sr, sg, sb, sa, bgr, bgg, bgb, bga) end
@@ -1023,18 +852,14 @@ local function StylePVPFrameRoleIcons(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     if dpsIcon then StylePVPRoleIcon(dpsIcon, sr, sg, sb, sa, bgr, bgg, bgb, bga) end
 end
 
--- Skin PVPQueueFrame
 local function SkinPVPFrame()
     local PVPQueueFrame = _G.PVPQueueFrame
     if not PVPQueueFrame or SkinBase.IsSkinned(PVPQueueFrame) then return end
 
     local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
 
-    -- Hide Blizzard decorations
     HidePVPDecorations()
 
-    -- Style category buttons (left side buttons) - 5 in 12.x, 4 in 11.x
-    -- PTR uses PVPQueueFrame.CategoryButton1, retail uses _G["PVPQueueFrameCategoryButton1"]
     for i = 1, 5 do
         local catButton = PVPQueueFrame["CategoryButton" .. i] or _G["PVPQueueFrameCategoryButton" .. i]
         if catButton then
@@ -1045,15 +870,12 @@ local function SkinPVPFrame()
         end
     end
 
-    -- Style Honor frame
     local HonorFrame = _G.HonorFrame
     if HonorFrame then
-        -- Queue button
         if _G.HonorFrameQueueButton then
             SkinBase.SkinButton(_G.HonorFrameQueueButton, { font = true })
         end
 
-        -- Type dropdown
         local typeDropdown = HonorFrame.TypeDropdown or _G.HonorFrameTypeDropdown
         if typeDropdown then
             typeDropdown:SetWidth(230)
@@ -1061,10 +883,8 @@ local function SkinPVPFrame()
             SkinBase.LockDropdownText(typeDropdown)
         end
 
-        -- Role icons (handles both 11.x and 12.x API)
         StylePVPFrameRoleIcons(HonorFrame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
 
-        -- BonusFrame activity buttons
         if HonorFrame.BonusFrame then
             local bf = HonorFrame.BonusFrame
             local bonusButtons = { "RandomBGButton", "Arena1Button", "RandomEpicBGButton", "BrawlButton", "BrawlButton2", "SpecialEventButton" }
@@ -1075,33 +895,27 @@ local function SkinPVPFrame()
             end
         end
 
-        -- Conquest bar
         if HonorFrame.ConquestBar then
             StyleConquestBar(HonorFrame.ConquestBar, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         end
 
-        -- Specific battleground scroll list — style buttons on acquisition.
         if HonorFrame.SpecificScrollBox then
             SkinBase.HookScrollBoxAcquired(HonorFrame.SpecificScrollBox, function(button)
                 StyleSpecificBGButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
             end)
         end
 
-        -- Canonical thin QUI scrollbar (was a bare Background:Hide()).
         if HonorFrame.SpecificScrollBar then
             SkinBase.SkinTrimScrollBar(HonorFrame.SpecificScrollBar)
         end
     end
 
-    -- Style Conquest frame
     local ConquestFrame = _G.ConquestFrame
     if ConquestFrame then
-        -- Join button
         if _G.ConquestJoinButton then
             SkinBase.SkinButton(_G.ConquestJoinButton, { font = true })
         end
 
-        -- Type dropdown (12.x WowStyle1 DropdownButton, mirrors HonorFrame)
         local conquestDropdown = ConquestFrame.TypeDropdown or _G.ConquestFrameTypeDropdown
         if conquestDropdown then
             conquestDropdown:SetWidth(230)
@@ -1109,10 +923,8 @@ local function SkinPVPFrame()
             SkinBase.LockDropdownText(conquestDropdown)
         end
 
-        -- Role icons (handles both 11.x and 12.x API)
         StylePVPFrameRoleIcons(ConquestFrame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
 
-        -- Activity buttons
         local conquestButtons = { "RatedSoloShuffle", "RatedBGBlitz", "Arena2v2", "Arena3v3", "RatedBG" }
         for _, btnName in ipairs(conquestButtons) do
             if ConquestFrame[btnName] then
@@ -1120,21 +932,17 @@ local function SkinPVPFrame()
             end
         end
 
-        -- Conquest bar
         if ConquestFrame.ConquestBar then
             StyleConquestBar(ConquestFrame.ConquestBar, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         end
     end
 
-    -- Style Training Grounds frame (12.x only - CategoryButton4)
     local TrainingGroundsFrame = _G.TrainingGroundsFrame
     if TrainingGroundsFrame then
-        -- Hide decorations
         SkinBase.StripTextures(TrainingGroundsFrame)
         if TrainingGroundsFrame.Bg then TrainingGroundsFrame.Bg:Hide() end
         if TrainingGroundsFrame.Background then TrainingGroundsFrame.Background:Hide() end
 
-        -- Hide Inset frame (InsetFrameTemplate has NineSlice border)
         if TrainingGroundsFrame.Inset then
             SkinBase.StripTextures(TrainingGroundsFrame.Inset)
             if TrainingGroundsFrame.Inset.NineSlice then
@@ -1142,45 +950,37 @@ local function SkinPVPFrame()
             end
         end
 
-        -- Hide BonusTrainingGroundList decorations
         local bonusList = TrainingGroundsFrame.BonusTrainingGroundList
         if bonusList then
             if bonusList.WorldBattlesTexture then bonusList.WorldBattlesTexture:Hide() end
             if bonusList.ShadowOverlay then bonusList.ShadowOverlay:Hide() end
-            -- Style the Random Training Ground button
             if bonusList.RandomTrainingGroundButton then
                 StylePVPActivityButton(bonusList.RandomTrainingGroundButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
             end
         end
 
-        -- Queue button
         if TrainingGroundsFrame.QueueButton then
             SkinBase.SkinButton(TrainingGroundsFrame.QueueButton, { font = true })
         end
 
-        -- Type dropdown
         if TrainingGroundsFrame.TypeDropdown then
             TrainingGroundsFrame.TypeDropdown:SetWidth(230)
             SkinBase.SkinDropdown(TrainingGroundsFrame.TypeDropdown, { keepArrow = true, insetY = 2 })
             SkinBase.LockDropdownText(TrainingGroundsFrame.TypeDropdown)
         end
 
-        -- Role icons
         StylePVPFrameRoleIcons(TrainingGroundsFrame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
 
-        -- Conquest bar
         if TrainingGroundsFrame.ConquestBar then
             StyleConquestBar(TrainingGroundsFrame.ConquestBar, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         end
 
-        -- Specific Training Ground scroll list (12.x) — style on acquisition.
         local specificList = TrainingGroundsFrame.SpecificTrainingGroundList
         if specificList and specificList.ScrollBox then
             SkinBase.HookScrollBoxAcquired(specificList.ScrollBox, function(button)
                 StyleSpecificBGButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
             end)
 
-            -- Canonical thin QUI scrollbar (was a bare Background:Hide()).
             if specificList.ScrollBar then
                 SkinBase.SkinTrimScrollBar(specificList.ScrollBar)
             end
@@ -1192,7 +992,6 @@ local function SkinPVPFrame()
     SkinBase.MarkSkinned(PVPQueueFrame)
 end
 
--- Main skinning function
 local function SkinInstanceFrames()
     local core = GetCore()
     local settings = core and core.db and core.db.profile and core.db.profile.general
@@ -1206,29 +1005,18 @@ local function SkinInstanceFrames()
     SkinPVPFrame()
 end
 
--- Helper to update GroupFinder button colors
 local function UpdateGroupFinderButtonColors(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     local bd = button and SkinBase.GetFrameData(button, "backdrop")
     if not bd then return end
     local btnBgR, btnBgG, btnBgB = ButtonBoostColors(bgr, bgg, bgb)
-    -- bd is seeded by ApplyFullBackdrop (StyleGroupFinderButton), so its
-    -- pixelBackdropData.bgColor/.borderColor are non-nil and shadow the _quiBg*/
-    -- _quiBorder* cache on the next scale-refresh rebuild. A Helpers.SetFrameBackdrop*
-    -- write (which only updates _quiBg*) would be discarded, reverting the theme
-    -- recolor; route through SetBackdropColors so the persisted data.* is updated.
     SkinBase.SetBackdropColors(bd, { sr, sg, sb, sa }, { btnBgR, btnBgG, btnBgB, 1 })
     SkinBase.SetFrameData(button, "skinColor", { sr, sg, sb, sa })
-    -- Update icon border if present. The icon backdrop is created via
-    -- ApplyPixelBackdrop with NO colors (StyleGroupFinderButton), so data.borderColor
-    -- is nil and RefreshPixelBackdrop uses the _quiBorder* fallback that
-    -- Helpers.SetFrameBackdropBorderColor keeps current — that path persists fine.
     local iconBd = button.icon and SkinBase.GetFrameData(button.icon, "backdrop")
     if iconBd then
         Helpers.SetFrameBackdropBorderColor(iconBd, sr, sg, sb, sa)
     end
 end
 
--- Helper to update PVP activity button colors
 local function UpdatePVPActivityButtonColors(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     local bd = button and SkinBase.GetFrameData(button, "backdrop")
     if not bd then return end
@@ -1246,7 +1034,6 @@ local function UpdatePVPActivityButtonColors(button, sr, sg, sb, sa, bgr, bgg, b
     end
 end
 
--- Helper to update conquest bar colors
 local function UpdateConquestBarColors(bar, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     local bd = bar and SkinBase.GetFrameData(bar, "backdrop")
     if not bd then return end
@@ -1254,7 +1041,6 @@ local function UpdateConquestBarColors(bar, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     Helpers.SetFrameBackdropBorderColor(bd, sr, sg, sb, sa)
 end
 
--- Helper to update dungeon icon colors
 local function UpdateDungeonIconColors(icon, sr, sg, sb, sa)
     if not icon or not icon.Icon then return end
     local bd = SkinBase.GetFrameData(icon.Icon, "backdrop")
@@ -1263,7 +1049,6 @@ local function UpdateDungeonIconColors(icon, sr, sg, sb, sa)
     SkinBase.SetFrameData(icon, "skinColor", { sr, sg, sb, sa })
 end
 
--- Helper to update affix icon colors
 local function UpdateAffixIconColors(affix, sr, sg, sb, sa)
     if not affix or not affix.Portrait then return end
     local bd = SkinBase.GetFrameData(affix.Portrait, "backdrop")
@@ -1271,20 +1056,17 @@ local function UpdateAffixIconColors(affix, sr, sg, sb, sa)
     Helpers.SetFrameBackdropBorderColor(bd, sr, sg, sb, sa)
 end
 
--- Refresh colors
 local function RefreshInstanceFramesColors()
     local PVEFrame = _G.PVEFrame
     if not PVEFrame or not SkinBase.IsSkinned(PVEFrame) then return end
 
     local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
 
-    -- Update PVEFrame backdrop
     local pveBd = SkinBase.GetBackdrop(PVEFrame)
     if pveBd then
         SkinBase.SetBackdropColors(pveBd, { sr, sg, sb, sa }, { bgr, bgg, bgb, bga })
     end
 
-    -- Update PVE tabs
     local pveTabs = {}
     for i = 1, 4 do
         local tab = _G["PVEFrameTab" .. i]
@@ -1292,7 +1074,6 @@ local function RefreshInstanceFramesColors()
     end
     SkinBase.RefreshTabGroup(pveTabs, PVEFrame)
 
-    -- Update GroupFinder buttons
     local GroupFinderFrame = _G.GroupFinderFrame
     if GroupFinderFrame then
         for i = 1, 4 do
@@ -1300,7 +1081,6 @@ local function RefreshInstanceFramesColors()
         end
     end
 
-    -- Update LFD buttons and dropdown
     SkinBase.RefreshWidget(_G.LFDQueueFrameFindGroupButton)
     local LFDQueueFrame = _G.LFDQueueFrame
     if LFDQueueFrame then
@@ -1310,7 +1090,6 @@ local function RefreshInstanceFramesColors()
         end
     end
 
-    -- Update Raid Finder buttons and dropdown
     local RaidFinderQueueFrame = _G.RaidFinderQueueFrame
     if RaidFinderQueueFrame and SkinBase.IsSkinned(RaidFinderQueueFrame) then
         SkinBase.RefreshWidget(_G.RaidFinderFrameFindRaidButton)
@@ -1319,7 +1098,6 @@ local function RefreshInstanceFramesColors()
         end
     end
 
-    -- Update LFGListFrame buttons
     local LFGListFrame = _G.LFGListFrame
     if LFGListFrame and SkinBase.IsSkinned(LFGListFrame) then
         if LFGListFrame.CategorySelection then
@@ -1349,7 +1127,6 @@ local function RefreshInstanceFramesColors()
         end
     end
 
-    -- Update Challenges/M+ dungeon icons and affixes
     local ChallengesFrame = _G.ChallengesFrame
     if ChallengesFrame and SkinBase.IsSkinned(ChallengesFrame) then
         if ChallengesFrame.DungeonIcons then
@@ -1357,7 +1134,6 @@ local function RefreshInstanceFramesColors()
                 UpdateDungeonIconColors(icon, sr, sg, sb, sa)
             end
         end
-        -- Update affixes
         if ChallengesFrame.WeeklyInfo and ChallengesFrame.WeeklyInfo.Child then
             local affixContainer = ChallengesFrame.WeeklyInfo.Child.AffixesContainer
             if affixContainer and affixContainer.Affixes then
@@ -1374,26 +1150,20 @@ local function RefreshInstanceFramesColors()
         end
     end
 
-    -- Update PVP buttons and elements
     local PVPQueueFrame = _G.PVPQueueFrame
     if PVPQueueFrame and SkinBase.IsSkinned(PVPQueueFrame) then
-        -- Category buttons (5 in 12.x, 4 in 11.x)
-        -- PTR uses PVPQueueFrame.CategoryButton1, retail uses _G["PVPQueueFrameCategoryButton1"]
         for i = 1, 5 do
             local catButton = PVPQueueFrame["CategoryButton" .. i] or _G["PVPQueueFrameCategoryButton" .. i]
             UpdateGroupFinderButtonColors(catButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         end
 
-        -- Honor frame
         local HonorFrame = _G.HonorFrame
         if HonorFrame then
             SkinBase.RefreshWidget(_G.HonorFrameQueueButton)
-            -- Type dropdown
             local typeDropdown = HonorFrame.TypeDropdown or _G.HonorFrameTypeDropdown
             if typeDropdown then
                 SkinBase.RefreshWidget(typeDropdown)
             end
-            -- Bonus frame buttons
             if HonorFrame.BonusFrame then
                 local bf = HonorFrame.BonusFrame
                 local bonusButtons = { "RandomBGButton", "Arena1Button", "RandomEpicBGButton", "BrawlButton", "BrawlButton2", "SpecialEventButton" }
@@ -1403,13 +1173,11 @@ local function RefreshInstanceFramesColors()
                     end
                 end
             end
-            -- Conquest bar
             if HonorFrame.ConquestBar then
                 UpdateConquestBarColors(HonorFrame.ConquestBar, sr, sg, sb, sa, bgr, bgg, bgb, bga)
             end
         end
 
-        -- Conquest frame
         local ConquestFrame = _G.ConquestFrame
         if ConquestFrame then
             SkinBase.RefreshWidget(_G.ConquestJoinButton)
@@ -1417,20 +1185,17 @@ local function RefreshInstanceFramesColors()
             if conquestDropdown then
                 SkinBase.RefreshWidget(conquestDropdown)
             end
-            -- Activity buttons
             local conquestButtons = { "RatedSoloShuffle", "RatedBGBlitz", "Arena2v2", "Arena3v3", "RatedBG" }
             for _, btnName in ipairs(conquestButtons) do
                 if ConquestFrame[btnName] then
                     UpdatePVPActivityButtonColors(ConquestFrame[btnName], sr, sg, sb, sa, bgr, bgg, bgb, bga)
                 end
             end
-            -- Conquest bar
             if ConquestFrame.ConquestBar then
                 UpdateConquestBarColors(ConquestFrame.ConquestBar, sr, sg, sb, sa, bgr, bgg, bgb, bga)
             end
         end
 
-        -- Training Grounds frame (12.x only)
         local TrainingGroundsFrame = _G.TrainingGroundsFrame
         if TrainingGroundsFrame and SkinBase.IsSkinned(TrainingGroundsFrame) then
             SkinBase.RefreshWidget(TrainingGroundsFrame.QueueButton)
@@ -1445,7 +1210,6 @@ local function RefreshInstanceFramesColors()
     end
 end
 
--- Expose refresh function globally
 _G.QUI_RefreshInstanceFramesColors = RefreshInstanceFramesColors
 
 if ns.Registry then
@@ -1456,10 +1220,6 @@ if ns.Registry then
         importCategories = { "skinning", "theme" },
     })
 end
-
----------------------------------------------------------------------------
--- INITIALIZATION
----------------------------------------------------------------------------
 
 local pveHooked = false
 local function HookPVEFrame()
@@ -1490,11 +1250,6 @@ end, 0)
 SkinBase.OnAddOnLoaded("Blizzard_PVPUI", SkinInstanceFrames, 0)
 SkinBase.OnAddOnLoaded("Blizzard_ChallengesUI", SkinInstanceFrames, 0)
 
--- LOD catch-up: first PEW already fired before this module loads; the old
--- one-shot PLAYER_ENTERING_WORLD init runs via ns.WhenLoggedIn instead.
--- SkinInstanceFrames also covers Blizzard_PVPUI/Blizzard_ChallengesUI when
--- they loaded before this module.
--- ns.WhenLoggedIn is nil only in the headless test harness.
 if ns.WhenLoggedIn then
     ns.WhenLoggedIn(function()
         HookPVEFrame()

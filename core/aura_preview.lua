@@ -1,26 +1,69 @@
--- core/aura_preview.lua — QUI.AuraPreview: placeholder-icon preview for aura
--- elements. Live containers render engine-side with unknowable counts, so
--- preview draws the worst-case footprint using EXACTLY the layout math and
--- shared button styler the live path uses (AuraGlue.ElementProfile + AuraSkin).
--- Aura data is representative only. Plain insecure frames: safe anywhere,
--- combat included.
---
--- Loadable headless: no top-level frame creation. Every CreateFrame happens
--- inside P.Show (and only when a real client is present), so this file loads
--- clean under the bare test ns before any WoW API stub exists.
 local ADDON_NAME, ns = ...
 local P = ns.AuraPreview or {}
 ns.AuraPreview = P
 _G.QUI = _G.QUI or {}
 _G.QUI.AuraPreview = P
 
-local PLACEHOLDER_ICON = 134400 -- INV_Misc_QuestionMark
+local PLACEHOLDER_ICON = 134400
+local SAMPLE_BUFF_ICONS = { 136034, 135940, 136081, 135932, 136063 }
+local SAMPLE_DEBUFF_ICONS = { 136207, 136130, 136067, 135813, 136118 }
 
--- Acquire (or reuse) the pooled placeholder frame at `index`. The visual (icon
--- vs colored rectangle) is (re)applied per-Show in LayoutElement, so a pool
--- frame can flip shape freely across re-renders.
 local function AuraSkin()
     return ns.AuraSkin or (ns.Addon and ns.Addon.AuraSkin)
+end
+
+local function ResolveSpellIcon(spellID)
+    if type(spellID) ~= "number" then return nil end
+    if not (C_Spell and C_Spell.GetSpellTexture) then return nil end
+    local ok, tex = pcall(C_Spell.GetSpellTexture, spellID)
+    if ok then return tex end
+    return nil
+end
+
+local function SampleSpellIDs(element)
+    if element.mode == "tracked" then
+        local spells = element.spells
+        if type(spells) == "table" and #spells > 0 then return spells end
+        return nil
+    end
+    if element.filterMode ~= "whitelist" then return nil end
+    local wl = element.whitelist
+    if type(wl) ~= "table" then return nil end
+    local out = {}
+    for sid, on in pairs(wl) do
+        local n = tonumber(sid)
+        if on and n then out[#out + 1] = n end
+    end
+    if #out == 0 then return nil end
+    table.sort(out)
+    return out
+end
+
+function P.SampleIcon(element, index)
+    if type(element) ~= "table" then return PLACEHOLDER_ICON end
+    local spells = SampleSpellIDs(element)
+    if spells then
+        local tex = ResolveSpellIcon(spells[((index - 1) % #spells) + 1])
+        if tex then return tex end
+    end
+    local list = (element.auraType == "HARMFUL") and SAMPLE_DEBUFF_ICONS or SAMPLE_BUFF_ICONS
+    return list[((index - 1) % #list) + 1]
+end
+
+local function ColorComponents(color)
+    if type(color) ~= "table" then return nil end
+    return color.r or color[1], color.g or color[2], color.b or color[3],
+        color.a or color[4] or 1
+end
+
+local function DefaultDispelColor(_element, index, profile)
+    local G = ns.AuraGlue or (_G.QUI and _G.QUI.AuraGlue)
+    local cycle = G and G.DISPEL_TYPES
+    if not cycle or #cycle == 0 then return nil end
+    local dispelType = cycle[((index - 1) % #cycle) + 1]
+    local custom = profile and type(profile.dispelColors) == "table"
+        and profile.dispelColors[dispelType] or nil
+    return ColorComponents(custom or G.DISPEL_DEFAULT_COLORS[dispelType])
 end
 
 local function SetRegionShown(region, shown)
@@ -79,13 +122,11 @@ local function AcquireIcon(host, pool, index, profile, richIcon)
 end
 
 local function ApplyIconSample(frame, element, profile, index, opts)
-    local tex = (opts and opts.icon and opts.icon(element, index)) or PLACEHOLDER_ICON
+    local tex = (opts and opts.icon and opts.icon(element, index))
+        or P.SampleIcon(element, index)
     frame._tex:SetTexture(tex)
     frame._tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
-    -- Fake data only: AuraSkin owns the regions and their configured styling.
-    -- Cooldown drives itself C-side after SetCooldown, while the text values
-    -- make duration/stack positioning, font, color and visibility inspectable.
     local duration = 10 + ((index - 1) % 3) * 5
     local now = (GetTime and GetTime()) or 0
     local cd = frame._quiCooldown
@@ -107,10 +148,9 @@ local function ApplyIconSample(frame, element, profile, index, opts)
 
     local dispel = frame._quiDispel
     local r, g, b, a
-    if profile.showDispelBorder ~= false
-        and element.auraType == "HARMFUL"
-        and opts and opts.dispelColor then
-        r, g, b, a = opts.dispelColor(element, index, profile)
+    if profile.showDispelBorder ~= false and element.auraType == "HARMFUL" then
+        local resolve = (opts and opts.dispelColor) or DefaultDispelColor
+        r, g, b, a = resolve(element, index, profile)
     end
     if dispel and r ~= nil then
         if dispel.SetVertexColor then dispel:SetVertexColor(r, g or 1, b or 1, a or 1) end
@@ -120,14 +160,6 @@ local function ApplyIconSample(frame, element, profile, index, opts)
     end
 end
 
--- Default surface resolve: profile straight off the shared layout math, pinned
--- at the element's own anchor corner with the element's own offsets — the exact
--- pin the BB/GF live paths use (BB AnchorElementContainer pins
--- AuraSkin.LayoutAnchor(profile) to the mover at element.anchor; GF RenderIcon
--- pins the grow-derived icon corner to the frame at element.anchor).
--- Surfaces with their OWN anchoring fold (the unit-frame corner flip) pass
--- opts.resolve instead, reusing their live helpers so preview and live share
--- one source of truth: fn(element) -> profile, framePoint, offsetX, offsetY.
 local function DefaultResolve(element)
     local G = ns.AuraGlue
     if not (G and G.ElementProfile) then return nil end
@@ -135,27 +167,10 @@ local function DefaultResolve(element)
         element.offsetX or 0, element.offsetY or 0
 end
 
--- Lay one element's worst-case grid: placeholders positioned by the same
--- grow/wrap/perRow rules the live layouts apply, all derived from the resolved
--- PROFILE (never re-read off raw element geometry keys):
---   * flow-origin corner: exactly AuraSkin FlowFor's derivation (columns take
---     `up` from grow, rows take it from the profile's wrap — already the
---     FLIPPED wrap when a surface resolve folds a corner flip in), pinned to
---     the host at the resolved framePoint with the resolved offsets;
---   * CENTER grow: mirrors GF IconLayout.SingleRowOffset/CalculateSlotOffset —
---     each line centered on the anchor, a short final line centered on its own
---     occupancy;
---   * filterStrip -> maxIcons worst case; tracked -> min(#spells, maxIcons)
---     matching the live renderer's min(#ordered, maxIcons) cap;
---   * tracked bar -> bar.length x bar.thickness rectangle in element.color;
---     tracked square -> iconSize^2 swatch in element.color.
 local function LayoutElement(host, pool, poolCursor, element, resolve, opts)
-    -- A resolve may return a 5th value: the pin corner, when the surface's live
-    -- path derives it from something the generic flow math cannot see (the GF
-    -- unit-frame path takes the corner's horizontal side from the FRAME anchor,
-    -- not from the grow direction). nil keeps the generic derivation below.
     local p, framePoint, offX, offY, pinCorner = resolve(element)
     if not p then return poolCursor end
+    local anchorTo = (opts and opts.anchorTo) or host
 
     local count
     if element.mode == "tracked" then
@@ -169,7 +184,6 @@ local function LayoutElement(host, pool, poolCursor, element, resolve, opts)
     if count > 40 then count = 40 end
     if count < 1 then return poolCursor end
 
-    -- Flow-origin corner (mirrors aura_skin.lua FlowFor exactly).
     local grow = p.grow
     local column = (grow == "UP" or grow == "DOWN")
     local left = (grow == "LEFT")
@@ -177,9 +191,6 @@ local function LayoutElement(host, pool, poolCursor, element, resolve, opts)
     if column then up = (grow == "UP") else up = (p.wrap == "UP") end
     local corner = pinCorner or ((up and "BOTTOM" or "TOP") .. (left and "RIGHT" or "LEFT"))
 
-    -- Column growth degrades to one icon per line (engine parity: a row-major
-    -- flow layout can't express a multi-column vertical grid); the line index
-    -- then walks the vertical axis via `row` below.
     local perRow = (p.maxPerRow and p.maxPerRow > 0) and p.maxPerRow or count
     if column then perRow = 1 end
     local centered = (grow == "CENTER")
@@ -203,23 +214,15 @@ local function LayoutElement(host, pool, poolCursor, element, resolve, opts)
             f._tex:SetColorTexture((color and color[1]) or 1, (color and color[2]) or 1,
                 (color and color[3]) or 1, (color and color[4]) or 1)
         else
-            -- Real spell art when the surface can name the spell for this slot
-            -- (a tracked element lists them); the question mark is the fallback
-            -- for slots whose content only exists at runtime (filter strips).
             ApplyIconSample(f, element, p, i, {
                 icon = opts and opts.icon,
                 dispelColor = opts and opts.dispelColor,
             })
         end
-        -- `row` is the wrap-line index, `col` the position within the line. For
-        -- column growth perRow=1 makes `row` the along-column index (col=0), so
-        -- dy walks the vertical axis — never swap them.
         local row = math.floor((i - 1) / perRow)
         local col = (i - 1) % perRow
         local dx
         if centered then
-            -- GF IconLayout parity: center each line on its own occupancy (the
-            -- final short line centers on its real count).
             local lineCount = perRow
             local remaining = count - row * perRow
             if remaining < perRow then lineCount = remaining end
@@ -230,26 +233,12 @@ local function LayoutElement(host, pool, poolCursor, element, resolve, opts)
         end
         local dy = (row * stepY) * (up and 1 or -1)
         f:ClearAllPoints()
-        f:SetPoint(corner, host, framePoint, offX + dx, offY + dy)
+        f:SetPoint(corner, anchorTo, framePoint, offX + dx, offY + dy)
         f:SetAlpha(element.enabled ~= false and 1 or 0.35)
     end
     return poolCursor
 end
 
--- Show placeholder previews for the given elements on hostFrame. Pool is reused
--- across calls (keyed on hostFrame._quiAuraPreview); surplus frames from a prior
--- larger render are hidden. healthTint tracked elements draw no placeholder
--- (they tint a health bar, not an icon slot) so they are skipped here.
--- opts.only (optional): filter fn(element) -> bool applied AFTER the mode gate.
--- opts.icon (optional): fn(element, slotIndex) -> texture, letting a surface
--- supply real spell art for slots it can name; nil per slot keeps the
--- placeholder question mark.
--- opts.dispelColor (optional): fn(element, slotIndex, profile) -> r,g,b,a for
--- a representative harmful-aura dispel border.
--- opts.resolve (optional): fn(element) -> profile, framePoint, offsetX, offsetY
--- [, pinCorner] replacing DefaultResolve when the surface folds its own
--- anchoring into the profile/pin (the unit-frame corner flip). The optional
--- 5th return overrides the flow-derived pin corner outright.
 function P.Show(hostFrame, elements, opts)
     local pool = hostFrame._quiAuraPreview
     if not pool then

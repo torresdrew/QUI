@@ -56,8 +56,6 @@ local function GetStaleColor()
     return { 0.92, 0.62, 0.28, 1 }
 end
 
--- Shared "Unpin All" destructive confirmation, used by both the popup
--- Clear All button and the manage-page Unpin All button.
 local function ConfirmUnpinAll(gui)
     gui:ShowConfirmation({
         title = ns.L["Remove all pins?"],
@@ -759,11 +757,6 @@ function Pins:AttachSettingRow(cell, widget, labelText)
 end
 
 local function BuildBreadcrumb(item)
-    -- Prefer stored tabName/subTabName, but fall back to deriving them from
-    -- tileId/subPageIndex via the tile registry. Pins captured inside a
-    -- BuildFeatureStackPage iteration sometimes have no tabName/subTabName
-    -- stored (only tileId/subPageIndex), which would otherwise collapse the
-    -- breadcrumb to just the sectionName ("Behavior") with no useful context.
     local tabName, subTabName = item.tabName, item.subTabName
     local needLookup = (type(tabName) ~= "string" or tabName == "")
         or (type(subTabName) ~= "string" or subTabName == "")
@@ -796,10 +789,6 @@ local function BuildBreadcrumb(item)
         parts[#parts + 1] = subTabName
     end
 
-    -- Stacked feature pages (e.g. Gameplay > Combat) host many features under
-    -- one sub-tab. Surface the feature's display label between the sub-tab
-    -- and the sectionName so the crumb tells the user which feature card
-    -- the pin lives under.
     if type(item.featureId) == "string" and item.featureId ~= "" then
         local RenderAdapters = Settings and Settings.RenderAdapters
         local featureLabel
@@ -1167,7 +1156,7 @@ local function BuildPinnedGlobalsRows(state)
 
     if disabledCount > 0 then
         state.staleBanner:Show()
-        state.staleText:SetText(string_format(ns.L["%d stale pin%s detected."], disabledCount, disabledCount == 1 and "" or "s"))
+        state.staleText:SetText(string_format(ns.L["%d stale pins detected."], disabledCount))
         state.rowsHost:ClearAllPoints()
         state.rowsHost:SetPoint("TOPLEFT", state.staleBanner, "BOTTOMLEFT", 0, -10)
         state.rowsHost:SetPoint("TOPRIGHT", state.staleBanner, "BOTTOMRIGHT", 0, -10)
@@ -1191,15 +1180,11 @@ local function BuildPinnedGlobalsRows(state)
         return
     end
 
-    -- One pinned item rendered as a half-width cell: accent bar, stacked
-    -- label + breadcrumb (truncating), value chip, compact Jump/Unpin.
     local function BuildPinCell(row, item)
         local cell = CreateFrame("Frame", nil, row)
         cell._quiPinCell = true
         cell._quiPinStale = item.disabled or nil
 
-        -- Stale tint draws above the row's alternating tint (cell regions
-        -- render over the parent row's regions).
         if item.disabled then
             local staleBg = cell:CreateTexture(nil, "BACKGROUND", nil, 1)
             staleBg:SetAllPoints(cell)
@@ -1261,7 +1246,6 @@ local function BuildPinnedGlobalsRows(state)
         row:SetPoint("TOPRIGHT", state.rowsHost, "TOPRIGHT", 0, y)
         row:SetHeight(44)
 
-        -- Alternating row tint, full row width (matches the card-group rhythm).
         if (rowIndex % 2) == 0 then
             local bg = row:CreateTexture(nil, "BACKGROUND", nil, 0)
             bg:SetAllPoints(row)
@@ -1278,7 +1262,6 @@ local function BuildPinnedGlobalsRows(state)
             rightCell:SetPoint("TOPLEFT", row, "TOP", 8, 0)
             rightCell:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", 0, 0)
 
-            -- 1px center divider between the two columns (matches card groups).
             local cdiv = row:CreateTexture(nil, "ARTWORK")
             cdiv:SetPoint("TOP", row, "TOP", 0, -6)
             cdiv:SetPoint("BOTTOM", row, "BOTTOM", 0, 6)

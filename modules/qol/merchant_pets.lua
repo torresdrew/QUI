@@ -1,32 +1,10 @@
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 
----------------------------------------------------------------------------
--- MERCHANT KNOWN-PET MARKS
---
--- Overlays a green check on merchant items that teach a battle pet you have
--- already collected, so vendor pet shopping doesn't need journal cross-checks.
---
--- Detection: C_Item.GetItemInfoInstant(link) (doc-verified: classID 6th /
--- subClassID 7th return) gates to pet items (classID 17 = Battlepet, or
--- 15/2 = Miscellaneous/CompanionPet — ItemConstantsDocumentation), then
--- C_PetJournal.GetPetInfoByItemID(itemID) -> speciesID (13th return) and
--- C_PetJournal.GetNumCollectedInfo(speciesID) > 0. Both C_PetJournal calls
--- are absent from the generated docs but used by 12.x Blizzard code
--- (DressUpFrames.lua / Blizzard_PetBattleUI.lua) — existence-guarded here.
---
--- Wiring: post-hook on MerchantFrame_UpdateMerchantInfo (page changes call
--- it too). Iterates MerchantItem{i}ItemButton up to the CURRENT
--- MERCHANT_ITEMS_PER_PAGE — the QUI merchant grid raises it, and its extra
--- buttons exist before the raise (merchant_grid.lua invariant), so this
--- covers the enlarged grid automatically. Collected-state cached per itemID;
--- wiped on pet-journal changes.
----------------------------------------------------------------------------
-
 local GetSettings = Helpers.CreateDBGetter("general")
 
-local collectedCache = {} -- itemID -> bool (pet item -> already collected)
-local overlays = {}       -- button -> Texture
+local collectedCache = {}
+local overlays = {}
 
 local function IsPetCollected(itemID)
     local cached = collectedCache[itemID]
@@ -60,7 +38,6 @@ end
 local function UpdateMerchant()
     local merchantFrame = _G.MerchantFrame
     if not merchantFrame or not merchantFrame:IsShown() then return end
-    -- Only decorate the merchant tab; the buyback tab reuses the buttons.
     if merchantFrame.selectedTab and merchantFrame.selectedTab ~= 1 then return end
 
     local settings = GetSettings()
@@ -97,7 +74,6 @@ end
 hooksecurefunc("MerchantFrame_UpdateMerchantInfo", UpdateMerchant)
 
 local frame = CreateFrame("Frame")
--- Literal RegisterEvent calls so tools/generate_event_allowlist.lua detects them.
 frame:RegisterEvent("PET_JOURNAL_LIST_UPDATE")
 frame:RegisterEvent("NEW_PET_ADDED")
 frame:SetScript("OnEvent", function()

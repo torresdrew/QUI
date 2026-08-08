@@ -1,21 +1,3 @@
----------------------------------------------------------------------------
--- Alts weeklies tab. Flat virtualized list of two row kinds:
---   "char"    — one per cached character, name-asc: class-coloured name,
---               M+ rating, keystone, vault summary.
---   "lockout" — one per lockout entry, indented 24px under its character.
---
--- Enum.WeeklyRewardChestThresholdType: member NAMES verified in vendored
--- FrameXML (Blizzard_WeeklyRewards.lua); numeric values are not in the
--- vendored sources — labels are rebuilt from the live Enum at load, with
--- a static fallback table for headless tests and "Type N" for the rest.
---
--- Pure helpers exported on Alts.WeekliesView (tested headless):
---   VaultSummary(weeklies) → string
---   KeystoneText(weeklies) → string
---   LockoutLine(lockout, now) → string
---   BuildDisplayRows(characters) → flat { kind="char"|"lockout", ... }
--- Frame parts are NOT tested (no WoW frame API headless).
----------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 
 local Shared = ns.AltsViewShared
@@ -35,19 +17,10 @@ local ROW_H, FOOTER_H = 22, 22
 local CELL_PAD = 6
 local LOCKOUT_INDENT = 24
 
--- Column widths
 local NAME_W    = 160
 local RATING_W  = 60
 local KEYSTONE_W = 180
 
----------------------------------------------------------------------------
--- Vault type labels. The enum MEMBER NAMES are confirmed in vendored
--- FrameXML (Blizzard_WeeklyRewards.lua reads .Raid/.Activities/.World/
--- .RankedPvP/.Concession), but the NUMERIC values are absent from the
--- vendored sources — so the live Enum overwrites this table at load.
--- The literals below are only the headless-test fallback; "Type N"
--- covers any value neither source names.
----------------------------------------------------------------------------
 local VAULT_TYPE_LABEL = {
     [1] = "Raid",
     [2] = "Dungeons",
@@ -72,22 +45,13 @@ local function VaultTypeLabel(t)
     return VAULT_TYPE_LABEL[t] or ("Type " .. t)
 end
 
----------------------------------------------------------------------------
--- Pure helpers (tested headless).
----------------------------------------------------------------------------
-
---- Build vault summary string from weeklies.activities.
---- Returns "—" when activities is nil or empty.
---- For each type (ascending), counts slots where progress >= threshold vs
---- total slots. Result: "Raid 1/3 · Dungeons 2/3" etc.
 function WeekliesView.VaultSummary(weeklies)
     local acts = weeklies and weeklies.activities
     if not acts or #acts == 0 then return "—" end
 
-    -- Bucket by type: count total and how many have progress >= threshold.
-    local totals    = {}  -- [type] = count of slots
-    local completed = {}  -- [type] = count with progress >= threshold
-    local typeOrder = {}  -- ordered unique types
+    local totals    = {}
+    local completed = {}
+    local typeOrder = {}
 
     for _, a in ipairs(acts) do
         local t = a.type
@@ -104,7 +68,6 @@ function WeekliesView.VaultSummary(weeklies)
         end
     end
 
-    -- Sort types ascending for stable output.
     table.sort(typeOrder)
 
     local parts = {}
@@ -117,9 +80,6 @@ function WeekliesView.VaultSummary(weeklies)
     return table.concat(parts, " · ")
 end
 
---- Keystone display string from weeklies.
---- No mapID → "—"; mapID present but level nil → "Name +?" or "+?";
---- normal → "Name +12".
 function WeekliesView.KeystoneText(weeklies)
     if not weeklies then return "—" end
     local mapID = weeklies.keystoneMapID
@@ -141,17 +101,12 @@ function WeekliesView.KeystoneText(weeklies)
     end
 end
 
---- Format a single lockout sub-row string.
---- lockout: { name, difficultyName, bossesTotal, bossesKilled, resetAt, extended }
---- now: current epoch (for FormatResetIn; nil → uses time() via helper)
 function WeekliesView.LockoutLine(lockout, now)
     if not lockout then return "" end
 
     local name = lockout.name or "?"
     local diff = lockout.difficultyName or ""
 
-    -- Boss progress: only when BOTH are numbers (scanner caveat: positions
-    -- 11/12 of GetSavedInstanceInfo unconfirmed; nil-guard required).
     local bossStr = ""
     local killed = lockout.bossesKilled
     local total  = lockout.bossesTotal
@@ -175,15 +130,7 @@ function WeekliesView.LockoutLine(lockout, now)
     return line
 end
 
---- Build the flat display-row list from a characters map.
---- characters: { [key] = rec } where rec has .name, .details.class,
----   .weeklies (may be nil), .lockouts (may be nil or empty).
---- Returns ordered array of:
----   { kind="char",    key, name, class, weeklies }
----   { kind="lockout", lockout }
---- Characters sorted name-asc; lockouts follow their character immediately.
 function WeekliesView.BuildDisplayRows(characters)
-    -- Collect and sort by name ascending.
     local sorted = {}
     for key, rec in pairs(characters or {}) do
         sorted[#sorted + 1] = {
@@ -198,7 +145,6 @@ function WeekliesView.BuildDisplayRows(characters)
         return (a.name or "") < (b.name or "")
     end)
 
-    -- Flatten with lockout sub-rows.
     local rows = {}
     for _, entry in ipairs(sorted) do
         rows[#rows + 1] = {
@@ -219,14 +165,6 @@ function WeekliesView.BuildDisplayRows(characters)
     return rows
 end
 
----------------------------------------------------------------------------
--- Frame parts (no headless test).
----------------------------------------------------------------------------
-
-
-
-
-
 local function Builder(parent)
     local Store = ns.Storage and ns.Storage.Store
     local Bus   = ns.Storage and ns.Storage.Bus
@@ -235,8 +173,8 @@ local function Builder(parent)
 
     local view    = { frame = frame }
     local offset  = 0
-    local scrollbar       -- vertical scroll bar (created below)
-    local rows    = {}   -- flat display-row list
+    local scrollbar
+    local rows    = {}
     local rowPool = {}
     local charCount = 0
 
@@ -247,30 +185,23 @@ local function Builder(parent)
         return math.max(1, math.floor(usable / ROW_H))
     end
 
-    -- footer
     local footer = MakeFS(frame, 11)
     footer:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", CELL_PAD, 4)
     footer:SetTextColor(0.8, 0.8, 0.8)
 
-    ---- row pool -----------------------------------------------------------
-    -- Each row has slots for: name, rating, keystone, vault, (or a single
-    -- lockout text for lockout rows).
     local function GetRow(i)
         local r = rowPool[i]
         if r then return r end
         r = Shared.CreateRow(frame, { height = ROW_H })
-        -- Character row cells
         r._name    = MakeFS(r, 11)
         r._rating  = MakeFS(r, 11)
         r._keystone = MakeFS(r, 11)
         r._vault   = MakeFS(r, 11)
-        -- Lockout row: single text
         r._lockout = MakeFS(r, 11)
         rowPool[i] = r
         return r
     end
 
-    ---- render -------------------------------------------------------------
     local function RenderRows()
         local visible = VisibleRows()
         local maxOff  = math.max(0, #rows - visible)
@@ -285,11 +216,10 @@ local function Builder(parent)
             r:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -Shared.SCROLLBAR_RESERVE, -(i - 1) * ROW_H)
 
             if not row then
-                r._row = nil -- scaffold contract: hidden rows carry no target
+                r._row = nil
                 r:Hide()
             elseif row.kind == "char" then
-                r._row = row -- scaffold contract (future click/tooltip handlers)
-                -- character row
+                r._row = row
                 r._name:ClearAllPoints()
                 r._name:SetPoint("LEFT", r, "LEFT", CELL_PAD, 0)
                 r._name:SetWidth(NAME_W - CELL_PAD * 2)
@@ -328,8 +258,7 @@ local function Builder(parent)
                 r._lockout:Hide()
                 r:Show()
             else
-                r._row = row -- scaffold contract
-                -- lockout sub-row
+                r._row = row
                 r._name:Hide()
                 r._rating:Hide()
                 r._keystone:Hide()
@@ -345,7 +274,6 @@ local function Builder(parent)
                 r:Show()
             end
         end
-        -- hide surplus
         for i = visible + 1, #rowPool do
             rowPool[i]._row = nil
             rowPool[i]:Hide()
@@ -374,7 +302,6 @@ local function Builder(parent)
         footer:SetText(string.format("%d characters", charCount))
     end
 
-    -- vertical scroll bar: rows fill from the top down to the footer line.
     scrollbar = Shared.CreateScrollBar(frame, {
         orientation = "vertical",
         onScroll = function(n) offset = n; RenderRows() end,
@@ -382,7 +309,6 @@ local function Builder(parent)
     scrollbar.track:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -2, 0)
     scrollbar.track:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -2, FOOTER_H)
 
-    -- mouse-wheel scroll
     frame:EnableMouseWheel(true)
     frame:SetScript("OnMouseWheel", function(_, delta)
         local maxOff = math.max(0, #rows - VisibleRows())
@@ -392,7 +318,6 @@ local function Builder(parent)
         RenderRows()
     end)
 
-    -- Bus subscriptions: refresh only when visible
     if Bus and Bus.Subscribe then
         local function OnBus()
             if frame:IsVisible() then view.Refresh() end

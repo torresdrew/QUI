@@ -1,10 +1,3 @@
---[[
-    QUI Options — CDM Keybinds / Rotation Assist Sub-Tabs
-    Migrated to V3 body pattern (Opts.CreateAccentDotLabel + card groups
-    + BuildSettingRow). Drop zone + override entry list keep their custom
-    layout since they're specialized interactive surfaces, not settings rows.
-]]
-
 local ADDON_NAME, ns = ...
 local QUI = QUI
 local GUI = QUI.GUI
@@ -46,14 +39,6 @@ local function RefreshAllKeybindDisplays()
     RefreshCustomTrackerKeybinds()
 end
 
----------------------------------------------------------------------------
--- Override list — drop zone + dynamic entry rows + enable toggles.
--- Self-contained section that draws starting at startY and returns the
--- final y. The caller is responsible for sizing the host frame; this
--- function does call host:SetHeight() dynamically as the list grows so
--- the section height tracks the entry count. Suitable for use as a
--- single section inside a V2 schema tab.
----------------------------------------------------------------------------
 local function BuildKeybindOverridesSection(tabContent, startY)
     local y = startY or 0
     local PAD = Shared.PADDING
@@ -80,7 +65,6 @@ local function BuildKeybindOverridesSection(tabContent, startY)
         return
     end
 
-    -- Enable toggles (CDM + Custom Trackers) paired in a card.
     local toggleCard = Shared.CreateSettingsCardGroup(tabContent, y)
     local cdmToggle = GUI:CreateFormCheckbox(toggleCard.frame, nil, "keybindOverridesEnabledCDM", QUICore.db.profile, RefreshCDMKeybinds,
         { description = ns.L["Apply the custom keybind text overrides below to the CDM essential and utility viewers."] })
@@ -93,8 +77,6 @@ local function BuildKeybindOverridesSection(tabContent, startY)
     toggleCard.Finalize()
     y = y - toggleCard.frame:GetHeight() - 12
 
-    -- UnitName is SecretWhenUnitNameRestricted (12.1) — probe before the
-    -- or-fallback truth-tests it.
     local charName = UnitName("player")
     if issecretvalue and issecretvalue(charName) then
         charName = nil -- @secret-policy: reject-secret-value (label falls back to Unknown)
@@ -153,7 +135,6 @@ local function BuildKeybindOverridesSection(tabContent, startY)
         return true
     end
 
-    -- Drop zone
     local dropZone = CreateFrame("Frame", nil, tabContent, "BackdropTemplate")
     dropZone:SetPoint("TOPLEFT", tabContent, "TOPLEFT", PAD, y)
     dropZone:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
@@ -168,7 +149,6 @@ local function BuildKeybindOverridesSection(tabContent, startY)
 
     y = y - 72
 
-    -- Override list header (dynamic — shows char + spec)
     local trackedHeader = CreateFrame("Frame", nil, tabContent)
     trackedHeader:SetHeight(22)
     trackedHeader:SetPoint("TOPLEFT", dropZone, "BOTTOMLEFT", 0, -15)

@@ -5,9 +5,6 @@ ns.QUI_UnitFramesSettingsModel = Model
 local ModelKit = ns.Settings and ns.Settings.ModelKit
 
 local UNIT_ORDER = { "player", "target", "focus", "targettarget", "pet", "boss" }
--- Shared unit -> display-name map (single source of truth lives in
--- unit_frames_schema.lua, which loads first). Fall back to a local copy so the
--- model still works if loaded without the schema present.
 local UNIT_LABELS = ns.QUI_UnitFramesUnitDisplayNames or {
     player = ns.L["Player"],
     target = ns.L["Target"],
@@ -17,13 +14,11 @@ local UNIT_LABELS = ns.QUI_UnitFramesUnitDisplayNames or {
     boss = ns.L["Boss"],
 }
 
--- "icons" removed: the Auras tab-strip entry no longer exists on this
--- surface (moved to the Auras hub tile, tabIndex 21 subTabIndex 2), so
--- activeTab can never be "icons" any more.
 local PER_UNIT_TABS = {
     frame = true,
     bars = true,
     text = true,
+    icons = true,
     indicators = true,
     portrait = true,
     castbar = true,
@@ -94,11 +89,6 @@ local function RenderCastbar(host, state)
     RenderSchema("RenderCastbarTab", host, unitKey, ns.L["Castbar"])
 end
 
--- Auras moved to the Auras hub tile (tiles/auras.lua subTabIndex 2) --
--- RenderIcons/RenderIconsTab stay defined (the hub calls RenderIconsTab
--- directly); only the surface tab-strip entry that duplicated it is gone.
--- The General tab carries a pointer row to the hub (unit_frames_schema.lua
--- RenderAurasHubPointerSection).
 local TAB_DEFINITIONS = {
     { key = "general", label = ns.L["General"], render = RenderGeneral },
     { key = "frame", label = ns.L["Frame"], render = RenderFrame },

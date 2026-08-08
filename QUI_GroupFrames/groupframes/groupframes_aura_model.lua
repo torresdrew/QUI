@@ -1,23 +1,8 @@
--- QUI_GroupFrames/groupframes/groupframes_aura_model.lua
--- COMPATIBILITY SHIM — the element model moved to core/aura_elements.lua
--- (shared by all aura surfaces). This file only (a) delegates to it for the
--- editor/preview imports that still use the old name (deleted with them in
--- the settings/preview cutover tasks), and (b) keeps the GF-only tracked
--- match populator used by the preview fakes.
 local ADDON_NAME, ns = ...
 local E = ns.AuraElements
 local Model = setmetatable({}, { __index = E })
 ns.QUI_GroupFramesAuraModel = Model
 
--- The shipped default strips (NORMALIZED core schema). This lives HERE — an
--- always-loaded QUI_GroupFrames file — not in the Options-only defaults file:
--- the runtime seed path runs on any group-frame refresh, and E.EnsureSeeded
--- LATCHES elementsSeeded after seeding whatever the bucket fn returns. If the
--- bucket lived Options-side, a fresh profile on an Options-disabled install
--- would latch an EMPTY "*" bucket and permanently lose the shipped strips.
--- Single source of truth: seeded ONCE per profile context (never an AceDB
--- array default — copyDefaults re-fills deleted indices). Fixed string ids
--- ("debuffs"/"buffs") match the historical values. Fresh table each call.
 function Model.DefaultStripBucket(frameType)
     return {
         {
@@ -29,7 +14,7 @@ function Model.DefaultStripBucket(frameType)
             duration = { show = true, fontSize = 9, anchor = "BOTTOM", offsetX = 0, offsetY = -6, color = { 1, 1, 1, 1 } },
             stack = { show = true, fontSize = 9, anchor = "BOTTOMRIGHT", offsetX = -1, offsetY = 1, color = { 1, 1, 1, 1 } },
             filterMode = "off", filterFlags = {},
-            classifications = { raid = true, crowdControl = true },  -- HARMFUL: no raidInCombat (helpful-only filter)
+            classifications = { raid = true, crowdControl = true },
             whitelist = {}, blacklist = {},
             sortRule = "INDEX", sortReverse = false, rightClickCancel = true,
         },
@@ -47,11 +32,6 @@ function Model.DefaultStripBucket(frameType)
             sortRule = "INDEX", sortReverse = false, rightClickCancel = true,
         },
         {
-            -- The retired healer.defensiveIndicator as a shipped element:
-            -- classify-mode big/external defensives, engine-filtered. Party
-            -- shipped ON, raid OFF (parity with the old indicator defaults);
-            -- unknown surface seeds DISABLED (conservative — every GF caller
-            -- threads its frameType). Green border = the indicator's identity.
             id = "defensives", enabled = (frameType == "party"), mode = "filterStrip", auraType = "HELPFUL",
             anchor = "BOTTOMRIGHT", growDirection = "LEFT", spacing = 0,
             offsetX = 0, offsetY = 4, iconSize = 15, maxIcons = 3,
@@ -68,12 +48,6 @@ function Model.DefaultStripBucket(frameType)
     }
 end
 
--- Seed shim: second arg is either a defaultBucketFn (runtime callers pass
--- their own closure) or a frameType string ("party"/"raid") from the
--- editor/preview/schema paths — the bucket is surface-aware since the
--- defensives fold-in (party seeds the defensives strip enabled, raid
--- disabled). nil falls through to DefaultStripBucket(nil) = defensives
--- disabled (conservative).
 function Model.EnsureSeeded(auras, defaultBucketFnOrFrameType)
     local a = defaultBucketFnOrFrameType
     if type(a) == "function" then
@@ -82,9 +56,6 @@ function Model.EnsureSeeded(auras, defaultBucketFnOrFrameType)
     return E.EnsureSeeded(auras, function() return Model.DefaultStripBucket(a) end)
 end
 
--- `out` (optional): reusable { [spellID] = auraData } map for the preview
--- fakes (the LIVE tracked path is engine-driven via core/aura_slots.lua and
--- never reads aura data).
 function Model.PopulateElementMatches(element, cache, out)
     local matches = out or {}
     if out then

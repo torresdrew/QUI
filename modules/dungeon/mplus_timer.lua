@@ -1,15 +1,7 @@
----------------------------------------------------------------------------
--- QUI Mythic+ Timer Module
--- Custom M+ timer frame with compact layout option
--- This file: Frame creation, layout, data handling, events
--- Skinning applied separately in skinning/mplus_timer.lua
----------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 local SkinBase = ns.SkinBase
 
--- CJK-safe font setter: preserves the roman font and only adds CJK fallback
--- members where available, degrading to plain SetFont otherwise.
 local function CJKFont(fs, p, s, f)
     if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
         ns.Helpers.ApplyFontWithFallback(fs, p, s, f)
@@ -20,12 +12,8 @@ end
 
 local GetCore = ns.Helpers.GetCore
 
----------------------------------------------------------------------------
--- Module Constants
----------------------------------------------------------------------------
-local UPDATE_INTERVAL = 0.1  -- Timer update frequency (seconds)
+local UPDATE_INTERVAL = 0.1
 
--- Full layout constants
 local FRAME_WIDTH = 240
 local BAR_WIDTH = 220
 local BAR_HEIGHT = 14
@@ -34,7 +22,6 @@ local FRAME_PADDING = 10
 local VERTICAL_SPACING = 4
 local OBJECTIVES_SPACING = 2
 
--- Full mode font sizes
 local FONT_SIZE_TIMER = 28
 local FONT_SIZE_KEY = 14
 local FONT_SIZE_AFFIXES = 11
@@ -42,7 +29,6 @@ local FONT_SIZE_BAR = 11
 local FONT_SIZE_OBJECTIVE = 12
 local FONT_SIZE_DEATHS = 12
 
--- Compact layout constants
 local COMPACT_FRAME_WIDTH = 220
 local COMPACT_BAR_WIDTH = 200
 local COMPACT_BAR_HEIGHT = 12
@@ -51,14 +37,12 @@ local COMPACT_FRAME_PADDING = 6
 local COMPACT_VERTICAL_SPACING = 2
 local COMPACT_OBJECTIVES_SPACING = 1
 
--- Compact mode font sizes
-local COMPACT_FONT_SIZE_HEADER = 12    -- "+15 Jade Serpent"
-local COMPACT_FONT_SIZE_TIMER = 16     -- "23:56/32:00"
+local COMPACT_FONT_SIZE_HEADER = 12
+local COMPACT_FONT_SIZE_TIMER = 16
 local COMPACT_FONT_SIZE_BAR = 9
 local COMPACT_FONT_SIZE_OBJECTIVE = 10
 local COMPACT_FONT_SIZE_DEATHS = 10
 
--- Sleek layout constants (most compact, information-dense)
 local SLEEK_FRAME_WIDTH = 200
 local SLEEK_BAR_WIDTH = 188
 local SLEEK_BAR_HEIGHT = 8
@@ -67,7 +51,6 @@ local SLEEK_FRAME_PADDING = 6
 local SLEEK_VERTICAL_SPACING = 3
 local SLEEK_OBJECTIVES_SPACING = 1
 
--- Sleek mode font sizes
 local SLEEK_FONT_SIZE_HEADER = 12
 local SLEEK_FONT_SIZE_TIMER = 14
 local SLEEK_FONT_SIZE_PACE = 11
@@ -76,7 +59,6 @@ local SLEEK_FONT_SIZE_FORCES = 10
 local SLEEK_FONT_SIZE_OBJECTIVE = 10
 local SLEEK_FONT_SIZE_DEATHS = 9
 
--- Affix icon sizes
 local AFFIX_ICON_SIZE = 18
 local AFFIX_ICON_SPACING = 4
 local COMPACT_AFFIX_ICON_SIZE = 14
@@ -88,9 +70,6 @@ local FONT_FLAGS = (Helpers and Helpers.GetGeneralFontOutline and Helpers.GetGen
 
 local MIN_SPACING = 6
 
----------------------------------------------------------------------------
--- Module State
----------------------------------------------------------------------------
 local MPlusTimer = {}
 ns.MPlusTimer = MPlusTimer
 
@@ -98,33 +77,28 @@ MPlusTimer.frames = {}
 MPlusTimer.bars = {}
 MPlusTimer.objectives = {}
 
--- Timer state
 MPlusTimer.state = {
     inChallenge = false,
     demoModeActive = false,
     timerStarted = false,
     timerLoopRunning = false,
 
-    -- Time data
-    timer = 0,              -- Current elapsed time (seconds)
-    timeLimit = 0,          -- Total time limit (seconds)
-    timeLimits = {},        -- { [1]=+1 limit, [2]=+2 limit, [3]=+3 limit }
+    timer = 0,
+    timeLimit = 0,
+    timeLimits = {},
     completionTimeMs = 0,
     challengeCompleted = false,
     completedOnTime = false,
 
-    -- Key data
     level = 0,
     affixes = {},
     affixIDs = {},
     mapID = nil,
     dungeonName = "",
 
-    -- Deaths
     deathCount = 0,
     deathTimeLost = 0,
 
-    -- Forces
     currentCount = 0,
     totalCount = 0,
     currentPercent = 0,
@@ -133,16 +107,13 @@ MPlusTimer.state = {
     forcesCompleted = false,
     forcesCompletionTime = nil,
 
-    -- Objectives (bosses)
-    objectivesList = {},  -- { { name="Boss", time=nil or seconds, expectedTime=nil, differential=nil }, ... }
+    objectivesList = {},
 
-    -- Pace tracking (Sleek mode)
-    currentTargetTier = 3,      -- Which reward tier we're targeting (3=+3, 2=+2, 1=+1, 0=overtime)
-    currentTargetTime = 0,      -- Time limit for current target tier
-    paceOffset = 0,             -- Seconds ahead (+) or behind (-) current target
+    currentTargetTier = 3,
+    currentTargetTime = 0,
+    paceOffset = 0,
 }
 
--- Default state for reset
 local defaultState = {
     inChallenge = false,
     demoModeActive = false,
@@ -198,29 +169,26 @@ local function HideScenarioObjectiveTracker()
     ScenarioObjectiveTracker:Hide()
 end
 
----------------------------------------------------------------------------
--- Settings Access
----------------------------------------------------------------------------
 local DEFAULTS = {
     enabled = true,
-    layoutMode = "full",    -- "compact" or "full"
-    showTimer = true,       -- Show elapsed/total timer text (full mode only)
-    showBorder = true,      -- Show frame border
-    frameBackgroundOpacity = 1,  -- Multiplier for panel backdrop alpha (skinning)
+    layoutMode = "full",
+    showTimer = true,
+    showBorder = true,
+    frameBackgroundOpacity = 1,
     showDeaths = true,
     showAffixes = true,
     showObjectives = true,
-    objectiveTextAlign = "LEFT",  -- "LEFT" | "CENTER" | "RIGHT"
+    objectiveTextAlign = "LEFT",
     scale = 1.0,
     forcesBarEnabled = true,
-    forcesDisplayMode = "bar",       -- "bar" | "text"
-    forcesPosition = "after_timer",  -- "before_timer" | "after_timer" | "before_objectives" | "after_objectives"
-    forcesTextFormat = "both",       -- "count" | "percentage" | "both"
-    forcesTextAlign = "LEFT",        -- "LEFT" | "CENTER" | "RIGHT"
+    forcesDisplayMode = "bar",
+    forcesPosition = "after_timer",
+    forcesTextFormat = "both",
+    forcesTextAlign = "LEFT",
     forcesLabel = ns.L["Forces"],
     forcesFont = "Poppins",
     forcesFontSize = 11,
-    forcesBarHeight = 0,             -- 0 = layout default (full 14 / compact 12 / sleek 8)
+    forcesBarHeight = 0,
     maxDungeonNameLength = 18,
 }
 
@@ -261,9 +229,6 @@ local function IsEnabled()
     return settings.enabled ~= false
 end
 
----------------------------------------------------------------------------
--- Font Helper
----------------------------------------------------------------------------
 local function GetGlobalFont()
     return Helpers.GetGeneralFont()
 end
@@ -285,9 +250,6 @@ local function GetForcesFont()
     return fontPath, fontSize
 end
 
----------------------------------------------------------------------------
--- Utility Functions
----------------------------------------------------------------------------
 local function FormatTime(seconds)
     if not seconds then return "0:00" end
     seconds = math.floor(seconds)
@@ -303,7 +265,6 @@ local DeepCopy = ns.Helpers.DeepCopy
 
 local Clamp = Helpers.Clamp
 
--- Format pace offset for display: "+1:24" or "-0:45"
 local function FormatPaceOffset(seconds)
     if not seconds then return "" end
     local absSeconds = math.abs(seconds)
@@ -313,17 +274,13 @@ local function FormatPaceOffset(seconds)
     return string.format("%s%d:%02d", prefix, mins, secs)
 end
 
----------------------------------------------------------------------------
--- Frame Creation
----------------------------------------------------------------------------
 function MPlusTimer:CreateFrames()
     if self.frames.root then return end
 
     local font = GetGlobalFont()
 
-    -- Root frame
     local root = CreateFrame("Frame", "QUI_MPlusTimerFrame", UIParent)
-    root:SetSize(FRAME_WIDTH, 300)  -- Height will be adjusted dynamically
+    root:SetSize(FRAME_WIDTH, 300)
     root:SetFrameStrata("MEDIUM")
     root:SetClampedToScreen(true)
     root:Hide()
@@ -335,14 +292,12 @@ function MPlusTimer:CreateFrames()
 
     self.frames.root = root
 
-    -- Dungeon name (top, centered)
     local dungeonText = root:CreateFontString(nil, "ARTWORK")
     CJKFont(dungeonText, font, FONT_SIZE_KEY, FONT_FLAGS)
     dungeonText:SetJustifyH("CENTER")
     dungeonText:SetText("")
     self.frames.dungeonText = dungeonText
 
-    -- Deaths frame (clickable for tooltip)
     local deathsFrame = CreateFrame("Frame", nil, root)
     deathsFrame:SetSize(80, 20)
     deathsFrame:EnableMouse(true)
@@ -374,14 +329,12 @@ function MPlusTimer:CreateFrames()
     self.frames.deathsFrame = deathsFrame
     self.frames.deathsText = deathsText
 
-    -- Timer text (large, center)
     local timerText = root:CreateFontString(nil, "ARTWORK")
     CJKFont(timerText, font, FONT_SIZE_TIMER, FONT_FLAGS)
     timerText:SetJustifyH("CENTER")
     timerText:SetText("0:00 / 0:00")
     self.frames.timerText = timerText
 
-    -- Pace text (Sleek mode: shows "+1:24" or "-0:45")
     local paceText = root:CreateFontString(nil, "ARTWORK")
     CJKFont(paceText, font, SLEEK_FONT_SIZE_PACE, FONT_FLAGS)
     paceText:SetJustifyH("RIGHT")
@@ -389,39 +342,33 @@ function MPlusTimer:CreateFrames()
     paceText:Hide()
     self.frames.paceText = paceText
 
-    -- Key level text
     local keyText = root:CreateFontString(nil, "ARTWORK")
     CJKFont(keyText, font, FONT_SIZE_KEY, FONT_FLAGS)
     keyText:SetJustifyH("LEFT")
     keyText:SetText("[0]")
     self.frames.keyText = keyText
 
-    -- Affixes text (legacy, hidden when using icons)
     local affixText = root:CreateFontString(nil, "ARTWORK")
     CJKFont(affixText, font, FONT_SIZE_AFFIXES, FONT_FLAGS)
     affixText:SetJustifyH("LEFT")
     affixText:SetText("")
     self.frames.affixText = affixText
 
-    -- Affix icons container
     local affixIconsFrame = CreateFrame("Frame", nil, root)
     affixIconsFrame:SetSize(AFFIX_ICON_SIZE * 4 + AFFIX_ICON_SPACING * 3, AFFIX_ICON_SIZE)
     self.frames.affixIcons = affixIconsFrame
 
-    -- Create up to 4 affix icon buttons
     self.affixIcons = {}
     for i = 1, 4 do
         local iconFrame = CreateFrame("Frame", nil, affixIconsFrame)
         iconFrame:SetSize(AFFIX_ICON_SIZE, AFFIX_ICON_SIZE)
         iconFrame:EnableMouse(true)
 
-        -- Icon texture
         local icon = iconFrame:CreateTexture(nil, "ARTWORK")
         icon:SetAllPoints()
-        icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)  -- Trim edges
+        icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         iconFrame.icon = icon
 
-        -- Tooltip
         iconFrame:SetScript("OnEnter", function(frame)
             if frame.affixID then
                 local name, desc = C_ChallengeMode.GetAffixInfo(frame.affixID)
@@ -444,22 +391,18 @@ function MPlusTimer:CreateFrames()
         self.affixIcons[i] = iconFrame
     end
 
-    -- Bars container
     local barsFrame = CreateFrame("Frame", nil, root)
     barsFrame:SetSize(BAR_WIDTH, (BAR_HEIGHT + BAR_PADDING) * 4)
     self.frames.bars = barsFrame
 
-    -- Create timer bars (+3, +2, +1)
     self.bars = {}
     for i = 1, 3 do
         local bar = self:CreateProgressBar(barsFrame, "timer" .. i)
         self.bars[i] = bar
     end
 
-    -- Forces bar
     self.bars.forces = self:CreateProgressBar(barsFrame, "forces")
 
-    -- Forces text-only display (for when forcesDisplayMode = "text")
     local forcesTextFrame = CreateFrame("Frame", nil, root)
     forcesTextFrame:SetSize(BAR_WIDTH, BAR_HEIGHT)
     forcesTextFrame:Hide()
@@ -477,7 +420,6 @@ function MPlusTimer:CreateFrames()
     forcesValueText:SetText("")
     self.frames.forcesValueText = forcesValueText
 
-    -- Sleek mode: Segmented progress bar (single bar with colored segments)
     local sleekBarContainer = CreateFrame("Frame", nil, root, "BackdropTemplate")
     sleekBarContainer:SetSize(SLEEK_BAR_WIDTH, SLEEK_BAR_HEIGHT)
     sleekBarContainer:Hide()
@@ -492,12 +434,11 @@ function MPlusTimer:CreateFrames()
         end
     end
 
-    -- Create three segment regions inside the sleek bar
     self.sleekSegments = {}
     local segmentColors = {
-        [3] = {0.2, 0.85, 0.4, 1},   -- +3: Green
-        [2] = {0.95, 0.75, 0.2, 1},  -- +2: Yellow
-        [1] = {0.4, 0.7, 0.9, 1},    -- +1: Blue (accent)
+        [3] = {0.2, 0.85, 0.4, 1},
+        [2] = {0.95, 0.75, 0.2, 1},
+        [1] = {0.4, 0.7, 0.9, 1},
     }
 
     for i = 3, 1, -1 do
@@ -508,19 +449,16 @@ function MPlusTimer:CreateFrames()
         self.sleekSegments[i] = segment
     end
 
-    -- Position marker (shows current time position)
     local posMarker = sleekBarContainer:CreateTexture(nil, "OVERLAY")
     posMarker:SetTexture("Interface\\Buttons\\WHITE8x8")
     posMarker:SetVertexColor(1, 1, 1, 0.9)
     posMarker:SetSize(2, SLEEK_BAR_HEIGHT)
     self.frames.sleekPosMarker = posMarker
 
-    -- Objectives container (width comes from the per-layout TOPLEFT/TOPRIGHT anchors)
     local objectivesFrame = CreateFrame("Frame", nil, root)
     objectivesFrame:SetHeight(100)
     self.frames.objectives = objectivesFrame
 
-    -- Pre-create objective lines (up to 8 bosses)
     self.objectives = {}
     for i = 1, 8 do
         local objText = objectivesFrame:CreateFontString(nil, "ARTWORK")
@@ -530,7 +468,6 @@ function MPlusTimer:CreateFrames()
         self.objectives[i] = objText
     end
 
-    -- Make movable
     root:SetMovable(true)
     root:EnableMouse(true)
     root:RegisterForDrag("LeftButton")
@@ -548,7 +485,6 @@ end
 function MPlusTimer:CreateProgressBar(parent, barType)
     local bar = {}
 
-    -- Container frame with backdrop
     local frame = CreateFrame("Frame", nil, parent, "BackdropTemplate")
     frame:SetSize(BAR_WIDTH, BAR_HEIGHT)
     bar.frame = frame
@@ -562,7 +498,6 @@ function MPlusTimer:CreateProgressBar(parent, barType)
         end
     end
 
-    -- Status bar
     local statusBar = CreateFrame("StatusBar", nil, frame)
     statusBar:SetPoint("TOPLEFT", 1, -1)
     statusBar:SetPoint("BOTTOMRIGHT", -1, 1)
@@ -571,14 +506,12 @@ function MPlusTimer:CreateProgressBar(parent, barType)
     statusBar:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
     bar.bar = statusBar
 
-    -- Bar text
     local text = statusBar:CreateFontString(nil, "OVERLAY")
     CJKFont(text, GetGlobalFont(), FONT_SIZE_BAR, FONT_FLAGS)
     text:SetPoint("RIGHT", statusBar, "RIGHT", -4, 0)
     text:SetJustifyH("RIGHT")
     bar.text = text
 
-    -- Forces bar has overlay texture for current pull preview
     if barType == "forces" then
         local overlay = statusBar:CreateTexture(nil, "OVERLAY")
         overlay:SetTexture("Interface\\Buttons\\WHITE8x8")
@@ -591,9 +524,6 @@ function MPlusTimer:CreateProgressBar(parent, barType)
     return bar
 end
 
----------------------------------------------------------------------------
--- Dynamic Width Calculation
----------------------------------------------------------------------------
 function MPlusTimer:CalculateRequiredWidth()
     if not self.frames.root then return nil end
 
@@ -674,12 +604,6 @@ function MPlusTimer:UpdateFrameWidth()
     self.frames.root:SetWidth(requiredWidth)
 end
 
----------------------------------------------------------------------------
--- Layout
----------------------------------------------------------------------------
--- Anchors the forces label/value pair inside forcesTextFrame per the
--- alignment setting. CENTER depends on the rendered string widths, so this
--- re-runs whenever the value text changes (RenderForces).
 function MPlusTimer:AnchorForcesText()
     local frame = self.frames.forcesTextFrame
     local label = self.frames.forcesLabelText
@@ -704,16 +628,12 @@ function MPlusTimer:AnchorForcesText()
     end
 end
 
--- Resolves the forces bar height: explicit setting, or the layout mode's
--- timer-bar height when the setting is 0/unset.
 local function GetForcesBarHeight(settings, layoutBarHeight)
     local h = tonumber(settings.forcesBarHeight) or 0
     if h > 0 then return h end
     return layoutBarHeight
 end
 
--- Sizes and shows the bar-mode forces row. The anchor varies by call site
--- (root-relative, or stacked under the timer bars container).
 function MPlusTimer:LayoutForcesBar(anchorTo, x, y, barWidth, barHeight, fontPath, fontSize)
     local forces = self.bars.forces
     forces.frame:ClearAllPoints()
@@ -729,7 +649,6 @@ function MPlusTimer:LayoutForcesBar(anchorTo, x, y, barWidth, barHeight, fontPat
     forces.frame:Show()
 end
 
--- Positions the text-mode forces row and applies font + alignment.
 function MPlusTimer:LayoutForcesText(pad, yOffset, barWidth, fontPath, fontSize)
     local frame = self.frames.forcesTextFrame
     frame:ClearAllPoints()
@@ -741,10 +660,6 @@ function MPlusTimer:LayoutForcesText(pad, yOffset, barWidth, fontPath, fontSize)
     frame:Show()
 end
 
--- Anchors the objectives container across the panel width and lays out the
--- objective lines per the alignment setting. Lines stay auto-sized (single
--- anchor point) so long boss names overflow instead of wrapping/clipping.
--- Returns the total height consumed.
 function MPlusTimer:LayoutObjectiveLines(settings, font, fontSize, spacing, pad, yOffset)
     local align = settings.objectiveTextAlign
     if align ~= "CENTER" and align ~= "RIGHT" then align = "LEFT" end
@@ -1357,8 +1272,6 @@ function MPlusTimer:UpdateLayoutFull(font, settings)
 end
 
 function MPlusTimer:GetTimerBarFractions()
-    -- Returns fractions for +1, +2, +3 bars
-    -- Default: 20% for +1, 20% for +2, 60% for +3
     local timeLimit = self.state.timeLimit
     if timeLimit <= 0 then
         return 0.2, 0.2, 0.6
@@ -1380,15 +1293,11 @@ function MPlusTimer:GetTimerBarFractions()
     return fractions[1] or 0.2, fractions[2] or 0.2, fractions[3] or 0.6
 end
 
----------------------------------------------------------------------------
--- Rendering
----------------------------------------------------------------------------
 function MPlusTimer:RenderTimer()
     if not self.frames.timerText then return end
 
     local sleek = IsSleekMode()
 
-    -- Update pace tracking
     self:UpdateTargetTier()
 
     local timerStr = FormatTime(self.state.timer) .. " / " .. FormatTime(self.state.timeLimit)
@@ -1400,24 +1309,18 @@ function MPlusTimer:RenderTimer()
 
     self.frames.timerText:SetText(timerStr)
 
-    -- Update pace text for Sleek mode
     if sleek and self.frames.paceText then
         local paceStr = FormatPaceOffset(self.state.paceOffset)
         local tier = self.state.currentTargetTier
 
-        -- Color based on pace status
         if self.state.paceOffset > 30 then
-            -- Ahead by more than 30s: green
             self.frames.paceText:SetTextColor(0.2, 0.85, 0.4)
         elseif self.state.paceOffset >= -30 then
-            -- Within 30s: yellow
             self.frames.paceText:SetTextColor(0.95, 0.75, 0.2)
         else
-            -- Behind by more than 30s: red
             self.frames.paceText:SetTextColor(1, 0.3, 0.3)
         end
 
-        -- Add tier indicator
         if tier > 0 then
             paceStr = paceStr .. " (+" .. tier .. ")"
         else
@@ -1426,11 +1329,9 @@ function MPlusTimer:RenderTimer()
 
         self.frames.paceText:SetText(paceStr)
 
-        -- Update sleek bar position marker
         self:UpdateSleekPositionMarker()
     end
 
-    -- Update bar values (Full and Compact modes)
     if not sleek then
         for i = 1, 3 do
             local limit = self.state.timeLimits[i] or self.state.timeLimit
@@ -1442,7 +1343,6 @@ function MPlusTimer:RenderTimer()
 
             self.bars[i].bar:SetValue(barValue)
 
-            -- Time remaining text
             local timeText = FormatTime(math.abs(timeRemaining))
             if timeRemaining < 0 and i == 1 then
                 timeText = "-" .. timeText
@@ -1512,7 +1412,6 @@ end
 function MPlusTimer:RenderAffixIcons()
     local settings = GetSettings()
 
-    -- Hide all icons first
     for i = 1, 4 do
         if self.affixIcons[i] then
             self.affixIcons[i]:Hide()
@@ -1586,7 +1485,6 @@ function MPlusTimer:RenderObjectives()
     local settings = GetSettings()
     local sleek = IsSleekMode()
 
-    -- Clear all and reset colors
     for i = 1, 8 do
         self.objectives[i]:SetText("")
     end
@@ -1598,33 +1496,29 @@ function MPlusTimer:RenderObjectives()
 
     for i, obj in ipairs(self.state.objectivesList) do
         if i <= 8 then
-            local indicator = obj.time and "|cFF66FF66+|r " or "|cFFAAAAAA-|r "  -- Green + or grey -
+            local indicator = obj.time and "|cFF66FF66+|r " or "|cFFAAAAAA-|r "
             local text = obj.name or "Unknown"
 
             if sleek then
-                -- Sleek mode: Show differential and completion time
                 if obj.time then
-                    -- Calculate expected time for this boss
                     local expectedTime = (i / totalBosses) * targetTime
                     local differential = obj.time - expectedTime
 
-                    -- Color code the differential
                     local diffColor
                     if differential < -30 then
-                        diffColor = "|cFF33D98C"  -- Green (ahead by more than 30s)
+                        diffColor = "|cFF33D98C"
                     elseif differential <= 30 then
-                        diffColor = "|cFFF0C020"  -- Yellow (within 30s)
+                        diffColor = "|cFFF0C020"
                     else
-                        diffColor = "|cFFFF4D4D"  -- Red (behind by more than 30s)
+                        diffColor = "|cFFFF4D4D"
                     end
 
-                    local diffStr = FormatPaceOffset(-differential)  -- Negate so + means ahead
+                    local diffStr = FormatPaceOffset(-differential)
                     text = indicator .. text .. " " .. diffColor .. diffStr .. "|r |cFF888888" .. FormatTime(obj.time) .. "|r"
                 else
                     text = indicator .. text
                 end
             else
-                -- Full/Compact mode: original format
                 if obj.time then
                     text = indicator .. text .. " |cFF888888[" .. FormatTime(obj.time) .. "]|r"
                 else
@@ -1647,9 +1541,6 @@ function MPlusTimer:RenderAll()
     self:RenderObjectives()
 end
 
----------------------------------------------------------------------------
--- Timer Loop
----------------------------------------------------------------------------
 local sinceLastUpdate = 0
 
 function MPlusTimer:OnTimerTick(elapsed)
@@ -1657,14 +1548,12 @@ function MPlusTimer:OnTimerTick(elapsed)
     if sinceLastUpdate < UPDATE_INTERVAL then return end
     sinceLastUpdate = sinceLastUpdate - UPDATE_INTERVAL
 
-    -- In demo mode, increment timer manually; otherwise read from game
     if self.state.demoModeActive then
         self.state.timer = (self.state.timer or 0) + UPDATE_INTERVAL
     else
         self.state.timer = select(2, GetWorldElapsedTime(1)) or 0
     end
 
-    -- First tick after timer starts
     if self.state.timer > 0 and not self.state.timerStarted then
         self.state.timerStarted = true
         self:RenderForces()
@@ -1674,7 +1563,6 @@ function MPlusTimer:OnTimerTick(elapsed)
     self:RenderTimer()
 end
 
--- Named OnUpdate handler avoids closure allocation per StartTimerLoop call
 local function MPlusTimer_OnUpdate(_, elapsed)
     MPlusTimer:OnTimerTick(elapsed)
 end
@@ -1696,27 +1584,21 @@ function MPlusTimer:StopTimerLoop()
     end
 end
 
----------------------------------------------------------------------------
--- State Management
----------------------------------------------------------------------------
 function MPlusTimer:ResetState()
     self.state = DeepCopy(defaultState)
 end
 
 function MPlusTimer:SetTimeLimit(limit)
     self.state.timeLimit = limit
-    -- Calculate +1/+2/+3 thresholds (100%/80%/60% of time limit)
     self.state.timeLimits = {
-        [1] = limit,           -- +1 at 100% (full time)
-        [2] = limit * 0.8,     -- +2 at 80%
-        [3] = limit * 0.6,     -- +3 at 60%
+        [1] = limit,
+        [2] = limit * 0.8,
+        [3] = limit * 0.6,
     }
-    -- Initialize pace tracking to +3 target
     self.state.currentTargetTier = 3
     self.state.currentTargetTime = self.state.timeLimits[3] or limit * 0.6
 end
 
--- Update which reward tier we're tracking against (dynamic pace indicator)
 function MPlusTimer:UpdateTargetTier()
     local elapsed = self.state.timer
     local limits = self.state.timeLimits
@@ -1728,26 +1610,20 @@ function MPlusTimer:UpdateTargetTier()
         return
     end
 
-    -- Determine best achievable tier based on elapsed time
     if elapsed < (limits[3] or 0) then
-        -- Still can get +3
         self.state.currentTargetTier = 3
         self.state.currentTargetTime = limits[3]
     elseif elapsed < (limits[2] or 0) then
-        -- Missed +3, can still get +2
         self.state.currentTargetTier = 2
         self.state.currentTargetTime = limits[2]
     elseif elapsed < (limits[1] or 0) then
-        -- Missed +2, can still get +1
         self.state.currentTargetTier = 1
         self.state.currentTargetTime = limits[1]
     else
-        -- Overtime - past all thresholds
         self.state.currentTargetTier = 0
         self.state.currentTargetTime = self.state.timeLimit
     end
 
-    -- Calculate pace offset (positive = ahead, negative = behind)
     self.state.paceOffset = self.state.currentTargetTime - elapsed
 end
 
@@ -1780,30 +1656,22 @@ function MPlusTimer:SetObjectives(objectives)
     self:RenderObjectives()
 end
 
----------------------------------------------------------------------------
--- Scaling
----------------------------------------------------------------------------
 function MPlusTimer:ApplyScale()
     if not self.frames.root then return end
 
     local settings = GetSettings()
     local scale = settings.scale or 1.0
 
-    -- Store current position before scale change
     local point, _, relPoint, x, y = self.frames.root:GetPoint()
 
     self.frames.root:SetScale(scale)
 
-    -- Re-anchor to maintain visual position (skip if anchoring system controls this frame)
     if point and not (_G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("mplusTimer")) then
         self.frames.root:ClearAllPoints()
         self.frames.root:SetPoint(point, UIParent, relPoint, x, y)
     end
 end
 
----------------------------------------------------------------------------
--- Show/Hide
----------------------------------------------------------------------------
 function MPlusTimer:Show()
     local justCreated = not self.frames.root
     if justCreated then
@@ -1815,19 +1683,14 @@ function MPlusTimer:Show()
     self:RenderAll()
     self.frames.root:Show()
 
-    -- Newly created frame needs anchoring applied — CreateFrames skips
-    -- SetPoint when QUI_HasFrameAnchor is true, but the anchoring system
-    -- may not have positioned this frame yet.
     if justCreated and _G.QUI_ApplyFrameAnchor then
         _G.QUI_ApplyFrameAnchor("mplusTimer")
     end
 
-    -- Trigger skin application
     if _G.QUI_ApplyMPlusTimerSkin then
         _G.QUI_ApplyMPlusTimerSkin()
     end
 
-    -- Hide Blizzard's timer
     HideScenarioObjectiveTracker()
 end
 
@@ -1837,15 +1700,11 @@ function MPlusTimer:Hide()
     end
     self:StopTimerLoop()
 
-    -- Show Blizzard's timer again
     if ScenarioObjectiveTracker and ObjectiveTrackerFrame and not InCombatLockdown() then
         ObjectiveTrackerFrame:Update()
     end
 end
 
----------------------------------------------------------------------------
--- Demo Mode (for testing outside M+)
----------------------------------------------------------------------------
 function MPlusTimer:EnableDemoMode()
     if self.state.inChallenge then
         return
@@ -1856,8 +1715,7 @@ function MPlusTimer:EnableDemoMode()
     self:ResetState()
     self.state.demoModeActive = true
 
-    -- Set demo data
-    self:SetTimeLimit(32 * 60)  -- 32 minutes
+    self:SetTimeLimit(32 * 60)
     self:SetKeyDetails(11, {"Tyrannical", "Storming", "Fortified"}, {9, 124, 10}, 1, "Jade Serpent")
     self:SetDeathCount(3, 15)
     self:SetForces(198, 289)
@@ -1869,8 +1727,7 @@ function MPlusTimer:EnableDemoMode()
         { name = "Sha of Doubt", time = nil },
     })
 
-    self.state.timer = 23 * 60 + 56  -- 23:56 elapsed (demo value)
-
+    self.state.timer = 23 * 60 + 56
 
     self:Show()
     self:StartTimerLoop()
@@ -1894,16 +1751,12 @@ function MPlusTimer:ToggleDemoMode()
     end
 end
 
----------------------------------------------------------------------------
--- Challenge Mode Event Handling
----------------------------------------------------------------------------
 function MPlusTimer:EnableChallengeMode()
     if self.state.inChallenge then return end
 
     self:ResetState()
     self.state.inChallenge = true
 
-    -- Get key info
     local mapID = C_ChallengeMode.GetActiveChallengeMapID()
     local dungeonName = ""
     if mapID then
@@ -1915,7 +1768,6 @@ function MPlusTimer:EnableChallengeMode()
         end
     end
 
-    -- Get active keystone info
     local level, affixes = C_ChallengeMode.GetActiveKeystoneInfo()
     if level then
         local affixNames = {}
@@ -1928,11 +1780,9 @@ function MPlusTimer:EnableChallengeMode()
         self:SetKeyDetails(level, affixNames, affixes, mapID, dungeonName)
     end
 
-    -- Get initial death count
     local deaths, timeLost = C_ChallengeMode.GetDeathCount()
     self:SetDeathCount(deaths, timeLost)
 
-    -- Update objectives
     self:UpdateObjectives()
 
     self:Show()
@@ -1966,10 +1816,6 @@ end
 function MPlusTimer:UpdateObjectives()
     local objectives = {}
 
-    -- Freeze each boss's completion time at the moment it was first seen
-    -- completed. Carry forward any time we already stamped on a prior pass
-    -- (objectivesList is wiped by ResetState at the start of each run), so a
-    -- live timer tick never overwrites an earlier kill's recorded time.
     local prevTimes = {}
     for _, prev in ipairs(self.state.objectivesList or {}) do
         if prev.name and prev.time then
@@ -2020,7 +1866,6 @@ function MPlusTimer:CheckForChallengeMode()
     local inChallenge = difficulty == 8 and instanceType == "party"
 
     if inChallenge and not self.state.inChallenge and not self.state.demoModeActive then
-        -- Only enable if timer is enabled in settings
         if IsEnabled() then
             self:EnableChallengeMode()
         end
@@ -2029,14 +1874,10 @@ function MPlusTimer:CheckForChallengeMode()
     end
 end
 
----------------------------------------------------------------------------
--- Event Registration
----------------------------------------------------------------------------
 local eventFrame = CreateFrame("Frame")
 
 local function OnEvent(self, event, arg1, ...)
     if event == "ADDON_LOADED" and arg1 == ADDON_NAME then
-        -- Initialize on addon load
         C_Timer.After(0.5, function()
             if IsEnabled() then
                 MPlusTimer:CreateFrames()
@@ -2088,9 +1929,6 @@ eventFrame:RegisterEvent("SCENARIO_POI_UPDATE")
 eventFrame:RegisterEvent("ZONE_CHANGED")
 eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 
--- LOD catch-up: first PEW already fired before this module loads; detect an
--- already-running challenge (e.g. module enabled mid-key).
--- ns.WhenLoggedIn is nil only in the headless test harness.
 if ns.WhenLoggedIn then
     ns.WhenLoggedIn(function()
         C_Timer.After(0.5, function()
@@ -2099,10 +1937,7 @@ if ns.WhenLoggedIn then
     end)
 end
 
- ---------------------------------------------------------------------------
--- Slash Command
- ---------------------------------------------------------------------------
-SLASH_QUIIMPLUSTIMER1 = "/qmpt"
+SLASH_QUIIMPLUSTIMER1 = "/quimpt"
 SlashCmdList["QUIIMPLUSTIMER"] = function(msg)
     local cmd = msg:lower():trim()
 
@@ -2115,7 +1950,4 @@ SlashCmdList["QUIIMPLUSTIMER"] = function(msg)
     end
 end
 
- ---------------------------------------------------------------------------
--- Expose for skinning
- ---------------------------------------------------------------------------
 _G.QUI_MPlusTimer = MPlusTimer

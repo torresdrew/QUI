@@ -1,8 +1,3 @@
---[[
-    QUI Prey Tracker Options
-    Options sub-tab for the Prey Tracker module. Migrated to V3 body pattern.
-]]
-
 local _, ns = ...
 local QUI = QUI
 local GUI = QUI.GUI
@@ -22,7 +17,6 @@ local function GetDB()
     return db and db.preyTracker
 end
 
--- Shared provider-panel layout scaffold (core/settings_layout_shared.lua).
 local function MakeLayout(content)
     return ns.QUI_SettingsLayoutShared.MakeLayout(content)
 end
@@ -46,11 +40,6 @@ ns.QUI_PreyTrackerOptions = {}
 function ns.QUI_PreyTrackerOptions.BuildPreyTrackerContent(content)
     local db = GetDB()
 
-    -- The V2 renderer (ResolveFeatureSearchContext in options/shared.lua)
-    -- already populated the search context with tileId="gameplay" /
-    -- subPageIndex=8 / featureId="preyTrackerPage" before invoking this
-    -- builder. Calling SetSearchContext here would wipe those route fields.
-
     if not db then
         local noData = GUI:CreateLabel(content, ns.L["Prey Tracker settings are not available. Please reload the UI."], 12, C.textMuted)
         noData:SetPoint("TOPLEFT", PAD, -20)
@@ -71,9 +60,6 @@ function ns.QUI_PreyTrackerOptions.BuildPreyTrackerContent(content)
 
     local L = MakeLayout(content)
 
-    ---------------------------------------------------------------------------
-    -- GENERAL
-    ---------------------------------------------------------------------------
     L.headerAt(ns.L["General"])
     local sGen = L.sectionAt()
     local genEnableW = GUI:CreateFormCheckbox(sGen.frame, nil, "enabled", db, Refresh,
@@ -82,7 +68,6 @@ function ns.QUI_PreyTrackerOptions.BuildPreyTrackerContent(content)
     L.closeSection(sGen)
     placeHint(L, content, ns.L["Tracks prey hunting progress from the Midnight prey system. Requires an active prey hunt quest."])
 
-    -- Dimensions card (Width / Height / Border).
     local sDim = L.sectionAt()
     local dimWidthW = GUI:CreateFormSlider(sDim.frame, nil, 100, 500, 1, "width", db, RefreshPreview,
         { description = ns.L["Width of the prey tracker bar in pixels."] })
@@ -97,9 +82,6 @@ function ns.QUI_PreyTrackerOptions.BuildPreyTrackerContent(content)
     sDim.AddRow(row(sDim.frame, ns.L["Border Size"], dimBorderW))
     L.closeSection(sDim)
 
-    ---------------------------------------------------------------------------
-    -- BAR APPEARANCE
-    ---------------------------------------------------------------------------
     L.headerAt(ns.L["Bar Appearance"])
     local sBA = L.sectionAt()
 
@@ -107,7 +89,6 @@ function ns.QUI_PreyTrackerOptions.BuildPreyTrackerContent(content)
     local baTexW = GUI:CreateFormDropdown(sBA.frame, nil, textureList, "texture", db, RefreshPreview,
         { description = ns.L["Status bar texture used to fill the prey tracker bar."] })
 
-    -- Color mode dropdown: not bound to a single DB key — maps to two booleans.
     local colorModeOptions = {
         { value = "accent", text = ns.L["Accent Color"] },
         { value = "class", text = ns.L["Class Color"] },
@@ -177,9 +158,6 @@ function ns.QUI_PreyTrackerOptions.BuildPreyTrackerContent(content)
     sBA.AddRow(row(sBA.frame, ns.L["Background Color"], baBgColorW))
     L.closeSection(sBA)
 
-    ---------------------------------------------------------------------------
-    -- BORDER
-    ---------------------------------------------------------------------------
     L.headerAt(ns.L["Border"])
     local sBD = L.sectionAt()
     if ns.QUI_BorderControl then
@@ -189,9 +167,6 @@ function ns.QUI_PreyTrackerOptions.BuildPreyTrackerContent(content)
     end
     L.closeSection(sBD)
 
-    ---------------------------------------------------------------------------
-    -- TEXT & DISPLAY
-    ---------------------------------------------------------------------------
     L.headerAt(ns.L["Text & Display"])
     local sTX = L.sectionAt()
     local txShowW = GUI:CreateFormCheckbox(sTX.frame, nil, "showText", db, RefreshPreview,
@@ -233,9 +208,6 @@ function ns.QUI_PreyTrackerOptions.BuildPreyTrackerContent(content)
     )
     L.closeSection(sTX)
 
-    ---------------------------------------------------------------------------
-    -- SOUNDS
-    ---------------------------------------------------------------------------
     L.headerAt(ns.L["Sounds"])
     local sSnd = L.sectionAt()
     local sndEnableW = GUI:CreateFormCheckbox(sSnd.frame, nil, "soundEnabled", db, nil,
@@ -261,9 +233,6 @@ function ns.QUI_PreyTrackerOptions.BuildPreyTrackerContent(content)
     sSnd.AddRow(row(sSnd.frame, ns.L["Completion Sound"], sndCompleteW))
     L.closeSection(sSnd)
 
-    ---------------------------------------------------------------------------
-    -- AMBUSH ALERTS
-    ---------------------------------------------------------------------------
     L.headerAt(ns.L["Ambush Alerts"])
     local sAmb = L.sectionAt()
     local ambEnableW = GUI:CreateFormCheckbox(sAmb.frame, nil, "ambushAlertEnabled", db, nil,
@@ -285,9 +254,6 @@ function ns.QUI_PreyTrackerOptions.BuildPreyTrackerContent(content)
     )
     L.closeSection(sAmb)
 
-    ---------------------------------------------------------------------------
-    -- VISIBILITY
-    ---------------------------------------------------------------------------
     L.headerAt(ns.L["Visibility"])
     local sVis = L.sectionAt()
     local visReplaceW = GUI:CreateFormCheckbox(sVis.frame, nil, "replaceDefaultIndicator", db, function()
@@ -312,9 +278,6 @@ function ns.QUI_PreyTrackerOptions.BuildPreyTrackerContent(content)
     )
     L.closeSection(sVis)
 
-    ---------------------------------------------------------------------------
-    -- HUNT SCANNER
-    ---------------------------------------------------------------------------
     L.headerAt(ns.L["Hunt Scanner"])
     local sHS = L.sectionAt()
     local hsW = GUI:CreateFormCheckbox(sHS.frame, nil, "huntScannerEnabled", db, nil,
@@ -323,9 +286,6 @@ function ns.QUI_PreyTrackerOptions.BuildPreyTrackerContent(content)
     L.closeSection(sHS)
     placeHint(L, content, ns.L["Shows available hunts when visiting a hunt table NPC."])
 
-    ---------------------------------------------------------------------------
-    -- CURRENCY TRACKER
-    ---------------------------------------------------------------------------
     L.headerAt(ns.L["Currency Tracker"])
     local sCT = L.sectionAt()
     local ctEnableW = GUI:CreateFormCheckbox(sCT.frame, nil, "currencyEnabled", db, nil,
@@ -342,9 +302,6 @@ function ns.QUI_PreyTrackerOptions.BuildPreyTrackerContent(content)
     sCT.AddRow(row(sCT.frame, ns.L["Show Weekly Progress"], ctWeeklyW))
     L.closeSection(sCT)
 
-    ---------------------------------------------------------------------------
-    -- PREVIEW BUTTON
-    ---------------------------------------------------------------------------
     local previewSection = CreateFrame("Frame", nil, content)
     local previewBtn = GUI:CreateButton(previewSection, ns.L["Toggle Preview"], 140, 28, function()
         if _G.QUI_TogglePreyTrackerPreview then
@@ -357,11 +314,6 @@ function ns.QUI_PreyTrackerOptions.BuildPreyTrackerContent(content)
     L.placeCustom(previewSection, 40)
 
     L.finish()
-end
-
-function ns.QUI_PreyTrackerOptions.CreatePreyTrackerPage(parent)
-    local _, content = Shared.CreateScrollableContent(parent)
-    ns.QUI_PreyTrackerOptions.BuildPreyTrackerContent(content)
 end
 
 if Registry and Schema and RenderAdapters

@@ -1,22 +1,5 @@
----------------------------------------------------------------------------
--- DELVES SKINNING
---
--- Skins the Delves endgame frames (opt-in, default OFF):
---   - DelvesCompanionConfigurationFrame (InsetFrameTemplate, LOD
---     Blizzard_DelvesCompanionConfiguration)
---   - DelvesDifficultyPickerFrame       (DialogBorderTemplate, LOD
---     Blizzard_DelvesDifficultyPicker)
---
--- Defensive baseline: QUI backdrop + themed fonts + close button. Bespoke Delves
--- art (companion portraits, curio/reward icons) is left intact; chrome-hiding is
--- conservative (only the frame's own NineSlice / Border / Bg) so nothing in the
--- content area is nuked. Visual tuning is a follow-up in-game pass.
----------------------------------------------------------------------------
-
 local addonName, ns = ...
 
--- Master skinning gate (skinning.enabled): disabled + /reload installs no QUI
--- skin hooks for this file. Default ON; reload-required. See core/uikit.lua.
 if ns.IsSkinningEnabled and not ns.IsSkinningEnabled() then return end
 local SkinBase = ns.SkinBase
 local GetCore = ns.Helpers.GetCore
@@ -30,10 +13,8 @@ end
 local function SkinDelvesFrame(frame)
     if not frame or SkinBase.IsSkinned(frame) then return end
 
-    -- Delves-specific: DialogBorderTemplate's .Border container isn't part of the
-    -- standard chrome SkinWindow's HidePortraitFrameChrome hides, so strip it first.
     if frame.Border and SkinBase.StripTextures then SkinBase.StripTextures(frame.Border) end
-    SkinBase.SkinWindow(frame) -- chrome + backdrop + close (static-text face from global font-object override)
+    SkinBase.SkinWindow(frame)
     SkinBase.MarkSkinned(frame)
 end
 

@@ -1,7 +1,3 @@
---- QUI Minimap Module
---- Provides clean, customizable minimap functionality
---- All settings stored in AceDB for profile export/import
-
 local ADDON_NAME, ns = ...
 local QUICore = ns.Addon
 local Helpers = ns.Helpers
@@ -17,16 +13,13 @@ end
 local LSM = ns.LSM
 local LibDBIcon = LibStub("LibDBIcon-1.0", true)
 
--- Module reference
 local Minimap_Module = {}
 QUICore.Minimap = Minimap_Module
 
--- Local references for performance
 local Minimap = Minimap
 local MinimapCluster = MinimapCluster
 local UIParent = UIParent
 
--- Frames created by this module
 local backdropFrame, backdrop, mask
 local clockFrame, clockText
 local coordsFrame, coordsText
@@ -38,39 +31,27 @@ local middleClickMenuFrame
 local middleClickMenuBlocker
 local middleClickMenuRows = {}
 
--- Stable anchor proxy: parented to UIParent, stays put when external addons
--- (e.g. full-screen HUD overlays) reparent/scale the real Minimap frame.
--- The frame anchoring system resolves "minimap" to this proxy so dependent
--- frames (objective tracker, buffs, datatext panel, etc.) never follow
--- Minimap off-screen.
 local minimapAnchor
 
--- Datatext panel (3-slot architecture using QUICore.Datatexts registry)
 local datatextFrame
 
--- Performance: Cached settings and tickers (avoid per-frame GetSettings calls)
 local cachedSettings = nil
--- Tracks the last zoom level applied from the saved profile so generic Refresh()
--- calls don't keep stomping the user's mousewheel/button zoom mid-play.
 local lastAppliedZoomLevel = nil
 local clockTicker = nil
 local coordsTicker = nil
 
--- Combat-deferred refresh flag
 local inInitSafeWindow = false
 local pendingMinimapRefresh = false
 local pendingDrawerSetup = false
 local pendingDatatextPanelUpdate = false
 local middleClickMenuHooked = false
--- (micro/bag visibility now managed by action bars module)
 
--- External HUD overlay detection
 local externalHudActive = false
 local quiUpdatingMinimap = false
 local hudDetectedCount = 0
-local HUD_DEBOUNCE_THRESHOLD = 2  -- require consecutive detections before hiding
+local HUD_DEBOUNCE_THRESHOLD = 2
 local HUD_CHECK_SUPPRESS_DURATION = 0.5
-local MINIMAP_RENDER_ZOOM_NUDGE_ENABLED = false -- temporary diagnostic guard
+local MINIMAP_RENDER_ZOOM_NUDGE_ENABLED = false
 local suppressHudChecksUntil = 0
 local externalHudHooksInstalled = false
 local externalHudTicker = nil
@@ -87,20 +68,6 @@ local minimapDebugStats = {
     zoomNudge = 0,
 }
 
----=================================================================================
---- BLIZZARD LAYOUT NO-OPS
---- Blizzard's Minimap.lua calls self:Layout() internally (line ~479).
---- Minimap does not have a Layout method by default — it expects the layout
---- system or a mixin to provide one. Writing a no-op here prevents the nil
---- call error. Minimap is NOT in the Edit Mode secure execution chain, so
---- this does not cause taint for EnterEditMode/CompactUnitFrame paths.
----
---- MinimapCluster.IndicatorFrame subframes (MailFrame, CraftingOrderFrame)
---- are NOT given no-op Layout — they are reparented to hiddenButtonParent
---- which provides its own Layout. See BUTTON VISIBILITY section below.
----=================================================================================
--- TAINT NOTE: Direct method override on Blizzard frame to suppress unwanted Layout calls.
--- Minimap is reparented to UIParent by QUI and is not in the Edit Mode secure chain.
 local function InstallMinimapLayoutNoop()
     if Minimap and not Minimap.Layout then
         ---@type fun(...)
@@ -123,10 +90,6 @@ else
     end)
 end
 
----=================================================================================
---- HELPER FUNCTIONS
----=================================================================================
-
 local function GetSettings()
     if cachedSettings then return cachedSettings end
     cachedSettings = Helpers.GetModuleDB("minimap")
@@ -137,10 +100,6 @@ local function InvalidateSettingsCache()
     cachedSettings = nil
 end
 
--- True when the expansion landing page (garrison/mission) button should live in
--- the button drawer instead of pinned to the minimap. Requires the button to be
--- shown, the drawer feature enabled, and the user opt-in. When the drawer is
--- disabled this returns false so the button falls back to the minimap pin.
 local function MissionButtonInDrawer()
     local s = GetSettings()
     if not s then return false end
@@ -341,7 +300,6 @@ local function TryOpenSpellbookTab()
 
     local activated = ActivatePlayerSpellsSpellbookTab()
     if not activated then
-        -- Frame tabs can initialize a tick later; retry briefly.
         C_Timer.After(0, ActivatePlayerSpellsSpellbookTab)
         C_Timer.After(0.05, ActivatePlayerSpellsSpellbookTab)
         C_Timer.After(0.15, ActivatePlayerSpellsSpellbookTab)
@@ -516,10 +474,6 @@ local function TryOpenSpecializationTab()
     return opened or activated
 end
 
----=================================================================================
---- MINIMAP SHAPE
----=================================================================================
-
 local function SetMinimapShape(shape)
     if shape == "SQUARE" then
         Minimap:SetMaskTexture("Interface\\BUTTONS\\WHITE8X8")
@@ -528,20 +482,17 @@ local function SetMinimapShape(shape)
         end
         _G.GetMinimapShape = function() return "SQUARE" end
 
-        -- Handle HybridMinimap (Delves/scenarios)
         if HybridMinimap then
             HybridMinimap.MapCanvas:SetUseMaskTexture(false)
             HybridMinimap.CircleMask:SetTexture("Interface\\BUTTONS\\WHITE8X8")
             HybridMinimap.MapCanvas:SetUseMaskTexture(true)
         end
 
-        -- Remove the waffle texture in quest areas
         Minimap:SetArchBlobRingScalar(0)
         Minimap:SetArchBlobRingAlpha(0)
         Minimap:SetQuestBlobRingScalar(0)
         Minimap:SetQuestBlobRingAlpha(0)
     else
-        -- Round shape - use default circle mask
         Minimap:SetMaskTexture("Interface\\MINIMAP\\UI-Minimap-Background")
         if mask then
             mask:SetTexture("Interface\\MINIMAP\\UI-Minimap-Background")
@@ -555,7 +506,6 @@ local function SetMinimapShape(shape)
         end
     end
 
-    -- Refresh LibDBIcon button positions if available
     if LibDBIcon then
         local buttons = LibDBIcon:GetButtonList()
         for i = 1, #buttons do
@@ -563,10 +513,6 @@ local function SetMinimapShape(shape)
         end
     end
 end
-
----=================================================================================
---- BACKDROP / BORDER
----=================================================================================
 
 local function CreateBackdrop()
     if backdropFrame then return end
@@ -592,28 +538,20 @@ local function UpdateBackdrop()
     if not settings then return end
     if not backdrop then CreateBackdrop() end
 
-    -- Ensure backdrop is visible (may have been hidden by HUD detection or disabled state)
     backdropFrame:Show()
 
-    -- Border shows on all 4 sides, so we need size + (borderSize * 2)
     local fullSize = settings.size + (settings.borderSize * 2)
     backdrop:SetSize(fullSize, fullSize)
 
-    -- Apply border color via the centralized resolver (honors per-module source enum)
     local r, g, b, a = Helpers.GetSkinBorderColor(settings, "")
     backdrop:SetColorTexture(r, g, b, a)
 
-    -- Update mask based on shape
     if settings.shape == "SQUARE" then
         mask:SetTexture("Interface\\BUTTONS\\WHITE8X8")
     else
         mask:SetTexture("Interface\\MINIMAP\\UI-Minimap-Background")
     end
 end
-
----=================================================================================
---- DATATEXT PANEL (integrated below minimap)
----=================================================================================
 
 local function GetDatatextSettings()
     if not QUICore or not QUICore.db or not QUICore.db.profile then
@@ -622,38 +560,28 @@ local function GetDatatextSettings()
     return QUICore.db.profile.datatext
 end
 
----=================================================================================
---- DATATEXT PANEL (3-Slot Architecture)
----=================================================================================
-
 local function CreateDatatextPanel()
     if datatextFrame then return end
 
-    -- Container frame for 3 datatext slots
     datatextFrame = CreateFrame("Frame", "QUI_DatatextPanel", UIParent)
     datatextFrame:SetFrameStrata("LOW")
     datatextFrame:SetFrameLevel(100)
 
-    -- Create 4 border edge textures
     datatextFrame.borderLeft = datatextFrame:CreateTexture(nil, "BACKGROUND")
     datatextFrame.borderRight = datatextFrame:CreateTexture(nil, "BACKGROUND")
     datatextFrame.borderTop = datatextFrame:CreateTexture(nil, "BACKGROUND")
     datatextFrame.borderBottom = datatextFrame:CreateTexture(nil, "BACKGROUND")
 
-    -- Background texture
     datatextFrame.bg = datatextFrame:CreateTexture(nil, "BACKGROUND")
     datatextFrame.bg:SetAllPoints()
 
-    -- Create 3 slot frames for individual datatexts
     datatextFrame.slots = {}
     for i = 1, 3 do
         local slot = CreateFrame("Button", nil, datatextFrame)
         slot:EnableMouse(true)
         slot:RegisterForClicks("AnyUp")
 
-        -- Create text for datatext use
         slot.text = slot:CreateFontString(nil, "OVERLAY")
-        -- Anchor to both edges to constrain width and enable auto-truncation
         slot.text:SetPoint("LEFT", slot, "LEFT", 1, 0)
         slot.text:SetPoint("RIGHT", slot, "RIGHT", -1, 0)
         slot.text:SetJustifyH("CENTER")
@@ -664,7 +592,6 @@ local function CreateDatatextPanel()
     end
 end
 
--- Attach datatexts to the 3 minimap panel slots
 local function RefreshDatatextSlots()
     if not datatextFrame or not datatextFrame.slots then return end
     if not QUICore or not QUICore.Datatexts then return end
@@ -675,7 +602,6 @@ local function RefreshDatatextSlots()
 
     local slots = dtSettings.slots or {"time", "friends", "guild"}
 
-    -- Apply font settings to all slots
     local generalFont = "Quazii"
     local generalOutline = "OUTLINE"
     if QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.general then
@@ -686,7 +612,6 @@ local function RefreshDatatextSlots()
     local fontPath = LSM:Fetch("font", generalFont) or "Fonts\\FRIZQT__.TTF"
     local fontSize = dtSettings.fontSize or 12
 
-    -- Count active (non-empty) slots for flexible width calculation
     local activeCount = 0
     for i = 1, 3 do
         local datatextID = slots[i]
@@ -695,30 +620,24 @@ local function RefreshDatatextSlots()
         end
     end
 
-    -- Calculate flexible slot widths based on active count
     local panelWidth = datatextFrame:GetWidth()
     local slotWidth = panelWidth / math.max(1, activeCount)
     local slotHeight = datatextFrame:GetHeight()
 
-    -- Position only active slots, hide empty ones
     local xPos = 0
     for i, slot in ipairs(datatextFrame.slots) do
         local datatextID = slots[i]
         local slotConfig = dtSettings["slot" .. i] or {}
 
-        -- Detach any existing datatext first
         if slot.datatextInstance then
             QUICore.Datatexts:DetachFromSlot(slot)
         end
 
-        -- Apply font to ALL slots (prevents "Font not set" error on empty slots)
         QUICore:SafeSetFont(slot.text, fontPath, fontSize, generalOutline)
 
         if datatextID and datatextID ~= "" then
-            -- Active slot: size, position, show
             slot:SetSize(slotWidth, slotHeight)
             slot:ClearAllPoints()
-            -- Apply per-slot offsets
             local xOff = slotConfig.xOffset or 0
             local yOff = slotConfig.yOffset or 0
             slot:SetPoint("LEFT", datatextFrame, "LEFT", xPos + xOff, yOff)
@@ -727,14 +646,11 @@ local function RefreshDatatextSlots()
 
             slot.text:SetTextColor(1, 1, 1, 1)
 
-            -- Store per-slot shortLabel/noLabel on the slot for datatext to read
             slot.shortLabel = slotConfig.shortLabel or false
             slot.noLabel = slotConfig.noLabel or false
 
-            -- Attach datatext
             QUICore.Datatexts:AttachToSlot(slot, datatextID, dtSettings)
         else
-            -- Empty slot: hide
             slot:Hide()
             slot.text:SetText("")
         end
@@ -742,17 +658,6 @@ local function RefreshDatatextSlots()
 end
 
 local function UpdateDatatextPanel()
-    -- Combat guard: the slot teardown/re-anchor in RefreshDatatextSlots
-    -- (DetachFromSlot + slot ClearAllPoints/SetPoint) and the panel re-anchor
-    -- below are ADDON_ACTION_BLOCKED once a slot subtree hosts a protected
-    -- child (e.g. the travel widget's secure flyout). Guarded at THIS
-    -- function's top so every caller inherits the deferral; drained by the
-    -- eventFrame PLAYER_REGEN_ENABLED handler. Exception: inside the core's
-    -- ADDON_LOADED safe window (ns._inInitSafeWindow / Initialize's local
-    -- inInitSafeWindow) protected work is permitted even though
-    -- InCombatLockdown() is true during a combat /reload (see
-    -- init_inwindow.lua) — skip the defer there so the in-window login init
-    -- keeps landing the panel.
     if InCombatLockdown() and not (inInitSafeWindow or ns._inInitSafeWindow) then
         pendingDatatextPanelUpdate = true
         return
@@ -768,9 +673,6 @@ local function UpdateDatatextPanel()
         return
     end
 
-    -- The datatext registry lives in the QUI_Datatexts sub-addon. If that
-    -- addon is disabled there is nothing to attach to the slots — showing the
-    -- panel would render an empty bar, so treat it like the panel is disabled.
     if not (QUICore and QUICore.Datatexts) then
         if datatextFrame then datatextFrame:Hide() end
         return
@@ -783,61 +685,52 @@ local function UpdateDatatextPanel()
     local minimapBorderSize = minimapSettings.borderSize or 3
     local dtBorderSize = dtSettings.borderSize or 2
     local dtBr, dtBg, dtBb, dtBa = Helpers.GetSkinBorderColor(dtSettings, "")
-    local dtBorderColor = { dtBr, dtBg, dtBb, dtBa }  -- (#90) resolved via border source enum
+    local dtBorderColor = { dtBr, dtBg, dtBb, dtBa }
     local dtHeight = dtSettings.height or 22
     local yOffset = dtSettings.offsetY or 0
     local bgAlpha = (dtSettings.bgOpacity or 60) / 100
 
-    -- Content frame size = minimap size
     datatextFrame:SetSize(minimapSize, dtHeight)
 
-    -- Only apply scale if not default (avoids WoW rendering quirk at exactly 1.0)
     if minimapScale ~= 1.0 then
         datatextFrame:SetScale(minimapScale)
     elseif datatextFrame:GetScale() ~= 1 then
         datatextFrame:SetScale(1)
     end
 
-    -- Position below minimap (content touches minimap border bottom)
     datatextFrame:ClearAllPoints()
     datatextFrame:SetPoint("TOP", Minimap, "BOTTOM", 0, -(minimapBorderSize + yOffset))
 
-    -- Left border (extends outward)
     datatextFrame.borderLeft:ClearAllPoints()
     datatextFrame.borderLeft:SetPoint("TOPRIGHT", datatextFrame, "TOPLEFT", 0, dtBorderSize)
     datatextFrame.borderLeft:SetPoint("BOTTOMRIGHT", datatextFrame, "BOTTOMLEFT", 0, -dtBorderSize)
     datatextFrame.borderLeft:SetWidth(dtBorderSize)
     datatextFrame.borderLeft:SetColorTexture(unpack(dtBorderColor))
 
-    -- Right border (extends outward)
     datatextFrame.borderRight:ClearAllPoints()
     datatextFrame.borderRight:SetPoint("TOPLEFT", datatextFrame, "TOPRIGHT", 0, dtBorderSize)
     datatextFrame.borderRight:SetPoint("BOTTOMLEFT", datatextFrame, "BOTTOMRIGHT", 0, -dtBorderSize)
     datatextFrame.borderRight:SetWidth(dtBorderSize)
     datatextFrame.borderRight:SetColorTexture(unpack(dtBorderColor))
 
-    -- Top border (extends outward)
     datatextFrame.borderTop:ClearAllPoints()
     datatextFrame.borderTop:SetPoint("BOTTOMLEFT", datatextFrame, "TOPLEFT", 0, 0)
     datatextFrame.borderTop:SetPoint("BOTTOMRIGHT", datatextFrame, "TOPRIGHT", 0, 0)
     datatextFrame.borderTop:SetHeight(dtBorderSize)
     datatextFrame.borderTop:SetColorTexture(unpack(dtBorderColor))
 
-    -- Bottom border (extends outward)
     datatextFrame.borderBottom:ClearAllPoints()
     datatextFrame.borderBottom:SetPoint("TOPLEFT", datatextFrame, "BOTTOMLEFT", 0, 0)
     datatextFrame.borderBottom:SetPoint("TOPRIGHT", datatextFrame, "BOTTOMRIGHT", 0, 0)
     datatextFrame.borderBottom:SetHeight(dtBorderSize)
     datatextFrame.borderBottom:SetColorTexture(unpack(dtBorderColor))
 
-    -- Hide borders when borderSize is 0 (matches extra panels behavior) (#90)
     local showBorder = dtBorderSize > 0
     datatextFrame.borderLeft:SetShown(showBorder)
     datatextFrame.borderRight:SetShown(showBorder)
     datatextFrame.borderTop:SetShown(showBorder)
     datatextFrame.borderBottom:SetShown(showBorder)
 
-    -- Background (content area with opacity)
     do
         local bgR, bgG, bgB = 0, 0, 0
         if Helpers and Helpers.GetSkinBgColor then
@@ -848,13 +741,8 @@ local function UpdateDatatextPanel()
 
     datatextFrame:Show()
 
-    -- Attach datatexts to slots
     RefreshDatatextSlots()
 end
-
----=================================================================================
---- CLOCK
----=================================================================================
 
 local function CreateClock()
     if clockFrame then return end
@@ -863,7 +751,6 @@ local function CreateClock()
     clockText = clockFrame:CreateFontString(nil, "OVERLAY")
     clockText:SetAllPoints(clockFrame)
 
-    -- Hide Blizzard clock
     if TimeManagerClockButton then
         TimeManagerClockButton:SetParent(CreateFrame("Frame"))
         TimeManagerClockButton:Hide()
@@ -923,7 +810,6 @@ local function UpdateClock()
     clockFrame:SetPoint("TOPLEFT", Minimap, "TOPLEFT", clockConfig.offsetX, clockConfig.offsetY)
     clockFrame:SetHeight(clockConfig.fontSize + 1)
 
-    -- Use general font settings
     local generalFont = "Quazii"
     local generalOutline = "OUTLINE"
     if QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.general then
@@ -932,7 +818,6 @@ local function UpdateClock()
         generalOutline = general.fontOutline or "OUTLINE"
     end
 
-    -- Build font flags
     local flags = nil
     if clockConfig.monochrome and clockConfig.outline ~= "NONE" then
         flags = "MONOCHROME," .. clockConfig.outline
@@ -946,7 +831,6 @@ local function UpdateClock()
     QUICore:SafeSetFont(clockText, fontPath, clockConfig.fontSize, flags)
     clockText:SetJustifyH(clockConfig.align)
 
-    -- Set color
     local r, g, b, a = unpack(clockConfig.color)
     if clockConfig.useClassColor then
         local color = GetClassColor()
@@ -956,7 +840,6 @@ local function UpdateClock()
     end
     clockText:SetTextColor(r, g, b, a)
 
-    -- Calculate width
     clockText:SetText("99:99")
     local width = clockText:GetUnboundedStringWidth()
     clockFrame:SetWidth(width + 5)
@@ -969,7 +852,6 @@ local function UpdateClockTime()
 
     local clockConfig = settings.clockConfig
 
-    -- Ensure font is set before formatting text
     local currentFont = clockText:GetFont()
     if not currentFont then
         local fontPath = LSM:Fetch("font", clockConfig.font) or "Fonts\\FRIZQT__.TTF"
@@ -986,7 +868,6 @@ local function UpdateClockTime()
 
     local hour, minute
 
-    -- Use our own setting instead of CVar
     local useLocalTime = (clockConfig.timeFormat == "local")
 
     if useLocalTime then
@@ -1006,10 +887,6 @@ local function UpdateClockTime()
         clockText:SetFormattedText(TIMEMANAGER_TICKER_12HOUR, hour, minute)
     end
 end
-
----=================================================================================
---- COORDINATES
----=================================================================================
 
 local function CreateCoords()
     if coordsFrame then return end
@@ -1036,7 +913,6 @@ local function UpdateCoords()
     coordsFrame:SetPoint("TOPRIGHT", Minimap, "TOPRIGHT", coordsConfig.offsetX, coordsConfig.offsetY)
     coordsFrame:SetHeight(coordsConfig.fontSize + 1)
 
-    -- Build font flags
     local flags = nil
     if coordsConfig.monochrome and coordsConfig.outline ~= "NONE" then
         flags = "MONOCHROME," .. coordsConfig.outline
@@ -1050,7 +926,6 @@ local function UpdateCoords()
     QUICore:SafeSetFont(coordsText, fontPath, coordsConfig.fontSize, flags)
     coordsText:SetJustifyH(coordsConfig.align)
 
-    -- Set color
     local r, g, b, a = unpack(coordsConfig.color)
     if coordsConfig.useClassColor then
         local color = GetClassColor()
@@ -1060,7 +935,6 @@ local function UpdateCoords()
     end
     coordsText:SetTextColor(r, g, b, a)
 
-    -- Calculate width
     coordsText:SetFormattedText(settings.coordPrecision, 100.77, 100.77)
     local width = coordsText:GetUnboundedStringWidth()
     coordsFrame:SetWidth(width + 5)
@@ -1071,7 +945,6 @@ local function UpdateCoordsPosition()
     local settings = GetSettings()
     if not settings or not settings.showCoords then return end
 
-    -- Ensure font is set before formatting text
     local coordsConfig = settings.coordsConfig
     local currentFont = coordsText:GetFont()
     if not currentFont then
@@ -1098,11 +971,7 @@ local function UpdateCoordsPosition()
     coordsText:SetText("0,0")
 end
 
----=================================================================================
---- ZONE TEXT
----=================================================================================
-
-local UpdateZoneTextDisplay  -- forward declaration (defined after CreateZoneText/UpdateZoneText)
+local UpdateZoneTextDisplay
 
 local function CreateZoneText()
     if zoneTextFrame then return end
@@ -1111,7 +980,6 @@ local function CreateZoneText()
     zoneTextFont = zoneTextFrame:CreateFontString(nil, "OVERLAY")
     zoneTextFont:SetAllPoints(zoneTextFrame)
 
-    -- Hide Blizzard zone text
     if MinimapCluster and MinimapCluster.ZoneTextButton then
         MinimapCluster.ZoneTextButton:SetParent(CreateFrame("Frame"))
         MinimapCluster.ZoneTextButton:Hide()
@@ -1190,7 +1058,6 @@ local function UpdateZoneText()
     zoneTextFrame:SetWidth(settings.size)
     zoneTextFrame:SetHeight(zoneConfig.fontSize + 1)
 
-    -- Use general font settings
     local generalFont = "Quazii"
     local generalOutline = "OUTLINE"
     if QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.general then
@@ -1199,14 +1066,12 @@ local function UpdateZoneText()
         generalOutline = general.fontOutline or "OUTLINE"
     end
 
-    -- Build font flags
     local flags
     if zoneConfig.monochrome and zoneConfig.outline ~= "NONE" then
         flags = "MONOCHROME," .. zoneConfig.outline
     elseif zoneConfig.monochrome then
         flags = "MONOCHROME"
     else
-        -- Non-monochrome zones always use the general outline.
         flags = generalOutline
     end
 
@@ -1224,10 +1089,8 @@ UpdateZoneTextDisplay = function()
 
     local zoneConfig = settings.zoneTextConfig
 
-    -- Ensure font is set before setting text
     local currentFont = zoneTextFont:GetFont()
     if not currentFont then
-        -- Use general font settings
         local generalFont = "Quazii"
         local generalOutline = "OUTLINE"
         if QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.general then
@@ -1250,14 +1113,12 @@ UpdateZoneTextDisplay = function()
 
     local text = GetMinimapZoneText()
 
-    -- Apply all caps if enabled
     if zoneConfig.allCaps then
         text = string.upper(text)
     end
 
     zoneTextFont:SetText(text)
 
-    -- Color based on PvP zone type
     local GetZonePVPInfo = C_PvP and C_PvP.GetZonePVPInfo or GetZonePVPInfo
     local pvpType = GetZonePVPInfo()
 
@@ -1284,19 +1145,10 @@ UpdateZoneTextDisplay = function()
     zoneTextFont:SetTextColor(r, g, b, a)
 end
 
----=================================================================================
---- BUTTON VISIBILITY
----=================================================================================
-
--- Hidden frame to parent hidden buttons to
 local hiddenButtonParent = CreateFrame("Frame")
 hiddenButtonParent:Hide()
-hiddenButtonParent.Layout = function() end  -- Prevent nil errors when Blizzard code calls Layout on children
+hiddenButtonParent.Layout = function() end
 
--- (hiddenActionBarParent removed — micro/bag visibility managed by action bars module)
-
--- Blizzard has used multiple difficulty indicator frames across versions.
--- Keep compatibility by iterating all known variants.
 local function ForEachDifficultyFrame(callback)
     if type(callback) ~= "function" then return end
 
@@ -1317,14 +1169,6 @@ local function ForEachDifficultyFrame(callback)
     handle(_G.MiniMapChallengeMode)
 end
 
----=================================================================================
---- GREAT VAULT SHORTCUT
----=================================================================================
-
--- Assets ship with the core addon; use the shared Helpers.AssetPath so the path
--- resolves correctly regardless of how the core folder is named on disk.
--- Fall back to a hardcoded "QUI" name in headless/test contexts where utils.lua
--- has not run and Helpers.AssetPath is not yet populated.
 local ADDON_ASSET_ROOT = ns.Helpers.AssetPath or "Interface\\AddOns\\QUI\\assets\\"
 local GREAT_VAULT_ICON_PATH = ADDON_ASSET_ROOT .. "great_vault_64.png"
 local GREAT_VAULT_BUTTON_SIZE = 24
@@ -1591,10 +1435,6 @@ local function UpdateCustomMailButton()
     customMailButton:SetFrameStrata("MEDIUM")
     customMailButton:SetFrameLevel((Minimap:GetFrameLevel() or 0) + 10)
     customMailButton:ClearAllPoints()
-    -- Position overridable via mailConfig (anchor + pixel offsets + scale); the
-    -- fallbacks reproduce the historical fixed BOTTOMLEFT +2,+2 / scale 1 exactly,
-    -- so a profile without mailConfig is byte-identical to before. Mirrors the
-    -- trackingConfig / dungeonEye pattern. QUI-owned insecure button, no taint.
     local mc = settings.mailConfig
     local mailAnchor = (mc and mc.anchor) or "BOTTOMLEFT"
     local mailOX = (mc and mc.offsetX) or 2
@@ -1604,14 +1444,11 @@ local function UpdateCustomMailButton()
     customMailButton:Show()
 end
 
--- Hook Show() on zoom buttons to prevent Blizzard from re-showing them
--- Use local guard variables instead of writing properties to Blizzard frames
 local zoomInShowHooked = false
 local zoomOutShowHooked = false
 
 if Minimap.ZoomIn and not zoomInShowHooked then
     zoomInShowHooked = true
-    -- TAINT SAFETY: Defer to break taint chain from secure context.
     hooksecurefunc(Minimap.ZoomIn, "Show", function(self)
         C_Timer.After(0, function()
             local s = GetSettings()
@@ -1624,7 +1461,6 @@ end
 
 if Minimap.ZoomOut and not zoomOutShowHooked then
     zoomOutShowHooked = true
-    -- TAINT SAFETY: Defer to break taint chain from secure context.
     hooksecurefunc(Minimap.ZoomOut, "Show", function(self)
         C_Timer.After(0, function()
             local s = GetSettings()
@@ -1635,12 +1471,8 @@ if Minimap.ZoomOut and not zoomOutShowHooked then
     end)
 end
 
--- Hook ExpansionLandingPageMinimapButton: when Blizzard's event system
--- initializes the button (sets title via UpdateIconForGarrison), reposition
--- it on the minimap and re-apply QUI's positioning. Also hook SetParent to
--- prevent other addons from reparenting it away from Minimap.
 local expansionButtonHooked = false
-local expansionButtonReparenting = false  -- guard against SetParent hook recursion
+local expansionButtonReparenting = false
 if ExpansionLandingPageMinimapButton and not expansionButtonHooked then
     expansionButtonHooked = true
     hooksecurefunc(ExpansionLandingPageMinimapButton, "SetParent", function()
@@ -1648,8 +1480,6 @@ if ExpansionLandingPageMinimapButton and not expansionButtonHooked then
         C_Timer.After(0, function()
             local s = GetSettings()
             if not s then return end
-            -- In drawer mode the drawer owns the button's parent; don't yank it
-            -- back to the minimap.
             if MissionButtonInDrawer() then return end
             if s.showMissions and ExpansionLandingPageMinimapButton.title then
                 expansionButtonReparenting = true
@@ -1662,7 +1492,6 @@ if ExpansionLandingPageMinimapButton and not expansionButtonHooked then
         C_Timer.After(0, function()
             local s = GetSettings()
             if not s or not s.showMissions then return end
-            -- In drawer mode the drawer controls positioning; skip the minimap pin.
             if MissionButtonInDrawer() then return end
             if InCombatLockdown() then return end
             ExpansionLandingPageMinimapButton:ClearAllPoints()
@@ -1679,7 +1508,6 @@ local function UpdateButtonVisibility()
     local minimapSize = settings.size or 160
     local halfSize = minimapSize / 2
 
-    -- Zoom buttons - position at bottom right corner
     if Minimap.ZoomIn and Minimap.ZoomOut then
         if settings.showZoomButtons then
             Minimap.ZoomIn:SetParent(Minimap)
@@ -1699,7 +1527,6 @@ local function UpdateButtonVisibility()
         end
     end
 
-    -- Mail indicator - use a custom visible icon and keep Blizzard's hotspot hidden
     if MinimapCluster and MinimapCluster.IndicatorFrame and MinimapCluster.IndicatorFrame.MailFrame then
         local mailFrame = MinimapCluster.IndicatorFrame.MailFrame
         if settings.showMail then
@@ -1713,11 +1540,9 @@ local function UpdateButtonVisibility()
         end
     end
 
-    -- Crafting order indicator - position next to mail
     if MinimapCluster and MinimapCluster.IndicatorFrame and MinimapCluster.IndicatorFrame.CraftingOrderFrame then
         local craftingFrame = MinimapCluster.IndicatorFrame.CraftingOrderFrame
 
-        -- See mailFrame comment above — same Layout-method guard.
         if not craftingFrame._quiSetParentHooked then
             craftingFrame._quiSetParentHooked = true
             hooksecurefunc(craftingFrame, "SetParent", function(_, parent)
@@ -1731,7 +1556,7 @@ local function UpdateButtonVisibility()
         if settings.showCraftingOrder then
             craftingFrame:SetParent(Minimap)
             craftingFrame:ClearAllPoints()
-            craftingFrame:SetPoint("BOTTOMLEFT", Minimap, "BOTTOMLEFT", 28, 2)  -- Offset from mail
+            craftingFrame:SetPoint("BOTTOMLEFT", Minimap, "BOTTOMLEFT", 28, 2)
             craftingFrame:SetScale(0.8)
         else
             craftingFrame:SetParent(hiddenButtonParent)
@@ -1739,7 +1564,6 @@ local function UpdateButtonVisibility()
         end
     end
 
-    -- Addon compartment - position at top right
     if AddonCompartmentFrame then
         if settings.showAddonCompartment then
             AddonCompartmentFrame:SetParent(Minimap)
@@ -1752,7 +1576,6 @@ local function UpdateButtonVisibility()
         end
     end
 
-    -- Difficulty indicator - position at top left
     ForEachDifficultyFrame(function(diffFrame)
         if settings.showDifficulty then
             diffFrame:SetParent(Minimap)
@@ -1763,19 +1586,9 @@ local function UpdateButtonVisibility()
         end
     end)
 
-    -- Expansion landing page button (garrison/missions) - position at left side
-    -- In WoW 12.0+, Blizzard only shows this button for characters with old
-    -- expansion garrison content (WoD-Shadowlands). For Midnight, the landing
-    -- page uses a different system. Respect Blizzard's visibility — only
-    -- reposition the button if Blizzard has initialized it (self.title ~= nil),
-    -- and allow the user setting to hide it.
     if ExpansionLandingPageMinimapButton then
         if settings.showMissions and ExpansionLandingPageMinimapButton.title then
             if MissionButtonInDrawer() then
-                -- Drawer mode: parent under Minimap so the drawer scan discovers
-                -- it, show it, and let CollectButton take over positioning. Skip
-                -- the minimap LEFT pin. Once collected, CollectButton no-ops
-                -- SetParent/SetPoint so these calls become harmless.
                 ExpansionLandingPageMinimapButton:SetParent(Minimap)
                 ExpansionLandingPageMinimapButton:Show()
             else
@@ -1790,7 +1603,6 @@ local function UpdateButtonVisibility()
         end
     end
 
-    -- Calendar - position at top right (next to addon compartment if shown)
     if GameTimeFrame then
         if settings.showCalendar then
             GameTimeFrame:SetParent(Minimap)
@@ -1807,8 +1619,6 @@ local function UpdateButtonVisibility()
         end
     end
 
-    -- Tracking button - position at top left (next to difficulty if shown),
-    -- overridable via trackingConfig (anchor + pixel offsets).
     if MinimapCluster and MinimapCluster.Tracking then
         local trackingFrame = MinimapCluster.Tracking
         if settings.showTracking then
@@ -1819,7 +1629,6 @@ local function UpdateButtonVisibility()
             trackingFrame:SetParent(Minimap)
             trackingFrame:ClearAllPoints()
             if anchor == "TOPLEFT" then
-                -- Default corner keeps the difficulty-aware nudge, plus any user offset.
                 local baseX = settings.showDifficulty and 35 or 2
                 trackingFrame:SetPoint("TOPLEFT", Minimap, "TOPLEFT", baseX + ox, -2 + oy)
             else
@@ -1832,10 +1641,6 @@ local function UpdateButtonVisibility()
 
     UpdateGreatVaultButton()
 end
-
--- (SetupMicroBagVisibilityHooks and UpdateMicroAndBagVisibility removed —
--- micro/bag visibility is now managed by the action bars module via
--- actionBars.bars.microbar.enabled and actionBars.bars.bags.enabled)
 
 local function BuildMiddleClickMenu()
     local settings = GetSettings() or {}
@@ -1911,7 +1716,6 @@ local function BuildMiddleClickMenu()
         { text = ns.L["Game Menu"], notCheckable = true, func = function()
             if InCombatLockdown() then return end
 
-            -- Prefer UIPanel flow (ESC-equivalent path used by skin watcher).
             local function OpenGameMenu()
                 if GameMenuFrame and GameMenuFrame.IsShown and GameMenuFrame:IsShown() then
                     return true
@@ -1931,10 +1735,8 @@ local function BuildMiddleClickMenu()
                     end
                 end
 
-                -- Last-resort fallback if client blocks the above from this context.
                 if GameMenuFrame and GameMenuFrame.Show then
                     GameMenuFrame:Show()
-                    -- Kick UIPanel hook once so skin watcher can still attach.
                     if ShowUIPanel then
                         ShowUIPanel(GameMenuFrame)
                     end
@@ -1949,7 +1751,6 @@ local function BuildMiddleClickMenu()
                 ClickMicroButton("HelpMicroButton")
             end
         end },
-        -- (Hide Micro Menu / Hide Bag Bar removed — use Layout Mode to toggle visibility)
     }
 end
 
@@ -2123,8 +1924,8 @@ local function ShowMiddleClickMenu(keepPosition)
     middleClickMenuBlocker:Show()
     middleClickMenuFrame:Show()
 
+    ---@diagnostic disable-next-line: empty-block
     if EasyMenu then
-        -- noop: keep variable reference to avoid lint false-positives in mixed client APIs.
     end
 end
 
@@ -2146,10 +1947,6 @@ local function SetupMiddleClickMenu()
     if middleClickMenuHooked then return end
     middleClickMenuHooked = true
 
-    -- TAINT SAFETY: HookScript only. SetScript-then-recall taints Blizzard's
-    -- OnMouseUp, which is XML-bound to MinimapMixin:OnClick → PingLocation
-    -- (protected). HookScript lets the original run untainted, so middle-click
-    -- ping continues to work; our menu opens additively on top.
     Minimap:HookScript("OnMouseUp", function(_, button)
         local settings = GetSettings()
         if settings and settings.middleClickMenuEnabled and button == "MiddleButton" then
@@ -2160,25 +1957,18 @@ local function SetupMiddleClickMenu()
     UpdateMiddleClickMenuOverlayState()
 end
 
----=================================================================================
---- DUNGEON EYE (QUEUE STATUS BUTTON)
----=================================================================================
-
 local dungeonEyeOriginalParent = nil
 local dungeonEyeOriginalPoint = nil
 local dungeonEyeOriginalSize = nil
 local dungeonEyeBaseSize = nil
 local dungeonEyeHooksInstalled = false
--- Recursion guard: true while we mutate the button ourselves so our own
--- hooks don't reschedule a reapply against our own writes.
 local dungeonEyeApplyingOurState = false
--- Coalesce multiple Blizzard mutations in the same frame into one reapply.
 local dungeonEyeReapplyPending = false
 local DUNGEON_EYE_DEFAULT_SIZE = 32
 local DUNGEON_EYE_MIN_BASE_SIZE = 16
 local DUNGEON_EYE_MAX_BASE_SIZE = 64
 
-local UpdateDungeonEyePosition  -- forward declared; assigned below
+local UpdateDungeonEyePosition
 
 local function GetSaneDungeonEyeDimension(value)
     value = tonumber(value)
@@ -2231,9 +2021,6 @@ local function ScheduleDungeonEyeReapply()
     end)
 end
 
--- Hook every Blizzard side-channel that can move/resize/reparent the eye.
--- UpdatePosition isn't enough on its own: EditMode, queue-state churn, and
--- some Blizzard refresh paths call SetParent/SetScale/SetPoint directly.
 local function InstallDungeonEyeHooks(btn)
     if dungeonEyeHooksInstalled then return end
     if not btn then return end
@@ -2283,9 +2070,6 @@ local function RestoreDungeonEye()
         btn:SetParent(dungeonEyeOriginalParent)
     end
 
-    -- Let Blizzard re-anchor via its own method when available; UpdatePosition
-    -- requires the same micro-menu layout args Blizzard passes from
-    -- MicroMenuMixin:UpdateQueueStatusAnchors().
     if not TryRestoreDungeonEyeViaBlizzard(btn) then
         RestoreDungeonEyeOriginalPoint(btn)
     end
@@ -2309,17 +2093,12 @@ UpdateDungeonEyePosition = function()
     local btn = QueueStatusButton
     if not btn then return end
 
-    -- Store original state on first run (before we modify it), and lock the
-    -- base button dimensions so Blizzard's temporary queue relayout sizes do
-    -- not multiply through our configured scale.
     CaptureDungeonEyeState(btn)
 
     if eyeSettings.enabled then
         InstallDungeonEyeHooks(btn)
 
         if InCombatLockdown() then
-            -- Full reparent/reanchor work remains deferred, but QueueStatusButton
-            -- is normally unprotected, so keep the visual size stable immediately.
             pendingMinimapRefresh = true
             if not (btn.IsProtected and btn:IsProtected()) then
                 dungeonEyeApplyingOurState = true
@@ -2331,17 +2110,14 @@ UpdateDungeonEyePosition = function()
 
         dungeonEyeApplyingOurState = true
 
-        -- Reparent to Minimap - Blizzard controls visibility based on queue status
         btn:SetParent(Minimap)
         btn:ClearAllPoints()
         ApplyDungeonEyeVisuals(btn, eyeSettings)
 
-        -- Calculate corner position with offsets
         local corner = eyeSettings.corner or "BOTTOMRIGHT"
         local offsetX = eyeSettings.offsetX or 0
         local offsetY = eyeSettings.offsetY or 0
 
-        -- Corner-specific positioning (inside minimap bounds)
         local cornerOffsets = {
             TOPRIGHT    = { anchor = "TOPRIGHT",    x = -5 + offsetX, y = -5 + offsetY },
             TOPLEFT     = { anchor = "TOPLEFT",     x = 5 + offsetX,  y = -5 + offsetY },
@@ -2351,8 +2127,6 @@ UpdateDungeonEyePosition = function()
 
         local pos = cornerOffsets[corner] or cornerOffsets.BOTTOMRIGHT
         btn:SetPoint(pos.anchor, Minimap, pos.anchor, pos.x, pos.y)
-
-        -- Do NOT call btn:Show() - let Blizzard control visibility based on queue status
 
         dungeonEyeApplyingOurState = false
     else
@@ -2364,14 +2138,9 @@ UpdateDungeonEyePosition = function()
     end
 end
 
----=================================================================================
---- ADDON BUTTON HIDING
----=================================================================================
-
 local function SetupAddonButtonHiding()
     local settings = GetSettings()
     if not settings or not LibDBIcon then return end
-    -- When the button drawer is enabled, it manages buttons instead
     if settings.buttonDrawer and settings.buttonDrawer.enabled then return end
 
     if settings.hideAddonButtons then
@@ -2380,7 +2149,6 @@ local function SetupAddonButtonHiding()
             LibDBIcon:ShowOnEnter(buttons[i], true)
         end
 
-        -- Hook for new buttons
         LibDBIcon.RegisterCallback(Minimap_Module, "LibDBIcon_IconCreated", function(_, _, buttonName)
             LibDBIcon:ShowOnEnter(buttonName, true)
         end)
@@ -2392,10 +2160,6 @@ local function SetupAddonButtonHiding()
         LibDBIcon.UnregisterCallback(Minimap_Module, "LibDBIcon_IconCreated")
     end
 end
-
----=================================================================================
---- BUTTON DRAWER
----=================================================================================
 
 local DRAWER_BLACKLIST = {
     ["MiniMapMailFrame"] = true,
@@ -2416,6 +2180,7 @@ local DRAWER_BLACKLIST = {
     ["QUI_DrawerToggle"] = true,
 }
 
+---@type Frame
 local drawerFrame
 local drawerToggleButton
 local collectedButtons = {}
@@ -2427,30 +2192,22 @@ local drawerAnimationFrame = nil
 local drawerAnimationState = nil
 local drawerExpandedWidth = 40
 local drawerExpandedHeight = 40
-local ScanAndCollectButtons  -- forward declared: ShowDrawer rescans on open
+local ScanAndCollectButtons
 
 local function IsMinimapButton(frame)
     if not frame or not frame.IsObjectType then return false end
     if not (frame:IsObjectType("Frame") or frame:IsObjectType("Button")) then return false end
     local name = frame:GetName()
     if not name then return false end
-    -- Expansion landing page (garrison/mission) button: blacklisted by default
-    -- because the minimap module pins it. When the user opts it into the drawer
-    -- we collect it explicitly, bypassing the blacklist and secure-frame skip.
     if name == "ExpansionLandingPageMinimapButton" then
         return MissionButtonInDrawer() and ExpansionLandingPageMinimapButton.title ~= nil
     end
     if DRAWER_BLACKLIST[name] then return false end
-    -- Skip Blizzard-owned secure frames
     if issecurevariable(_G, name) then return false end
-    -- LibDBIcon buttons
     if name:match("^LibDBIcon10_") then return true end
-    -- Reject names ending in digits (pin/node/tracking frames)
     if name:match("%d$") then return false end
-    -- Common minimap button naming patterns
     if name:match("MinimapButton") or name:match("MinimapFrame") or name:match("MinimapIcon") then return true end
     if name:match("Minimap$") then return true end
-    -- Accept if it has click handlers and is a child of a minimap container
     local parent = frame:GetParent()
     if parent and (parent == Minimap or parent == MinimapBackdrop or parent == MinimapCluster) then
         local ok, hasClick = ns.SafeCall("best-effort-style", function() return frame:HasScript("OnClick") and frame:GetScript("OnClick") end)
@@ -2465,8 +2222,6 @@ end
 
 local function ShouldSkipDrawerButton(name)
     if not name then return true end
-    -- Mirror the IsMinimapButton exception: the landing page button is only
-    -- collectable when opted into the drawer.
     if name == "ExpansionLandingPageMinimapButton" then
         return not MissionButtonInDrawer()
     end
@@ -2486,8 +2241,7 @@ local function SaveOriginalState(frame, name)
     for i = 1, frame:GetNumPoints() do
         points[i] = { frame:GetPoint(i) }
     end
-    -- Find the icon texture for square conversion
-    local iconTex = frame.icon  -- LibDBIcon buttons always have .icon
+    local iconTex = frame.icon
     if not iconTex then
         ns.SafeCall("best-effort-style", function()
             for _, region in ipairs({ frame:GetRegions() }) do
@@ -2539,7 +2293,6 @@ local function EnsureDrawerAnimator()
         local t = state.elapsed / state.duration
         if t > 1 then t = 1 end
 
-        -- Smoothstep easing for a soft open/close.
         local eased = t * t * (3 - 2 * t)
         local alpha = state.fromAlpha + (state.toAlpha - state.fromAlpha) * eased
         local width = state.fromWidth + (state.toWidth - state.fromWidth) * eased
@@ -2633,7 +2386,6 @@ local function HideDrawer()
         drawerVisible = false
         StartDrawerAnimation(false)
     end
-    -- Auto-hide the toggle button if setting is enabled, but not while mouse is over it
     local settings = GetSettings()
     if settings and settings.buttonDrawer and settings.buttonDrawer.autoHideToggle and drawerToggleButton then
         if not drawerToggleButton:IsMouseOver() then
@@ -2644,16 +2396,12 @@ end
 
 local function ShowDrawer()
     if drawerFrame and (not drawerVisible or not drawerFrame:IsShown()) then
-        -- Rescan on open: some addons create their minimap button on
-        -- VARIABLES_LOADED, which on retail fires after PLAYER_ENTERING_WORLD —
-        -- past the login-time scan and its expired catch-up timers.
         if ScanAndCollectButtons and not InCombatLockdown() then
             ScanAndCollectButtons()
         end
         drawerVisible = true
         StartDrawerAnimation(true)
     end
-    -- Ensure toggle button is visible when drawer opens
     if drawerToggleButton then
         drawerToggleButton:SetAlpha(1)
     end
@@ -2666,7 +2414,7 @@ local function ShowToggleButton()
 end
 
 local function HideToggleButton()
-    if drawerVisible then return end  -- Don't hide while drawer is open
+    if drawerVisible then return end
     local settings = GetSettings()
     if settings and settings.buttonDrawer and settings.buttonDrawer.autoHideToggle and drawerToggleButton then
         drawerToggleButton:SetAlpha(0)
@@ -2733,7 +2481,6 @@ local function MakeButtonSquare(data, bSize)
                     region:Show()
                     ns.SafeCallMethodIfPresent("best-effort-style", region, "SetMask", "")
                 elseif layer == "HIGHLIGHT" then
-                    -- skip highlight texture
                 else
                     region:Hide()
                     data.hiddenRegions[#data.hiddenRegions + 1] = region
@@ -2761,11 +2508,9 @@ local function LayoutDrawerButtons()
 
     local hiddenButtons = settings.buttonDrawer.hiddenButtons or {}
 
-    -- Collect and sort visible buttons (skip filtered ones)
     local sorted = {}
     for name, data in pairs(collectedButtons) do
         if hiddenButtons[name] or ShouldSkipDrawerButton(name) then
-            -- Hide filtered buttons
             local mt = getmetatable(data.frame)
             if mt and mt.__index then
                 mt.__index.Hide(data.frame)
@@ -2787,9 +2532,6 @@ local function LayoutDrawerButtons()
     local step = bSize + bSpacing
     local primaryHorizontal = (direction == "RIGHT" or direction == "LEFT")
 
-    -- For horizontal growth, treat "Columns" as number of rows (lanes).
-    -- This preserves vertical wrapping control while allowing the common
-    -- case (Columns = 1) to grow horizontally as expected.
     local laneCount = cols
     local laneSizes = {}
     for lane = 1, laneCount do
@@ -2820,7 +2562,7 @@ local function LayoutDrawerButtons()
             primaryOffset = -primaryIndex * step
         elseif direction == "DOWN" then
             primaryOffset = -primaryIndex * step
-        else -- UP
+        else
             primaryOffset = primaryIndex * step
         end
 
@@ -2854,14 +2596,10 @@ local function LayoutDrawerButtons()
     drawerExpandedHeight = height
     drawerFrame:SetSize(width, height)
 
-    -- Layout in grid, force visibility and square icons
     for _, entry in ipairs(sorted) do
         local f = entry.frame
         local centerX = padding + (entry.centerX - minX)
         local centerY = padding + (entry.centerY - minY)
-        -- Anchor and show via metatable: collected frames have
-        -- ClearAllPoints/SetPoint/Show/SetAlpha no-op'd so owners can't
-        -- re-anchor or hide them out of the drawer.
         local mt = getmetatable(f)
         local raw = mt and mt.__index
         if raw then
@@ -2878,7 +2616,6 @@ local function LayoutDrawerButtons()
             raw.Show(f)
         end
 
-        -- Make icons square
         local data = collectedButtons[entry.name]
         if data then
             MakeButtonSquare(data, bSize)
@@ -2944,17 +2681,28 @@ end
 
 local DEFAULT_TOGGLE_SIZE = 20
 
-local function UpdateToggleIcon()
-    if not drawerToggleButton then return end
-    local s = GetSettings()
-    local icon = (s and s.buttonDrawer and s.buttonDrawer.toggleIcon) or "hammer"
-    local showHammer = (icon == "hammer")
-    if drawerToggleButton._hammerIcon then
-        drawerToggleButton._hammerIcon:SetShown(showHammer)
-    end
-    if drawerToggleButton._gridDots then
-        for _, dot in ipairs(drawerToggleButton._gridDots) do
-            dot:SetShown(not showHammer)
+local UpdateToggleIcon
+do
+    local TOGGLE_ICON_TEXTURES = {
+        qui = ADDON_ASSET_ROOT .. "QUI.tga",
+        hammer = ADDON_ASSET_ROOT .. "quazii_hammer",
+    }
+
+    function UpdateToggleIcon()
+        if not drawerToggleButton then return end
+        local s = GetSettings()
+        local icon = (s and s.buttonDrawer and s.buttonDrawer.toggleIcon) or "qui"
+        local texturePath = TOGGLE_ICON_TEXTURES[icon]
+        if drawerToggleButton._iconTexture then
+            if texturePath then
+                drawerToggleButton._iconTexture:SetTexture(texturePath)
+            end
+            drawerToggleButton._iconTexture:SetShown(texturePath ~= nil)
+        end
+        if drawerToggleButton._gridDots then
+            for _, dot in ipairs(drawerToggleButton._gridDots) do
+                dot:SetShown(texturePath == nil)
+            end
         end
     end
 end
@@ -2966,7 +2714,6 @@ local function CreateDrawerToggleButton()
     drawerToggleButton:SetFrameStrata("HIGH")
     drawerToggleButton:SetFrameLevel(Minimap:GetFrameLevel() + 5)
 
-    -- Background
     local bg = drawerToggleButton:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints()
     do
@@ -2980,14 +2727,11 @@ local function CreateDrawerToggleButton()
         bg:SetColorTexture(bgR or 0.05, bgG or 0.05, bgB or 0.05, 0.9)
     end
 
-    -- Hammer icon texture
-    local hammer = drawerToggleButton:CreateTexture(nil, "ARTWORK")
-    hammer:SetPoint("TOPLEFT", 2, -2)
-    hammer:SetPoint("BOTTOMRIGHT", -2, 2)
-    hammer:SetTexture(ADDON_ASSET_ROOT .. "quazii_hammer")
-    drawerToggleButton._hammerIcon = hammer
+    local iconTexture = drawerToggleButton:CreateTexture(nil, "ARTWORK")
+    iconTexture:SetPoint("TOPLEFT", 2, -2)
+    iconTexture:SetPoint("BOTTOMRIGHT", -2, 2)
+    drawerToggleButton._iconTexture = iconTexture
 
-    -- Grid icon: 4 small squares (2x2 grid) — store refs for resizing
     drawerToggleButton._gridDots = {}
     local r, g, b = 0.2, 0.8, 0.6
     if Helpers and Helpers.GetSkinBorderColor then
@@ -3001,17 +2745,15 @@ local function CreateDrawerToggleButton()
         end
     end
 
-    -- Show/hide the correct icon based on settings
     UpdateToggleIcon()
 
-    -- Border
     local border = drawerToggleButton:CreateTexture(nil, "OVERLAY")
     border:SetAllPoints()
     border:SetColorTexture(1, 1, 1, 0.15)
     local inner = drawerToggleButton:CreateTexture(nil, "OVERLAY", nil, 1)
     inner:SetPoint("TOPLEFT", 1, -1)
     inner:SetPoint("BOTTOMRIGHT", -1, 1)
-    inner:SetColorTexture(0, 0, 0, 0)  -- Transparent inner to create border effect
+    inner:SetColorTexture(0, 0, 0, 0)
     border:SetDrawLayer("OVERLAY", 0)
     inner:SetDrawLayer("OVERLAY", 1)
 
@@ -3046,7 +2788,6 @@ local function CreateDrawerToggleButton()
     drawerToggleButton:SetScript("OnLeave", function()
         GameTooltip:Hide()
         OnDrawerLeave()
-        -- If drawer is closed and auto-hide is on, fade the toggle button
         if not drawerVisible then
             HideToggleButton()
         end
@@ -3059,7 +2800,6 @@ local function ResizeDrawerToggle()
     local size = (s and s.buttonDrawer and s.buttonDrawer.toggleSize) or DEFAULT_TOGGLE_SIZE
     drawerToggleButton:SetSize(size, size)
 
-    -- Rescale grid dots proportionally (base: 5px dots, 2px gap, 4px offset at size 20)
     local scale = size / DEFAULT_TOGGLE_SIZE
     local gridSize = math.max(1, math.floor(5 * scale + 0.5))
     local gridGap = math.max(1, math.floor(2 * scale + 0.5))
@@ -3080,12 +2820,11 @@ local function ResizeDrawerToggle()
         end
     end
 
-    -- Update hammer icon insets proportionally
-    if drawerToggleButton._hammerIcon then
+    if drawerToggleButton._iconTexture then
         local inset = math.max(1, math.floor(2 * scale + 0.5))
-        drawerToggleButton._hammerIcon:ClearAllPoints()
-        drawerToggleButton._hammerIcon:SetPoint("TOPLEFT", inset, -inset)
-        drawerToggleButton._hammerIcon:SetPoint("BOTTOMRIGHT", -inset, inset)
+        drawerToggleButton._iconTexture:ClearAllPoints()
+        drawerToggleButton._iconTexture:SetPoint("TOPLEFT", inset, -inset)
+        drawerToggleButton._iconTexture:SetPoint("BOTTOMRIGHT", -inset, inset)
     end
 
     UpdateToggleIcon()
@@ -3104,13 +2843,11 @@ local function UpdateDrawerAnchor()
     local tOfsY = settings.buttonDrawer.toggleOffsetY or 0
     local gap = 4
 
-    -- Re-assert strata so the toggle stays above the minimap after layout mode
     drawerToggleButton:SetFrameStrata("HIGH")
     drawerToggleButton:SetFrameLevel(Minimap:GetFrameLevel() + 5)
 
     drawerToggleButton:ClearAllPoints()
 
-    -- Anchor toggle to minimap side/corner.
     if anchor == "RIGHT" then
         drawerToggleButton:SetPoint("RIGHT", Minimap, "RIGHT", -2 + tOfsX, tOfsY)
     elseif anchor == "LEFT" then
@@ -3129,8 +2866,6 @@ local function UpdateDrawerAnchor()
         drawerToggleButton:SetPoint("BOTTOMRIGHT", Minimap, "BOTTOMRIGHT", -2 + tOfsX, 2 + tOfsY)
     end
 
-    -- Anchor drawer relative to the toggle so growth direction is honored
-    -- from the toggle/button origin instead of being locked to minimap edge.
     drawerFrame:ClearAllPoints()
     if centerGrowth then
         drawerFrame:SetPoint("CENTER", drawerToggleButton, "CENTER", ofsX, ofsY)
@@ -3140,21 +2875,21 @@ local function UpdateDrawerAnchor()
         drawerFrame:SetPoint("LEFT", drawerToggleButton, "RIGHT", gap + ofsX, ofsY)
     elseif direction == "UP" then
         drawerFrame:SetPoint("BOTTOM", drawerToggleButton, "TOP", ofsX, gap + ofsY)
-    else -- DOWN
+    else
         drawerFrame:SetPoint("TOP", drawerToggleButton, "BOTTOM", ofsX, -gap + ofsY)
     end
 end
 
+---@param frame Frame
+---@param name string
 local function CollectButton(frame, name)
     if collectedButtons[name] then return end
     SaveOriginalState(frame, name)
     local data = collectedButtons[name]
 
-    -- Undo LibDBIcon ShowOnEnter (uses SetAlpha(0), not Hide)
     if LibDBIcon and name:match("^LibDBIcon10_") then
         local buttonName = name:gsub("^LibDBIcon10_", "")
         LibDBIcon:ShowOnEnter(buttonName, false)
-        -- Stop any fadeOut animation group
         ns.SafeCall("best-effort-style", function()
             if frame.fadeOut then frame.fadeOut:Stop() end
             for _, child in ipairs({ frame:GetChildren() }) do
@@ -3171,15 +2906,9 @@ local function CollectButton(frame, name)
         frame:SetIgnoreParentScale(false)
     end
 
-    -- Strata/level: explicit SetFrameStrata sticks through SetParent, and some
-    -- buttons copy the Minimap's strata (LOW) — below the drawer's MEDIUM
-    -- backdrop, which then covers the icon and eats its clicks. Assert the
-    -- drawer's strata and a level above it, and lock both against re-asserts.
     frame:SetFrameStrata(drawerFrame:GetFrameStrata())
     frame:SetFrameLevel(drawerFrame:GetFrameLevel() + 5)
 
-    -- Override Hide, SetShown, AND SetAlpha so nothing can re-hide
-    -- LibDBIcon uses SetAlpha(0) + fadeOut animation, not Hide()
     local mt = getmetatable(frame)
     local mtSetAlpha = mt and mt.__index and mt.__index.SetAlpha
     ---@type fun(...)
@@ -3190,28 +2919,18 @@ local function CollectButton(frame, name)
         end
     end
     frame.SetAlpha = function(self, alpha)
-        -- Only allow full opacity while in drawer
         if mtSetAlpha then
             mtSetAlpha(self, 1)
         end
     end
-    frame.SetParent = function() end  -- Prevent addons from re-parenting out of drawer
-    -- Block owner-driven re-anchoring too: custom minimap buttons (and
-    -- LibDBIcon's updatePosition on zoom/shape events) re-assert
-    -- SetPoint relative to Minimap after collection. With SetParent blocked,
-    -- that leaves the icon anchored at minimap coordinates inside the
-    -- clipped (and usually hidden) drawer — invisible everywhere.
-    -- LayoutDrawerButtons places buttons through the metatable instead.
+    frame.SetParent = function() end
     frame.ClearAllPoints = function() end
     frame.SetPoint = function() end
     frame.SetFrameStrata = function() end
     frame.SetFrameLevel = function() end
-    -- Force visible using metatable methods (bypass our overrides for initial set)
     if mtSetAlpha then mtSetAlpha(frame, 1) end
     if mt and mt.__index then mt.__index.Show(frame) end
 
-    -- Disable dragging — nil scripts AND prevent movement so no handler
-    -- (OnMouseDown, etc.) can call StartMoving() and pull the icon out
     if frame:HasScript("OnDragStart") then
         frame:SetScript("OnDragStart", nil)
     end
@@ -3219,7 +2938,6 @@ local function CollectButton(frame, name)
         frame:SetScript("OnDragStop", nil)
     end
     frame:SetMovable(false)
-    -- Hook enter/leave for auto-hide
     if frame:HasScript("OnEnter") then
         frame:HookScript("OnEnter", function() CancelAutoHide() end)
     end
@@ -3228,10 +2946,9 @@ local function CollectButton(frame, name)
     end
 end
 
-ScanAndCollectButtons = function()  -- assigned to forward-declared local
+ScanAndCollectButtons = function()
     if not drawerFrame then return end
 
-    -- Scan Minimap children
     for _, child in ipairs({ Minimap:GetChildren() }) do
         if IsMinimapButton(child) then
             local name = child:GetName()
@@ -3240,7 +2957,6 @@ ScanAndCollectButtons = function()  -- assigned to forward-declared local
             end
         end
     end
-    -- Scan MinimapBackdrop children (if exists)
     if MinimapBackdrop then
         for _, child in ipairs({ MinimapBackdrop:GetChildren() }) do
             if IsMinimapButton(child) then
@@ -3251,7 +2967,6 @@ ScanAndCollectButtons = function()  -- assigned to forward-declared local
             end
         end
     end
-    -- Scan MinimapCluster children (some addons parent buttons here)
     if MinimapCluster then
         for _, child in ipairs({ MinimapCluster:GetChildren() }) do
             if IsMinimapButton(child) then
@@ -3262,8 +2977,6 @@ ScanAndCollectButtons = function()  -- assigned to forward-declared local
             end
         end
     end
-    -- Scan UIParent children for minimap buttons parented outside the
-    -- minimap hierarchy (some addons parent their button to UIParent)
     for _, child in ipairs({ UIParent:GetChildren() }) do
         local ok, name = ns.SafeCallMethod("best-effort-style", child, "GetName")
         if ok and name and not collectedButtons[name] and IsMinimapButton(child) then
@@ -3280,7 +2993,6 @@ local function ReleaseAllButtons()
     for name, data in pairs(collectedButtons) do
         local frame = data.frame
         if frame then
-            -- Remove our overrides (fall back to metatable methods)
             frame.Hide = nil
             frame.SetShown = nil
             frame.SetAlpha = nil
@@ -3295,7 +3007,6 @@ local function ReleaseAllButtons()
             if data.origLevel then
                 ns.SafeCallMethod("best-effort-style", frame, "SetFrameLevel", data.origLevel)
             end
-            -- Restore hidden overlay/border textures for LibDBIcon buttons
             if data.hiddenRegions then
                 for _, region in ipairs(data.hiddenRegions) do
                     region:Show()
@@ -3351,9 +3062,8 @@ local function SetupButtonDrawer()
     UpdateDrawerAnchor()
     drawerToggleButton:Show()
 
-    -- Auto-hide toggle button: show on minimap hover, hide on leave
     if settings.buttonDrawer.autoHideToggle then
-        drawerToggleButton:SetAlpha(0)  -- Start hidden
+        drawerToggleButton:SetAlpha(0)
         if not toggleAutoHideHooked then
             Minimap:HookScript("OnEnter", ShowToggleButton)
             Minimap:HookScript("OnLeave", function()
@@ -3369,7 +3079,6 @@ local function SetupButtonDrawer()
         drawerToggleButton:SetAlpha(1)
     end
 
-    -- Hook LibDBIcon for late-loading buttons (use distinct owner to avoid conflict with SetupAddonButtonHiding)
     if LibDBIcon and not drawerCallbackRegistered then
         LibDBIcon.RegisterCallback("QUI_ButtonDrawer", "LibDBIcon_IconCreated", function(_, button, buttonName)
             local frameName = "LibDBIcon10_" .. buttonName
@@ -3391,7 +3100,6 @@ local function SetupButtonDrawer()
         drawerCallbackRegistered = true
     end
 
-    -- Delayed rescan to catch async button creation
     C_Timer.After(0, function()
         local s = GetSettings()
         if s and s.buttonDrawer and s.buttonDrawer.enabled then
@@ -3409,7 +3117,7 @@ end
 local function RefreshButtonDrawer()
     local settings = GetSettings()
     if not settings or not settings.buttonDrawer or not settings.buttonDrawer.enabled then
-        SetupButtonDrawer()  -- Will clean up
+        SetupButtonDrawer()
         return
     end
     if drawerFrame then
@@ -3418,15 +3126,12 @@ local function RefreshButtonDrawer()
         LayoutDrawerButtons()
         UpdateDrawerAnchor()
 
-        -- Ensure toggle is shown (HideAllDecorations may have hidden it)
         if drawerToggleButton then
             drawerToggleButton:Show()
         end
 
-        -- Apply auto-hide toggle state immediately
         if drawerToggleButton then
             if settings.buttonDrawer.autoHideToggle then
-                -- Install Minimap hover hooks if not already done
                 if not toggleAutoHideHooked then
                     Minimap:HookScript("OnEnter", ShowToggleButton)
                     Minimap:HookScript("OnLeave", function()
@@ -3450,10 +3155,6 @@ local function RefreshButtonDrawer()
     end
 end
 
----=================================================================================
---- MINIMAP SIZE AND POSITION
----=================================================================================
-
 local function UpdateMinimapSize()
     if InCombatLockdown() and not inInitSafeWindow then
         return
@@ -3462,21 +3163,15 @@ local function UpdateMinimapSize()
     if not settings then return end
     CountMinimapDebug("size")
 
-    -- Set minimap size inside the HUD suppression window so our own geometry
-    -- updates do not look like an external overlay taking over the minimap.
     BeginQUIControlledMinimapUpdate()
     Minimap:SetSize(settings.size, settings.size)
     Minimap:SetScale(settings.scale or 1.0)
-    -- Keep the anchor proxy in sync so anchoring-dependent frames see the
-    -- correct geometry even when external addons rescale the real Minimap.
     if minimapAnchor then
         minimapAnchor:SetSize(settings.size, settings.size)
         minimapAnchor:SetScale(settings.scale or 1.0)
     end
     EndQUIControlledMinimapUpdate()
 
-    -- Temporary diagnostic: disable the forced render nudge that toggles
-    -- minimap zoom so we can see whether it is the source of the zoom/CVar storm.
     if MINIMAP_RENDER_ZOOM_NUDGE_ENABLED then
         CountMinimapDebug("zoomNudge")
         local z = Minimap:GetZoom()
@@ -3489,7 +3184,6 @@ local function UpdateMinimapSize()
         end
     end
 
-    -- Update LibDBIcon button radius for square minimap
     if LibDBIcon then
         if settings.shape == "SQUARE" then
             LibDBIcon:SetButtonRadius(settings.buttonRadius or 2)
@@ -3505,24 +3199,11 @@ local function SetupMinimapDragging()
         return
     end
 
-    -- Create the stable anchor proxy (once). This frame is parented to UIParent
-    -- and holds the minimap's intended position. The frame anchoring system
-    -- resolves "minimap" to this proxy, so dependent frames (objective tracker,
-    -- buffs, datatext, etc.) stay in place when external addons reparent or
-    -- rescale the real Minimap for full-screen HUD overlays.
     if not minimapAnchor then
         minimapAnchor = CreateFrame("Frame", "QUI_MinimapAnchor", UIParent)
         minimapAnchor:SetFrameStrata("LOW")
         minimapAnchor:SetFrameLevel(1)
-        -- Size is set below in sync with UpdateMinimapSize
 
-        -- Mirror anchor position to the real Minimap. The anchoring system
-        -- positions the proxy; this hook keeps Minimap on top of it.
-        -- When an external HUD is active, skip the mirror so the external
-        -- addon's positioning is not overwritten. Same when Minimap is
-        -- parented away from UIParent — layout mode glues it inside its
-        -- mover handle (SetAllPoints), and mirroring would rip that glue
-        -- so handle drags stop carrying the Minimap.
         local function MirrorOwnsMinimap()
             if externalHudActive then return false end
             local parent = Minimap:GetParent()
@@ -3538,17 +3219,12 @@ local function SetupMinimapDragging()
         end)
     end
 
-    -- Reparent minimap to UIParent for proper positioning
     Minimap:SetParent(UIParent)
     Minimap:SetFrameStrata("LOW")
     Minimap:SetFrameLevel(2)
     Minimap:SetFixedFrameStrata(true)
     Minimap:SetFixedFrameLevel(true)
 
-    -- Reparent MinimapCluster to a hidden frame — QUI manages the minimap
-    -- independently. This makes MinimapCluster permanently invisible
-    -- regardless of Blizzard alpha resets during Edit Mode, eliminating
-    -- the need for a secure proxy to keep it hidden.
     if MinimapCluster then
         local hiddenCluster = CreateFrame("Frame")
         hiddenCluster:Hide()
@@ -3556,7 +3232,6 @@ local function SetupMinimapDragging()
         MinimapCluster:EnableMouse(false)
     end
 
-    -- Setup dragging - only movable during Edit Mode
     Minimap:EnableMouse(true)
     Minimap:SetMovable(false)
     Minimap:SetClampedToScreen(true)
@@ -3576,17 +3251,12 @@ local function SetupMinimapDragging()
         if point then
             settings.position = {point, relPoint, x, y}
         end
-        -- Keep anchor proxy in sync with the dragged position
         if minimapAnchor and point then
             minimapAnchor:ClearAllPoints()
             minimapAnchor:SetPoint(point, UIParent, relPoint, x, y)
         end
     end)
 
-    -- Helper: position both the anchor proxy and the Minimap at the same point.
-    -- The anchor stays at UIParent; Minimap sits on top of it.
-    -- When the anchor has mirror hooks installed, positioning the anchor also
-    -- positions Minimap via the hook — so skip the redundant direct call.
     local function ApplyMinimapPosition(pt, parent, rel, ox, oy)
         if minimapAnchor then
             minimapAnchor:ClearAllPoints()
@@ -3597,11 +3267,6 @@ local function SetupMinimapDragging()
         end
     end
 
-    -- If the frame anchoring system owns this frame, apply the RAW anchor
-    -- point directly (not through ApplyFrameAnchor which converts to size-stable
-    -- CENTER offsets that depend on UIParent dimensions — not final during init).
-    -- The deferred timers in OnEnable will convert to CENTER later when UIParent
-    -- has settled.
     if _G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("minimap") then
         local quiDB = _G.QUI and _G.QUI.db and _G.QUI.db.profile
         local anchorSettings = quiDB and quiDB.frameAnchoring and quiDB.frameAnchoring["minimap"]
@@ -3611,7 +3276,6 @@ local function SetupMinimapDragging()
             local ox = anchorSettings.offsetX or 0
             local oy = anchorSettings.offsetY or 0
             local parent = UIParent
-            -- Resolve "screen" parent
             if anchorSettings.parent and anchorSettings.parent ~= "screen" then
                 local resolved = _G[anchorSettings.parent]
                 if resolved then parent = resolved end
@@ -3621,7 +3285,6 @@ local function SetupMinimapDragging()
         return
     end
 
-    -- Apply saved position (handles both array format from drag and keyed format from defaults)
     local pos = settings.position
     if pos then
         local point = pos[1] or pos.point or "TOPLEFT"
@@ -3633,13 +3296,6 @@ local function SetupMinimapDragging()
         ApplyMinimapPosition("TOPLEFT", UIParent, "BOTTOMLEFT", 790, 285)
     end
 end
-
----=================================================================================
---- EXTERNAL HUD DETECTION
---- Detects when an external addon scales up / fades out the Minimap for a
---- full-screen HUD overlay, and hides all QUI decorations so they don't
---- appear as opaque artifacts on top of the transparent overlay.
----=================================================================================
 
 local function HideAllDecorations()
     CountMinimapDebug("hideDecor")
@@ -3662,7 +3318,6 @@ local function CheckExternalHud()
     if IsExternalHudCheckSuppressed() then return end
     CountMinimapDebug("hud")
 
-    -- Layout mode reparents Minimap to a handle — don't treat that as a HUD
     local um = ns.QUI_LayoutMode
     if um and um.isActive then return end
 
@@ -3672,20 +3327,15 @@ local function CheckExternalHud()
     local expectedScale = settings.scale or 1.0
     local expectedSize = settings.size or 140
 
-    -- Primary checks: API-reported values (may be overridden by external addons)
-    -- Guard against secret values from combat — treat them as normal (no HUD)
     local currentScale = Helpers.SafeToNumber(Minimap:GetScale(), expectedScale)
     local currentAlpha = Helpers.SafeToNumber(Minimap:GetEffectiveAlpha(), 1)
     local currentWidth = Helpers.SafeToNumber(Minimap:GetWidth(), expectedSize)
 
-    -- QUI reparents Minimap to UIParent, so check against UIParent (not MinimapCluster)
     local hudDetected = (currentScale > expectedScale * 2.0)
         or (currentAlpha < 0.5)
         or (currentWidth > expectedSize * 2.0)
         or (Minimap:GetParent() ~= UIParent)
 
-    -- Fallback: check actual rendered pixel size via GetRect() which bypasses
-    -- metatable overrides that some HUD addons use to hide their changes
     if not hudDetected then
         local left, bottom, width, height = Minimap:GetRect()
         if left and width then
@@ -3701,7 +3351,6 @@ local function CheckExternalHud()
     end
 
     if hudDetected then
-        -- Debounce: require consecutive detections before activating
         hudDetectedCount = hudDetectedCount + 1
         if hudDetectedCount >= HUD_DEBOUNCE_THRESHOLD and not externalHudActive then
             externalHudActive = true
@@ -3727,17 +3376,6 @@ local function DeferCheckExternalHud()
         CheckExternalHud()
     end)
 end
-
----=================================================================================
---- EDIT MODE SUPPORT
----=================================================================================
-
-
----=================================================================================
---- ZOOM PERSISTENCE
---- Blizzard stores indoor and outdoor minimap zoom separately. Keep them in sync
---- so a player's chosen zoom level survives relogs regardless of where they log in.
----=================================================================================
 
 local zoomPersistenceHooked = false
 
@@ -3780,10 +3418,6 @@ local function SetupZoomPersistence()
     end
 end
 
----=================================================================================
---- MOUSE WHEEL ZOOM
----=================================================================================
-
 local function SetupMouseWheelZoom()
     Minimap:EnableMouseWheel(true)
     Minimap:SetScript("OnMouseWheel", function(_, delta)
@@ -3794,10 +3428,6 @@ local function SetupMouseWheelZoom()
         end
     end)
 end
-
----=================================================================================
---- USER ZOOM LEVEL (world zoom, does not affect frame size)
----=================================================================================
 
 local function GetMaxZoomLevel()
     if Minimap.GetZoomLevels then
@@ -3821,10 +3451,6 @@ local function ApplyZoomLevel(zoomLevel)
     if Minimap.ZoomIn and Minimap.ZoomIn.Enable then Minimap.ZoomIn:Enable() end
     if Minimap.ZoomOut and Minimap.ZoomOut.Enable then Minimap.ZoomOut:Enable() end
 end
-
----=================================================================================
---- AUTO ZOOM OUT
----=================================================================================
 
 local autoZoomTimer = 0
 local autoZoomCurrent = 0
@@ -3851,7 +3477,6 @@ local function SetupAutoZoom()
         end
     end
 
-    -- TAINT SAFETY: Defer to break taint chain from secure Blizzard context.
     if Minimap.ZoomIn then
         Minimap.ZoomIn:HookScript("OnClick", function()
             C_Timer.After(0, OnZoom)
@@ -3863,36 +3488,18 @@ local function SetupAutoZoom()
         end)
     end
 
-    -- Initial zoom out
     OnZoom()
 end
-
----=================================================================================
---- UPDATE TIMERS (Ticker-based for performance)
----=================================================================================
 
 local function StartUpdateTickers()
     local settings = GetSettings()
     if not settings then return end
 
-    -- Cancel existing tickers if any; nil out so a now-disabled feature does
-    -- not keep a stale handle around (HideAllDecorations does the same).
     if clockTicker then clockTicker:Cancel(); clockTicker = nil end
     if coordsTicker then coordsTicker:Cancel(); coordsTicker = nil end
 
-    -- Clock: the display renders HH:MM only (UpdateClockTime), so a 1-second
-    -- ticker repainted identical text 59 times a minute. Instead chain a
-    -- one-shot timer aligned to the next minute boundary. The delay is
-    -- recomputed from date("%S") on every fire, so client clock skew never
-    -- accumulates; the +0.1s lands each fire just past the rollover.
-    -- Game-time mode has no seconds to align on — GetGameTime returns only
-    -- hour, minute (tests/api-docs/blizzard/SystemTimeDocumentation.lua) —
-    -- so local second-of-minute is the proxy there; time zone offsets are
-    -- whole minutes, and any residual client/server drift is corrected by
-    -- the next recomputed delay. scheduleClockTick is function-scoped on
-    -- purpose: the chunk is near Lua 5.1's 200-locals cap.
     if settings.showClock then
-        UpdateClockTime()  -- immediate paint; the first timer fires up to 60s out
+        UpdateClockTime()
         local function scheduleClockTick()
             local delay = 60.1 - (tonumber(date("%S")) or 0)
             clockTicker = C_Timer.NewTimer(delay, function()
@@ -3903,8 +3510,6 @@ local function StartUpdateTickers()
         scheduleClockTick()
     end
 
-    -- Coords ticker: only while coords are shown; interval per setting
-    -- (default 1 second)
     if settings.showCoords then
         local coordInterval = settings.coordUpdateInterval or 1
         coordsTicker = C_Timer.NewTicker(coordInterval, function()
@@ -3915,12 +3520,7 @@ local function StartUpdateTickers()
         end)
     end
 
-    -- Datatext updates are handled by individual datatext tickers via the registry
 end
-
----=================================================================================
---- MAIN INITIALIZATION
----=================================================================================
 
 function Minimap_Module:Initialize()
     local icl = InCombatLockdown()
@@ -3928,16 +3528,11 @@ function Minimap_Module:Initialize()
     local settings = GetSettings()
     if not settings then return end
 
-    -- ADDON_LOADED safe window: protected calls are allowed even though
-    -- InCombatLockdown() returns true during a combat /reload. Set flag
-    -- so sub-functions skip their combat guards during initialization.
     inInitSafeWindow = true
     BeginQUIControlledMinimapUpdate(1.0)
 
-    -- Set shape first (affects other elements)
     SetMinimapShape(settings.shape)
 
-    -- Create and update elements
     CreateBackdrop()
     UpdateBackdrop()
 
@@ -3955,7 +3550,6 @@ function Minimap_Module:Initialize()
     CreateZoneText()
     UpdateZoneText()
 
-    -- Datatext panel (integrated below minimap with 3 slots)
     CreateDatatextPanel()
     UpdateDatatextPanel()
 
@@ -3968,22 +3562,13 @@ function Minimap_Module:Initialize()
     SetupMiddleClickMenu()
     SetupAutoZoom()
 
-    -- Detect external HUD overlays that scale up / fade out / resize the Minimap.
-    -- Install the hooks once so repeated module refreshes do not stack callbacks.
     if not externalHudHooksInstalled then
         externalHudHooksInstalled = true
         hooksecurefunc(Minimap, "SetScale", function() DeferCheckExternalHud() end)
         hooksecurefunc(Minimap, "SetAlpha", function() DeferCheckExternalHud() end)
         hooksecurefunc(Minimap, "SetSize", function() DeferCheckExternalHud() end)
-        -- SetParent is the most reliable HUD signal — if Minimap's parent
-        -- changes away from UIParent, an external addon is taking over.
-        -- Bypass the normal debounce and activate immediately.
         hooksecurefunc(Minimap, "SetParent", function()
             if IsExternalHudCheckSuppressed() then return end
-            -- Layout mode reparents Minimap into its mover handle — that is
-            -- QUI's own doing, not an external HUD takeover. Latching
-            -- externalHudActive here would hide all decorations and disable
-            -- the anchor-proxy mirror for the whole layout-mode session.
             local um = ns.QUI_LayoutMode
             if um and um.isActive then return end
             local parent = Minimap:GetParent()
@@ -3996,7 +3581,6 @@ function Minimap_Module:Initialize()
                     parent:GetName() or tostring(parent))
                 HideAllDecorations()
             elseif parent == UIParent and externalHudActive then
-                -- Parent restored — schedule a full check to confirm
                 DeferCheckExternalHud()
             end
         end)
@@ -4005,16 +3589,12 @@ function Minimap_Module:Initialize()
         hooksecurefunc(Minimap, "SetPoint", function() DeferCheckExternalHud() end)
     end
 
-    -- Periodic fallback: some HUD addons use metatable manipulation that bypasses
-    -- hooksecurefunc. Keep a single ticker alive as a safety net.
     if not externalHudTicker then
         externalHudTicker = C_Timer.NewTicker(5, CheckExternalHud)
     end
 
-    -- Start performance-optimized ticker updates
     StartUpdateTickers()
 
-    -- Hide Blizzard decorations
     if MinimapBackdrop then
         MinimapBackdrop:Hide()
     end
@@ -4028,12 +3608,10 @@ function Minimap_Module:Initialize()
         MinimapBorderTop:SetParent(CreateFrame("Frame"))
     end
 
-    -- Hide any backdrop on the Minimap itself (this removes the built-in border)
     if Minimap.SetBackdrop then
         Minimap:SetBackdrop(nil)
     end
 
-    -- Hide the backdrop edge textures that Blizzard creates (LeftEdge, RightEdge, TopEdge, BottomEdge, corners, etc.)
     local edgeNames = {"LeftEdge", "RightEdge", "TopEdge", "BottomEdge", "TopLeftCorner", "TopRightCorner", "BottomLeftCorner", "BottomRightCorner", "Center"}
     for _, edgeName in ipairs(edgeNames) do
         if Minimap[edgeName] then
@@ -4042,7 +3620,6 @@ function Minimap_Module:Initialize()
         end
     end
 
-    -- Also check for backdropInfo table which stores edge references
     if Minimap.backdropInfo then
         for _, edgeName in ipairs(edgeNames) do
             if Minimap.backdropInfo[edgeName] then
@@ -4051,12 +3628,10 @@ function Minimap_Module:Initialize()
         end
     end
 
-    -- Hide MinimapCluster backdrop if it exists
     if MinimapCluster and MinimapCluster.SetBackdrop then
         MinimapCluster:SetBackdrop(nil)
     end
 
-    -- Hide the minimap's built-in border texture if present
     if Minimap.BorderTop then
         Minimap.BorderTop:Hide()
     end
@@ -4064,14 +3639,11 @@ function Minimap_Module:Initialize()
         Minimap.Background:Hide()
     end
 
-    -- Iterate through all children to find and hide edge textures
     for _, child in pairs({Minimap:GetChildren()}) do
-        -- Check if child has edge-related name or is a backdrop frame
         local name = child:GetName()
         if name and (name:find("Edge") or name:find("Corner") or name:find("Border")) then
             child:Hide()
         end
-        -- Also hide any backdrop on child frames
         if child.SetBackdrop then
             child:SetBackdrop(nil)
         end
@@ -4088,17 +3660,14 @@ function Minimap_Module:Refresh()
     end
     CountMinimapDebug("refresh")
 
-    -- Invalidate cached settings so we get fresh values
     InvalidateSettingsCache()
 
     local settings = GetSettings()
 
-    -- Handle case where settings don't exist at all
     if not settings then
         return
     end
 
-    -- If an external HUD overlay is active, keep decorations hidden
     if externalHudActive then
         HideAllDecorations()
         return
@@ -4106,11 +3675,8 @@ function Minimap_Module:Refresh()
 
     BeginQUIControlledMinimapUpdate(0.75)
 
-    -- Restart tickers with potentially new intervals
     StartUpdateTickers()
 
-    -- Re-assert minimap strata/level — layout mode reparenting clears
-    -- SetFixedFrameStrata/Level, so re-apply them every refresh.
     Minimap:SetFrameStrata("LOW")
     Minimap:SetFrameLevel(2)
     Minimap:SetFixedFrameStrata(true)
@@ -4121,9 +3687,6 @@ function Minimap_Module:Refresh()
     UpdateMinimapSize()
     ApplyZoomLevel(settings.zoomLevel)
     UpdateClock()
-    -- UpdateClock measures width with a "99:99" placeholder and leaves it on
-    -- screen; the minute-aligned timer's next repaint can be up to 60s out,
-    -- so repaint the real time now (Initialize already uses this pairing).
     UpdateClockTime()
     UpdateCoords()
     UpdateCoordsPosition()
@@ -4135,7 +3698,6 @@ function Minimap_Module:Refresh()
     UpdateDungeonEyePosition()
     UpdateMiddleClickMenuOverlayState()
 
-    -- Restore saved position from profile — skip if the frame anchoring system owns this frame
     if not (_G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("minimap")) then
         if settings.position and settings.position[1] and settings.position[2] then
             local pt = settings.position[1]
@@ -4143,7 +3705,6 @@ function Minimap_Module:Refresh()
             local ox = settings.position[3] or 0
             local oy = settings.position[4] or 0
             if minimapAnchor then
-                -- Hook on anchor mirrors to Minimap automatically
                 minimapAnchor:ClearAllPoints()
                 minimapAnchor:SetPoint(pt, UIParent, relPt, ox, oy)
             else
@@ -4157,22 +3718,12 @@ function Minimap_Module:Refresh()
     FlushMinimapDebugStats(false)
 end
 
--- Idempotent one-time init. The minimap eager-loads from the core's OnEnable, so
--- its OWN ADDON_LOADED is NOT delivered to the handler below (nested-load
--- context) — gating init on `arg1 == ADDON_NAME` would leave the minimap dead.
--- ns.WhenLoggedIn drives init instead (see below); the ADDON_LOADED branch is a
--- self-healing fallback for the clean-stack paths (live toggle, headless tests).
--- The _initialized guard makes a double trigger a no-op. Defined as a method so
--- it adds no new chunk-level upvalue (Lua 5.1 caps those at 60).
 function Minimap_Module:InitializeOnce()
     if self._initialized then return end
-    -- Module dormancy gate (C7): honour minimap.enabled == false to skip init
-    -- entirely.  Default is true (key absent → runs unchanged).
     local _p = QUICore and QUICore.db and QUICore.db.profile
     if _p and _p.minimap and _p.minimap.enabled == false then return end
     self._initialized = true
     self:Initialize()
-    -- LOD catch-up: these Blizzard LoD addons may already be loaded.
     local settings = GetSettings()
     if settings then
         if C_AddOns.IsAddOnLoaded("Blizzard_QueueStatusFrame") then
@@ -4193,7 +3744,6 @@ local function RefreshMinimapButtonsAfterTransition()
         return
     end
 
-    -- Instance indicators can get laid out on the next frame(s) after zoning.
     C_Timer.After(0, function()
         local s = GetSettings()
         if s and not InCombatLockdown() then
@@ -4211,10 +3761,6 @@ local function RefreshMinimapButtonsAfterTransition()
     end)
 end
 
----=================================================================================
---- EVENT HANDLING
----=================================================================================
-
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
@@ -4222,57 +3768,35 @@ eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 eventFrame:RegisterEvent("PLAYER_DIFFICULTY_CHANGED")
 eventFrame:RegisterEvent("UPDATE_INSTANCE_INFO")
--- The minimap now eager-loads on the loading screen, so Initialize runs before
--- the UI scale / UIParent dimensions are final. EDIT_MODE_LAYOUTS_UPDATED is the
--- documented signal (EditModeManagerDocumentation.lua) that EditMode has applied
--- its layout — the point at which those values are settled. Re-apply on it (and
--- on the first PLAYER_ENTERING_WORLD, in case it fires first) so the minimap's
--- size/anchor land correct without any post-login pop.
 eventFrame:RegisterEvent("EDIT_MODE_LAYOUTS_UPDATED")
--- Some addons create their minimap button on VARIABLES_LOADED, which on retail
--- fires after PLAYER_ENTERING_WORLD — long past the eager (loading-screen)
--- drawer scan and its catch-up timers. Rescan on it so those buttons land in
--- the drawer at login instead of waiting for the first drawer open.
 eventFrame:RegisterEvent("VARIABLES_LOADED")
 
 eventFrame:SetScript("OnEvent", function(self, event, arg1)
     if event == "ADDON_LOADED" then
         if arg1 == ADDON_NAME then
-            -- Self-healing fallback for clean-stack loads (live toggle, headless
-            -- tests). The eager-login path runs InitializeOnce via
-            -- ns.WhenLoggedIn instead — this self-ADDON_LOADED is not delivered
-            -- in that nested-load context. Idempotent.
             Minimap_Module:InitializeOnce()
         elseif arg1 == "Blizzard_QueueStatusFrame" then
-            -- LoD: install hooks once the queue button actually exists.
             local settings = GetSettings()
             if settings then
                 UpdateDungeonEyePosition()
             end
         elseif arg1 == "Blizzard_HybridMinimap" then
-            -- Handle HybridMinimap loading (Delves/scenarios)
             local settings = GetSettings()
             if settings then
                 SetMinimapShape(settings.shape)
             end
         end
     elseif event == "PLAYER_REGEN_ENABLED" then
-        -- Combat ended: run deferred drawer setup if one was requested during combat
         if pendingDrawerSetup then
             pendingDrawerSetup = false
             SetupButtonDrawer()
         end
-        -- Combat ended: re-run the deferred datatext panel pass (slot
-        -- teardown is blocked in combat once a slot hosts a protected child).
-        -- Skipped when a full refresh is also pending — Refresh() below runs
-        -- UpdateDatatextPanel itself.
         if pendingDatatextPanelUpdate then
             pendingDatatextPanelUpdate = false
             if not pendingMinimapRefresh then
                 UpdateDatatextPanel()
             end
         end
-        -- Combat ended: run deferred refresh if one was requested during combat
         if pendingMinimapRefresh then
             pendingMinimapRefresh = false
             Minimap_Module:Refresh()
@@ -4282,10 +3806,6 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
         or event == "PLAYER_DIFFICULTY_CHANGED"
         or event == "UPDATE_INSTANCE_INFO" then
         RefreshMinimapButtonsAfterTransition()
-        -- First time the world is up after the eager (loading-screen) init,
-        -- re-apply the full minimap once: the UI scale / UIParent dimensions
-        -- the loading-screen Initialize ran against are settled now. Deferred a
-        -- frame; Refresh() self-guards combat + external HUD.
         if not Minimap_Module._settleReapplyDone then
             Minimap_Module._settleReapplyDone = true
             C_Timer.After(0, function()
@@ -4295,8 +3815,6 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
     elseif event == "VARIABLES_LOADED" then
         local settings = GetSettings()
         if settings and settings.buttonDrawer and settings.buttonDrawer.enabled then
-            -- Deferred: the late-creating addon's own VARIABLES_LOADED handler
-            -- may not have run yet when ours fires.
             C_Timer.After(0.5, function()
                 local s = GetSettings()
                 if s and s.buttonDrawer and s.buttonDrawer.enabled
@@ -4306,10 +3824,6 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
             end)
         end
     elseif event == "EDIT_MODE_LAYOUTS_UPDATED" then
-        -- EditMode finished applying a layout (the documented settle signal).
-        -- Re-assert QUI's minimap so our size/anchor win over EditMode's pass,
-        -- and cover the first-settle case if this fires before PLAYER_ENTERING_
-        -- WORLD. The payload is ignored, so no secret-value handling is needed.
         Minimap_Module._settleReapplyDone = true
         C_Timer.After(0, function()
             if Minimap_Module.Refresh then Minimap_Module:Refresh() end
@@ -4317,29 +3831,12 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
     end
 end)
 
--- Fallback init driver (live toggle / headless). The LOGIN path is driven
--- in-window from the last TOC sibling (init_inwindow.lua) while the core's
--- ADDON_LOADED safe window (ns._inInitSafeWindow) is still open, because the
--- minimap's protected-frame layout (Minimap:SetPoint/SetParent/SetSize) is only
--- permitted in combat inside that window — a combat /reload throws
--- ADDON_ACTION_BLOCKED otherwise. This C_Timer.After(0) path runs AFTER the
--- window closes, so it must NOT be the login driver; it covers:
---   * live module toggle (already logged in): ns.WhenLoggedIn fires immediately
---     mid-load, and the one-frame defer lets the remaining toc siblings finish
---     loading first (the integrated datatext panel reads QUICore.Datatexts,
---     owned by the QUI_Datatexts sub-addon, which the manifest loads before
---     this one). Toggles happen out of combat, so the window is moot.
---   * a redundant login fallback — InitializeOnce is idempotent (_initialized),
---     so the in-window call having already run makes this a no-op.
--- ns.WhenLoggedIn is nil only in the headless test harness, where the
--- ADDON_LOADED fallback above drives init instead.
 if ns.WhenLoggedIn then
     ns.WhenLoggedIn(function()
         C_Timer.After(0, function() Minimap_Module:InitializeOnce() end)
     end)
 end
 
--- Calendar pending invites handling
 local calendarFrame = CreateFrame("Frame")
 calendarFrame:RegisterEvent("CALENDAR_UPDATE_PENDING_INVITES")
 calendarFrame:RegisterEvent("CALENDAR_ACTION_PENDING")
@@ -4357,7 +3854,6 @@ calendarFrame:SetScript("OnEvent", function()
     end
 end)
 
--- Pet battle handling
 local petBattleFrame = CreateFrame("Frame")
 petBattleFrame:RegisterEvent("PET_BATTLE_OPENING_START")
 petBattleFrame:RegisterEvent("PET_BATTLE_CLOSE")
@@ -4377,7 +3873,6 @@ petBattleFrame:SetScript("OnEvent", function(self, event)
     end
 end)
 
--- Expose refresh globals for options panel (matches pattern used by all other modules)
 _G.QUI_RefreshMinimap = function()
     Minimap_Module:Refresh()
 end
@@ -4386,11 +3881,7 @@ _G.QUI_RefreshMinimapButtonDrawer = function()
     RefreshButtonDrawer()
 end
 
--- Expose collected button names for the options panel
 _G.QUI_GetDrawerButtonNames = function()
-    -- Same late-creator catch-up as ShowDrawer: buttons born on
-    -- VARIABLES_LOADED miss the login scans, and the panel may be opened
-    -- before the drawer ever was.
     local settings = GetSettings()
     if settings and settings.buttonDrawer and settings.buttonDrawer.enabled
         and ScanAndCollectButtons and not InCombatLockdown() then
@@ -4426,9 +3917,6 @@ if ns.Registry then
         group = "ui",
         importCategories = { "minimapDatatexts" },
     })
-    -- Companion skinning registration: the datatext panel bg and button-drawer
-    -- chrome track the global skin, but the "ui" group isn't refreshed on a
-    -- skin-color change (which fires only RefreshAll("skinning")). Re-skin too.
     ns.Registry:Register("minimapSkin", {
         refresh = _G.QUI_RefreshMinimap,
         priority = 55,
@@ -4437,12 +3925,6 @@ if ns.Registry then
     })
 end
 
--- Live-enable catch-up: enabling the Datatexts tile on the Module Addons page
--- LoadAddOn's QUI_Datatexts with no reload, and the loader notifies folder
--- subscribers afterwards (core/addon_loader.lua LoadNow → ns.QUI_Modules:
--- NotifyChanged(folder)). This module initialized while QUICore.Datatexts was
--- absent, so UpdateDatatextPanel hid the 3-slot panel — re-run it now that the
--- registry exists so the panel appears without a /reload.
 if ns.QUI_Modules and ns.QUI_Modules.Subscribe then
     ns.QUI_Modules:Subscribe("QUI_Datatexts", function()
         if QUICore and QUICore.Datatexts then
@@ -4451,9 +3933,6 @@ if ns.QUI_Modules and ns.QUI_Modules.Subscribe then
     end)
 end
 
----------------------------------------------------------------------------
--- UNLOCK MODE ELEMENT REGISTRATION
----------------------------------------------------------------------------
 do
     local function RegisterLayoutModeElements()
         local um = ns.QUI_LayoutMode
@@ -4464,7 +3943,6 @@ do
             label = ns.L["Minimap"],
             group = ns.L["Display"],
             order = 1,
-            -- module on/off lives in Module Addons (addon state); positioning only here
             setGameplayHidden = function(hide)
                 if not Minimap then return end
                 if hide then
@@ -4479,7 +3957,6 @@ do
                 return Minimap
             end,
         })
-        -- Minimap is a Blizzard frame — uses proxy mover (isOwned defaults to false)
 
         um:RegisterElement({
             key = "datatextPanel",
@@ -4488,7 +3965,6 @@ do
             order = 2,
             isOwned = true,
             getFrame = function()
-                -- Ensure the frame exists (it's lazily created)
                 if not datatextFrame then
                     CreateDatatextPanel()
                     UpdateDatatextPanel()
@@ -4511,9 +3987,6 @@ do
                 if hide then
                     datatextFrame:Hide()
                 else
-                    -- Same gate as UpdateDatatextPanel: never re-show an empty
-                    -- bar when the panel is disabled or the QUI_Datatexts
-                    -- registry is absent.
                     local dt = GetDatatextSettings()
                     if dt and dt.enabled and QUICore and QUICore.Datatexts then
                         datatextFrame:Show()
@@ -4526,9 +3999,6 @@ do
     C_Timer.After(2, function()
         RegisterLayoutModeElements()
 
-        -- After layout mode reparents Minimap to a handle and back,
-        -- the drawer toggle can lose its anchor / strata.  Run a full
-        -- minimap refresh on exit to restore everything.
         local um = ns.QUI_LayoutMode
         if um and um.RegisterExitCallback then
             um:RegisterExitCallback(function()

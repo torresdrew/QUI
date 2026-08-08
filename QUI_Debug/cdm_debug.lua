@@ -1,20 +1,3 @@
--- cdm_debug.lua
--- Single home for the QUI CDM owned-engine debug surface.
---
--- Loaded last among the engine files in cdm.xml, so it can:
---   * Attach functions onto the engine module tables (ns.CDMIcons, etc.)
---     that other files have already populated.
---   * Reach into engine internals (iconPools, ns.CDMSpellData, ...) at
---     call time without forward-reference juggling.
---
--- Slash command:
---   /cdmdebug                       List command groups and subsystem flags.
---   /cdmdebug flags <name> [...]    Toggle icon/bar/blizz/aura/charge/totem/taint flags.
---   /cdmdebug spell <target> [...]  One-spell report/watch/events/trace/charge/flicker.
---   /cdmdebug cache [status|reset]  CDM cache status/reset via the always-loaded support path.
---   /cdmdebug profile [status|clean] Dump or clean CDM profile/spec state.
---   /cdmdebug probe                 Resolver parity sweep.
-
 local _, ns = ...
 
 local Helpers     = ns.Helpers
@@ -38,6 +21,12 @@ local function DebugIsSecretValue(value)
         if ok and isSecret then return true end
     end
     return false
+end
+
+local function SecureFieldInfo(tbl, field)
+    local secure, taint = issecurevariable(tbl, field)
+    if secure then return "|cff34D399secure|r" end
+    return "|cffff5555tainted:" .. tostring(taint or "?") .. "|r"
 end
 
 local function EventTraceCooldownInfoField(info, key)
@@ -111,9 +100,6 @@ local function EventTraceResolveItemCooldownIdentity(entry)
     return itemID, slotID, itemSpellID, keySource
 end
 
----------------------------------------------------------------------------
--- VALUE FORMATTING (event-trace)
----------------------------------------------------------------------------
 function CDMIcons.EventTraceValue(value)
     if DebugIsSecretValue(value) then return "<SECRET:" .. type(value) .. ">" end
     if value == nil then return "nil" end
@@ -121,16 +107,11 @@ function CDMIcons.EventTraceValue(value)
 end
 
 function CDMIcons.EventTraceSpellIDMatches(targetID, value)
-    -- value can be a secret spellcast payload arg: probe BEFORE the nil
-    -- compare / == match. A secret ID can't be matched — treat as no-match.
     if DebugIsSecretValue(value) then return false end
     if not targetID or value == nil then return false end
     return value == targetID
 end
 
----------------------------------------------------------------------------
--- ICON / ITEM MATCHING (event-trace)
----------------------------------------------------------------------------
 local function EventTraceIDList(ids)
     if type(ids) ~= "table" or #ids == 0 then return "nil" end
     local out = {}
@@ -234,8 +215,6 @@ function CDMIcons.EventTraceIconMatches(icon, targetID)
 end
 
 function CDMIcons.EventTraceItemUseSpellMatches(targetID, value)
-    -- Same probe-first rule as EventTraceSpellIDMatches: payload arg can be
-    -- secret; probe before `== nil` / equality matching.
     if DebugIsSecretValue(value) then return false end
     if not targetID or value == nil then return false end
     local spellID = value
@@ -256,19 +235,6 @@ function CDMIcons.EventTraceItemUseSpellMatches(targetID, value)
     return false
 end
 
----------------------------------------------------------------------------
--- FRAME-EVENT FILTER (event-trace)
----------------------------------------------------------------------------
--- Returns true when at least one icon matching targetID is backed by
--- an item or slot cooldown entry. Used to gate BAG_UPDATE_COOLDOWN out
--- of the trace for spell/ability icons, where it's pure noise — the
--- relevant cooldown signal for spells is SPELL_UPDATE_COOLDOWN.
--- BAG_UPDATE only earns a trace line when there's an actual bag/item
--- or equipped-slot cooldown to watch. Trinket entries
--- (entry.type == "trinket", inventory slots 13/14) and generic slot
--- entries (entry.type == "slot") flow through the same slot-cooldown
--- query path in cdm_resolvers.lua's ResolveItemCooldownIdentity,
--- so they legitimately need BAG_UPDATE_COOLDOWN updates.
 local function EventTraceHasItemOrSlotCooldownIconForTarget(targetID)
     for _, pool in pairs(iconPools) do
         for _, icon in ipairs(pool) do
@@ -296,9 +262,6 @@ function CDMIcons.EventTraceShouldPrintFrameEvent(event, arg1, arg2, arg3, arg4,
        or event == "UNIT_SPELLCAST_SUCCEEDED"
        or event == "UNIT_SPELLCAST_CHANNEL_START"
        or event == "UNIT_SPELLCAST_CHANNEL_STOP" then
-        -- arg1 = payload unitTarget, secret under SecretWhenUnitSpellCast-
-        -- Restricted (.taintrc UNIT_SPELLCAST_SUCCEEDED = {3,4,5}). Probe
-        -- BEFORE the == "player" compare; a secret unit can't match.
         if DebugIsSecretValue(arg1) then return false end
         return arg1 == "player" and (
             CDMIcons.EventTraceSpellIDMatches(targetID, arg2)
@@ -309,15 +272,6 @@ function CDMIcons.EventTraceShouldPrintFrameEvent(event, arg1, arg2, arg3, arg4,
     end
 
     if event == "SPELL_UPDATE_COOLDOWN" then
-        -- Match either arg1 (spellID hint, can be the override) or
-        -- arg2 (baseSpellID, set when arg1 is an override). The
-        -- startRecoveryCategory (arg4) is surfaced in the extra
-        -- column but no longer used to filter — the previous filter
-        -- ate every fire for spells whose recovery is GCD-typed even
-        -- when the underlying cooldown is real.
-        -- Payload spellIDs are secret-capable under cooldown restriction —
-        -- probe each before the nil compares and the matcher's == below
-        -- (statement-split: the analyzer-provable guard shape).
         if issecretvalue and issecretvalue(arg1) then
             return false -- @secret-policy: reject-secret-value (unmatchable trace fire)
         end
@@ -325,32 +279,20 @@ function CDMIcons.EventTraceShouldPrintFrameEvent(event, arg1, arg2, arg3, arg4,
             return false -- @secret-policy: reject-secret-value (unmatchable trace fire)
         end
         if arg1 == nil and arg2 == nil then
-            -- nil payload = "update all" sweep; let it through.
             return true
         end
-        -- arg5 is the payload's itemID (SpellBookDocumentation.lua:859) —
-        -- without it an item-targeted watch never matches item-driven SUC
-        -- fires (arg1/arg2 carry the spell identity only).
         return CDMIcons.EventTraceSpellIDMatches(targetID, arg1)
             or CDMIcons.EventTraceSpellIDMatches(targetID, arg2)
             or CDMIcons.EventTraceSpellIDMatches(targetID, arg5)
     end
 
     if event == "BAG_UPDATE_COOLDOWN" then
-        -- Bag/item/slot cooldown sweep. Only emit a trace line when the
-        -- watched target actually has an item or slot (trinket 13/14,
-        -- other equipped) cooldown icon; spell and ability icons should
-        -- consult SPELL_UPDATE_COOLDOWN instead.
         return EventTraceHasItemOrSlotCooldownIconForTarget(targetID)
     end
 
     return true
 end
 
--- Build the SPELL_UPDATE_COOLDOWN-specific extra column: surface
--- startRecoveryCategory + category + per-spell cdInfo.isActive /
--- chargeInfo.isActive for both the spellID hint and the baseSpellID, so
--- the trace can be cross-referenced against the resolver's lane choice.
 local function EventTraceBuildSpellUpdateCooldownExtra(arg1, arg2, arg3, arg4, arg5)
     if not Sources then return nil end
     local parts = {}
@@ -389,9 +331,6 @@ local function EventTraceBuildSpellUpdateCooldownExtra(arg1, arg2, arg3, arg4, a
     return table.concat(parts, " ")
 end
 
----------------------------------------------------------------------------
--- SUMMARIES (event-trace)
----------------------------------------------------------------------------
 function CDMIcons.EventTraceIconSummary(targetID)
     local parts = {}
     local matches = 0
@@ -434,25 +373,7 @@ function CDMIcons.EventTraceIconSummary(targetID)
     return string.format("icons=%d [%s%s]", matches, table.concat(parts, " | "), more)
 end
 
--- Tag encoding. Surface LuaDurationObject predicate state without
--- leaking secrets. Per LuaDurationObjectAPIDocumentation only
--- HasSecretValues carries ReturnsNeverSecret=true; IsZero has NO
--- such annotation and its return *is* allowed to be secret (and
--- empirically is, during tainted in-combat execution — the boolean
--- "is the timer zero?" leaks information about the secret start/
--- duration that configured the DurObj). So: test HasSecretValues
--- first; only call IsZero when we already know the object is clean.
---   nil    = no DurObj (or pcall caught a C error)
---   zero   = HasSecretValues=false, IsZero=true (passive descriptor)
---   live   = HasSecretValues=false, IsZero=false (clean live timer —
---            scalar-readable, safe for any sink)
---   secret = HasSecretValues=true (DurObj configured with secret
---            values; cannot probe IsZero without leaking. In combat
---            this is the expected state for a real, running timer;
 --            SetCooldownFromDurationObject is annotated
---            SecretArguments="AllowedWhenUntainted", so addon-widget
---            sinks may reject this during tainted execution.)
---   err    = predicate pcall failed (unexpected userdata shape)
 local function ProbeDurObjState(durObj)
     if durObj == nil then return "nil" end
     local durObjType = type(durObj)
@@ -532,13 +453,7 @@ function CDMIcons.EventTraceBarSummary(targetID)
     return string.format("bars=%d [%s%s]", matches, table.concat(parts, " | "), more)
 end
 
--- Numeric scalar probe. Tags: "clean" = numeric and non-secret (safe
--- for ApplyNumericCooldown), "secret" = present but tainted (rejected
--- by ApplyNumericCooldown's issecretvalue gate at
--- cdm_frame_writes.lua:40), "nil" = not present.
 local function ProbeNumeric(v)
-    -- Probe BEFORE the nil compare — `v == nil` on a secret throws (the
-    -- round-17 helper-entry-guard class).
     if issecretvalue and issecretvalue(v) then return "secret" end -- @secret-policy: report-secret-detected
     if v == nil then return "nil" end
     if type(v) == "number" then return "clean" end
@@ -549,12 +464,6 @@ function CDMIcons.EventTraceIconWriteState(icon)
     if not icon then return "" end
     local entry = icon._spellEntry or {}
 
-    -- Cascade-source probes. Surface each cooldown/charge source's DurObj
-    -- predicate state at write time, probing the resolved runtime spell
-    -- (and any override) against Sources directly so we can pinpoint which
-    -- leg yields a usable DurObj.
-    --   skip   = no baseSid or no Sources to query
-    --   same   = override probe skipped because ovSid==baseSid
     local baseSid = icon._runtimeSpellID or entry.spellID
     local ovSid = entry.overrideSpellID
     local qChg, qDur = "skip", "skip"
@@ -576,12 +485,6 @@ function CDMIcons.EventTraceIconWriteState(icon)
         end
     end
 
-    -- Charge-system discriminator. A genuinely charged ability returns a
-    -- charge-info table from QuerySpellCharges with a maxCharges >= 1; a
-    -- chargeless spell (Reaper's Mark) returns nil => "no-charge-info". This
-    -- is the authoritative, non-secret way to tell whether a ChargeCount
-    -- render is even legitimate for this spell, independent of the secret
-    -- shown-booleans. "secret" here means maxCharges itself is tainted.
     local eMaxCharges = "skip"
     if baseSid and Sources and Sources.QuerySpellCharges then
         local chargeInfo = Sources.QuerySpellCharges(baseSid)
@@ -633,8 +536,6 @@ function CDMIcons.EventTraceIconWriteState(icon)
         tostring(icon._activeAuraSpellID),
         qChg, qDur, qChgO, qDurO,
         cdStart, cdDur,
-        -- iStackText/iStackSrc are what actually got stamped onto / rendered
-        -- by the icon.
         CDMIcons.EventTraceValue(icon.stackText),
         tostring(icon._stackTextSource),
         eMaxCharges)
@@ -719,9 +620,6 @@ function CDMIcons.EventTraceAuraInfo(unit, updateInfo)
         EventTraceIDList(updateInfo.removedAuraInstanceIDs))
 end
 
----------------------------------------------------------------------------
--- PRINT (event-trace)
----------------------------------------------------------------------------
 local DEFAULT_EVENT_TRACE_INTERVAL = 0.25
 local MAX_EVENT_TRACE_INTERVAL = 10
 
@@ -775,21 +673,12 @@ end
 function CDMIcons.EventTracePrint(source, event, arg1, arg2, arg3, arg4, arg5, extra)
     local targetID = CDMIcons._eventTraceSpellID
     if not targetID then return end
-    -- "runtime-pre" comes from cdm_resolvers.lua's runtime frame OnEvent.
-    -- SUC / SPELL_UPDATE_CHARGES / SPELL_UPDATE_USES
-    -- only fire on that frame, never the renderer's, so the trace point
-    -- for the proc-window analysis lives there. Same spellID-filter rules
-    -- apply.
     local frameSource = source == "frame" or source == "frame-pre"
         or source == "frame-post" or source == "runtime-pre"
     if frameSource and not CDMIcons.EventTraceShouldPrintFrameEvent(event, arg1, arg2, arg3, arg4, arg5) then
         return
     end
 
-    -- Per-event throttle bucket: SPELL_UPDATE_COOLDOWN bursts at proc
-    -- transitions and would otherwise be starved by chatty per-tick
-    -- events sharing the "events" key. Splitting keeps proc-window
-    -- transitions visible in the trace.
     local throttleBucket = "events"
     if event == "SPELL_UPDATE_COOLDOWN" then
         throttleBucket = "events:SUC"
@@ -826,23 +715,9 @@ function CDMIcons.EventTracePrint(source, event, arg1, arg2, arg3, arg4, arg5, e
         extra or ""))
 end
 
--- Populate the runtime-frame trace hook slot declared in
--- cdm_resolvers.lua so SPELL_UPDATE_COOLDOWN / SPELL_UPDATE_CHARGES /
--- SPELL_UPDATE_USES / UNIT_SPELLCAST_* fires reach the trace timeline.
--- The runtime frame uses an indirection slot rather than referencing
--- CDMIcons directly to satisfy the architectural contract enforced by
--- cdm_fast_visual_refresh_contract_test.lua:1862.
 ns.CDMRuntimeEventTraceHook = function(source, event, arg1, arg2, arg3, arg4, arg5)
     return CDMIcons.EventTracePrint(source, event, arg1, arg2, arg3, arg4, arg5)
 end
-
----------------------------------------------------------------------------
--- WRITE PROBE (event-trace)
--- Hooks per-instance writes on the matched icon's textures and the rotation
--- assistant icon. Each hook is installed once via hooksecurefunc and gated
--- at fire time by CDMIcons._eventTraceSpellID, so /cdmdebug spell off silences
--- the output without needing to detach (hooksecurefunc has no inverse).
----------------------------------------------------------------------------
 
 local function FormatColorTuple(r, g, b, a)
     return string.format("(%.2f,%.2f,%.2f,%.2f)", r or 1, g or 1, b or 1, a or 1)
@@ -854,14 +729,6 @@ function CDMIcons.EventTracePrintWrite(label, icon, value, extra)
     if icon and not CDMIcons.EventTraceIconMatches(icon, targetID) then return end
 
     local now = GetTime and GetTime() or 0
-    -- Per-label throttle. Sharing a single "writes" bucket across every
-    -- icon-write hook means a high-frequency call (Icon:SetDesaturated
-    -- fires every render tick) can starve a low-frequency one
-    -- (Cooldown:SCFDO fires once per cooldown bind) — the noisy event
-    -- claims the bucket and the rare event silently increments the
-    -- suppressed counter. Splitting by label lets each hook print at
-    -- its own cadence so SCFDO/SetCooldown surface even when desat is
-    -- thrashing.
     local throttleKey = "writes:" .. tostring(label or "?")
     local shouldPrint, throttleNote = EventTraceThrottle(throttleKey, now)
     if not shouldPrint then return end
@@ -889,16 +756,6 @@ function CDMIcons.EventTracePrintWrite(label, icon, value, extra)
         extra and (" " .. extra) or ""))
 end
 
----------------------------------------------------------------------------
--- SOURCE-CAUSE PROBE (event-trace)
--- EventTracePrintWrite logs the icon WRITES (the symptom: StackText churn,
--- desat thrash). EventTracePrintSource logs the CAUSE: which refresh / glow /
--- overlay path fired, with its reason. Same _eventTraceSpellID gate, same
--- per-channel throttle so a refresh storm collapses to one line + throttled=N
--- instead of flooding. Pass rawAlways=true for discrete events (glow
--- start/stop) where every occurrence is signal -- a repeated start/stop pair
--- IS the multi-flash we are hunting.
----------------------------------------------------------------------------
 function CDMIcons.EventTracePrintSource(channel, sid, msg, rawAlways)
     if not CDMIcons._eventTraceSpellID then return end
     local now = GetTime and GetTime() or 0
@@ -970,12 +827,6 @@ local function InstallIconWriteProbe(icon)
                 CDMIcons.EventTracePrintWrite("Cooldown:SetDrawEdge", icon, tostring(value), nil)
             end)
         end
-        -- The two sink methods the renderer can call via
-        -- cdm_frame_writes.lua. The SCFDO path is preferred (line 6775
-        -- of cdm_icon_renderer.lua) when payloadDurObj is non-nil; the
-        -- numeric path is the issecretvalue-guarded fallback. We don't
-        -- read the secret start/duration scalars themselves — only
-        -- ProbeNumeric tags them clean/secret/nil.
         if icon.Cooldown.SetCooldown then
             hooksecurefunc(icon.Cooldown, "SetCooldown", function(_, startTime, duration)
                 local extra = string.format(
@@ -996,12 +847,6 @@ local function InstallIconWriteProbe(icon)
             end)
         end
     end
-    -- StackText (the count sink). The other probes never touch the count
-    -- FontString, so a "stacks missing during the aura phase" symptom is
-    -- invisible to them. Trace SetText/SetFormattedText/Hide so we can see
-    -- whether the renderer wrote a value, wrote empty, or hid the count, and
-    -- cross-reference against the mStackText/iStackSrc fields in the write
-    -- state. Values may be secret in combat, so route through EventTraceValue.
     if icon.StackText then
         if icon.StackText.SetText then
             hooksecurefunc(icon.StackText, "SetText", function(_, value)
@@ -1034,10 +879,6 @@ local function InstallIconWriteProbe(icon)
     end
 end
 
--- Rotation assistant has its own iconFrame.icon (Texture) and writes
--- SetVertexColor on every Ticker tick. Gate by _eventTraceSpellID being set
--- (any target) — the rotation icon's spell changes per recommendation, so
--- we don't tie its probe to the trace target's ID.
 local _raProbed = false
 local _raPrev = { r = nil, g = nil, b = nil, a = nil }
 
@@ -1093,10 +934,6 @@ function CDMIcons.EventTraceInstallWriteProbes(targetID)
     return installed, raJustInstalled
 end
 
--- Called by the icon factory on every acquire (recycled or freshly created)
--- so that icons rebound to a traced spell mid-session get probed without the
--- user having to rerun `/cdmdebug spell <name> trace`. Cheap no-op when no
--- trace is active.
 function CDMIcons.EventTraceMaybeProbeIcon(icon)
     if not icon or icon._cdmevents_probed then return end
     local targetID = CDMIcons._eventTraceSpellID
@@ -1106,21 +943,10 @@ function CDMIcons.EventTraceMaybeProbeIcon(icon)
     end
 end
 
----------------------------------------------------------------------------
--- SOURCE-CAUSE PROBES
--- Hook the real method/library entry points (not the per-icon writes) so a
--- single proc trace shows WHERE a refresh or glow originates. Installed once,
--- lazily, from the events command (runtime modules + LibCustomGlow are loaded
--- by then). Like the write probes these hooks are permanent (hooksecurefunc
--- has no inverse) and self-gate on _eventTraceSpellID, so `/cdmdebug spell off`
--- silences them.
----------------------------------------------------------------------------
 local _sourceProbesInstalled = false
 function CDMIcons.EventTraceInstallSourceProbes()
     if _sourceProbesInstalled then return false end
 
-    -- (2) Full icon recompute -- hypothesis: a broad UpdateAllCooldowns around
-    -- the proc dragging every icon's text/swipe.
     if CDMIcons.UpdateAllCooldowns then
         hooksecurefunc(CDMIcons, "UpdateAllCooldowns", function()
             CDMIcons.EventTracePrintSource("updateAll", CDMIcons._eventTraceSpellID or "?",
@@ -1128,16 +954,8 @@ function CDMIcons.EventTraceInstallSourceProbes()
         end)
     end
 
-    -- (3) LibCustomGlow start/stop -- ground truth for the visible flash, gated
-    -- to the traced icon. rawAlways=true so each discrete call prints: a
-    -- repeated stop->start pair IS the multi-flash. All glow types hooked so
-    -- whichever is configured (Button / Pixel / Proc / AutoCast) is caught.
     local LCG = LibStub and LibStub("LibCustomGlow-1.0", true)
     if LCG then
-        -- Compact the immediate QUI caller chain from debugstack so each glow
-        -- call names the function path that drove it (e.g. which scan/applier).
-        -- debugstack level 2 = the code that called LCG.<name> (hooksecurefunc
-        -- posthook runs on the caller's stack); grab a few frames above it.
         local function GlowCallerChain()
             if not debugstack then return "?" end
             local s = debugstack(2, 6, 0) or ""
@@ -1148,8 +966,6 @@ function CDMIcons.EventTraceInstallSourceProbes()
             end
             return #frames > 0 and table.concat(frames, "<-") or "?"
         end
-        -- Which icon flashes: essential (override path) vs buff (aura path) was
-        -- ambiguous from timestamps alone.
         local function GlowIconTag(button)
             local entry = button and button._spellEntry
             if not entry then return "noentry" end
@@ -1178,13 +994,6 @@ function CDMIcons.EventTraceInstallSourceProbes()
         HookGlow("AutoCastGlow_Start"); HookGlow("AutoCastGlow_Stop")
     end
 
-    -- (5) Glow-driving events. SPELL_ACTIVATION_OVERLAY_GLOW_SHOW/HIDE fire on
-    -- the effects module's own (unexposed) frame, so they are absent from the
-    -- resolver trace timeline -- a glow start/stop could not be correlated to
-    -- its trigger. WoW delivers each event to every registered frame, so an
-    -- independent listener here observes the same SHOW/HIDE without touching
-    -- the runtime: a stop->start pair bracketed by a HIDE then SHOW of the same
-    -- override spell is the multi-flash cause we are testing for.
     local evFrame = CreateFrame and CreateFrame("Frame")
     if evFrame and evFrame.RegisterEvent and evFrame.SetScript then
         evFrame:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW")
@@ -1202,9 +1011,6 @@ function CDMIcons.EventTraceInstallSourceProbes()
     return true
 end
 
----------------------------------------------------------------------------
--- ICON-DEBUG HELPERS
----------------------------------------------------------------------------
 function CDMIcons.ShouldDebugSpell(spellID, spellName)
     local dbg = _G.QUI_CDM_ICON_DEBUG
     if not dbg then return false end
@@ -1271,9 +1077,6 @@ function CDMIcons.DebugLayoutFilter(icon, filterHides, settings, effectiveOnCD)
         "showOnlyOnCooldown=", tostring(settings and settings.showOnlyOnCooldown))
 end
 
----------------------------------------------------------------------------
--- ICON DUMP (used by /cdmdebug flags icon dump)
----------------------------------------------------------------------------
 local function DumpDebugIcon(icon)
     if not CDMIcons.ShouldDebugIcon(icon) then return end
     local entry = icon and icon._spellEntry
@@ -1320,22 +1123,6 @@ local okDur = true; local dur = icon.DurationText.GetText(icon.DurationText)
     end
 end
 
----------------------------------------------------------------------------
--- SLASH COMMANDS
----------------------------------------------------------------------------
-
----------------------------------------------------------------------------
--- Flag command group.
---
--- Usage:
---   /cdmdebug flags                         list subsystems + current state
---   /cdmdebug flags off                     clear all flags
---   /cdmdebug flags <name>                  toggle on/off
---   /cdmdebug flags <name> on|all           enable globally (true)
---   /cdmdebug flags <name> off              disable
---   /cdmdebug flags <name> <filter>         enable with substring filter
---   /cdmdebug flags icon dump [filter]      set filter and walk all icons now
----------------------------------------------------------------------------
 local DEBUG_FLAGS = {
     icon   = { global = "QUI_CDM_ICON_DEBUG",   label = "[CDM-Icon]",   takesFilter = true  },
     bar    = { global = "QUI_CDM_BAR_DEBUG",    label = "[CDM-Bar]",    takesFilter = true  },
@@ -1380,7 +1167,6 @@ local function RunCDMDebugFlags(msg)
     local cmd, rest = text:match("^(%S+)%s*(.-)$")
     local lower = cmd and cmd:lower() or ""
 
-    -- Global "off" / "clear" — wipe all flags.
     if lower == "off" or lower == "clear" then
         for _, key in ipairs(DEBUG_FLAG_ORDER) do
             _G[DEBUG_FLAGS[key].global] = nil
@@ -1398,7 +1184,6 @@ local function RunCDMDebugFlags(msg)
     local arg = TrimText(rest)
     local argLower = arg:lower()
 
-    -- /cdmdebug icon dump [filter] — set filter (or default true) and walk now.
     if lower == "icon" and (argLower == "dump" or argLower:find("^dump%s+")) then
         local dumpFilter = arg:match("^[Dd]ump%s+(.*)$")
         if dumpFilter and dumpFilter ~= "" then
@@ -1416,7 +1201,6 @@ local function RunCDMDebugFlags(msg)
     end
 
     if arg == "" then
-        -- No second arg → toggle.
         _G[def.global] = (not _G[def.global]) and true or nil
     elseif argLower == "off" or argLower == "0" or argLower == "false" then
         _G[def.global] = nil
@@ -1436,12 +1220,6 @@ local function RunCDMDebugFlags(msg)
     end
 end
 
----------------------------------------------------------------------------
--- BAR-DEBUG DUMP HOOK
--- Called from the tail of CDMBars:UpdateOwnedBarAura. No-op until
--- /cdmdebug flags bar toggles _G.QUI_CDM_BAR_DEBUG, so the cost on the bar
--- update path is one global lookup + branch.
----------------------------------------------------------------------------
 function CDMIcons._OnBarUpdate(bar)
     local dbg = _G.QUI_CDM_BAR_DEBUG
     if not dbg then return end
@@ -1480,7 +1258,6 @@ local okTex = true; local tex = bar.IconTexture.GetTexture(bar.IconTexture)
     end
 end
 
--- Trace events for a specific spellID.
 local function RunCDMDebugEvents(msg, interval)
     local text = TrimText(msg)
     if text == "" or text == "off" or text == "clear" then
@@ -1531,8 +1308,6 @@ local function RunCDMDebugEvents(msg, interval)
         .. " (mrefresh / glow / overlay / updateAll). For raw flash timing use: /cdmdebug spell <name> events 0")
 end
 
--- Log every isActive/isOnGCD transition that ApplyResolvedCooldown sees for
--- the named spell. Empty name to clear.
 local function RunCDMDebugTrace(msg)
     local name = TrimText(msg)
     if name == "" then
@@ -1730,7 +1505,7 @@ local function CDMGCDPrintWatchSample(elapsed, needle, targetID)
                 local cd = icon.Cooldown
 
                 print(string.format(
-                    "|cff34d399[cdmgcd]|r +%.2f #%d sid=%s active=%s onGCD=%s usable=%s resourceBlocked=%s gcdDur=%s realDur=%s mode=%s showingGCD=%s draw=%s intended=%s shown=%s",
+                    "|cff34d399[cdmgcd]|r +%.2f #%d sid=%s active=%s onGCD=%s usable=%s resourceBlocked=%s gcdDur=%s realDur=%s mode=%s showingGCD=%s draw=%s intended=%s shown=%s cdDur=%s cdShown=%s setErr=%s",
                     elapsed,
                     matches,
                     CDMGCDValue(sid),
@@ -1744,7 +1519,10 @@ local function CDMGCDPrintWatchSample(elapsed, needle, targetID)
                     tostring(icon._showingGCDSwipe),
                     CDMGCDCall(cd, "GetDrawSwipe"),
                     tostring(cd and cd._quiIntendedDrawSwipe),
-                    CDMGCDCall(icon, "IsShown")))
+                    CDMGCDCall(icon, "IsShown"),
+                    CDMGCDCall(cd, "GetCooldownDuration"),
+                    CDMGCDCall(cd, "IsShown"),
+                    tostring(ns.CDMRenderers and ns.CDMRenderers._lastCooldownSetError)))
             end
         end
     end
@@ -1801,7 +1579,6 @@ local function CDMGCDStartWatch(text, needle, targetID, duration)
     end)
 end
 
--- Watch every gate that can suppress GCD swipe.
 local function RunCDMDebugGCD(msg)
     local text, duration, once, stop = CDMGCDParseRequest(msg)
     if stop then
@@ -1909,6 +1686,18 @@ local function RunCDMDebugGCD(msg)
                     CDMGCDCall(cd, "GetDrawEdge"),
                     tostring(cd and cd._quiIntendedDrawEdge),
                     CDMGCDValue(cd and cd._quiIntendedSwipeColor)))
+                local setErr = ns.CDMRenderers and ns.CDMRenderers._lastCooldownSetError
+                if setErr ~= nil then
+                    print("|cffff5555[cdmgcd]|r SetCooldownFromDurationObject threw: " .. tostring(setErr))
+                end
+                print(string.format(
+                    "|cff34d399[cdmgcd]|r widget dur=%s shown=%s alpha=%s w=%s cdLevel=%s iconLevel=%s",
+                    CDMGCDCall(cd, "GetCooldownDuration"),
+                    CDMGCDCall(cd, "IsShown"),
+                    CDMGCDCall(cd, "GetEffectiveAlpha"),
+                    CDMGCDCall(cd, "GetWidth"),
+                    CDMGCDCall(cd, "GetFrameLevel"),
+                    CDMGCDCall(icon, "GetFrameLevel")))
             end
         end
     end
@@ -1956,9 +1745,6 @@ local function CDMDebugClassifySpellCooldownState(spellID)
     return apiActive, realActive, onGCD
 end
 
--- Diagnostic for charge-spell recharge swipe issues.
--- Walks visible CDM icons, finds entries matching the name, prints the
--- relevant gates: hasCharges, classifier output, charge/cd DurObj presence.
 local function RunCDMDebugCharge(msg)
     local targetText = TrimText(msg)
     if targetText == "" then
@@ -1995,10 +1781,6 @@ local function RunCDMDebugCharge(msg)
     end
 end
 
--- Diagnose flicker by snapshotting icon state
--- every frame for 5 seconds. Logs only TRANSITIONS (when the captured
--- state changes), so output is compact. Used to trace which flag is
--- toggling sub-tick during the aura→cooldown transition.
 local function RunCDMDebugFlicker(msg)
     local targetText = TrimText(msg)
     if targetText == "" then
@@ -2255,10 +2037,6 @@ local function RunCDMDebugItemAura(msg, seconds)
     end)
 end
 
--- Secret parity-row sink. SimpleMessageFrame:AddMessage is
--- AllowedWhenUntainted (SimpleMessageFrameAPIDocumentation), so tainted code
--- cannot push secret strings into chat; FontString:SetText is
--- AllowedWhenTainted (adds SecretAspect.Text) and renders them.
 local SecretRows = { count = 0 }
 
 local function AppendSecretRow(label, value)
@@ -2285,16 +2063,10 @@ local function AppendSecretRow(label, value)
         SecretRows.text = text
     end
     local header = "|cff34d399[cdmprobe]|r secret rows (drag to move):"
-    -- Reset decisions read only clean state: the buffer is secret after the
-    -- first append, so `not buffer` would throw here. count == 0 iff the
-    -- buffer is unset (init and every reset keep them in lockstep).
     if SecretRows.count == 0 or SecretRows.count >= 10 then
         SecretRows.buffer = header
         SecretRows.count = 0
     end
-    -- The buffer rides as WrapString's INFIX (never empty: starts with the
-    -- header literal) so the empty-infix -> "" short-circuit can't drop it;
-    -- the clean label and secret value ride as suffixes.
     SecretRows.buffer = C_StringUtil.WrapString(SecretRows.buffer, nil, "\n" .. label)
     SecretRows.buffer = C_StringUtil.WrapString(SecretRows.buffer, nil, value)
     SecretRows.count = SecretRows.count + 1
@@ -2302,8 +2074,6 @@ local function AppendSecretRow(label, value)
     SecretRows.frame:Show()
 end
 
--- Resolver parity probe. Walks every visible CDM icon and
--- prints (entry name, kind, resolver mode, mirror active?, parity?).
 local function RunCDMDebugProbe()
     if not CDMIcons:IsRuntimeEnabled() then
         print("|cffffaa00[cdmprobe]|r Owned engine not enabled.")
@@ -2330,8 +2100,6 @@ local function RunCDMDebugProbe()
                 local state = CDMGCDResolveCooldownState(icon)
                 local mode = state and state.mode
                 local rText = CDMIcons.ResolveIconStackText(icon)
-                -- Probe before ANY use: GetText() can return a secret under
-                -- restrictions, and `or ""`/`~= nil` on a secret throw.
                 local curText = icon.StackText and icon.StackText:GetText()
                 local rIsSecret = DebugIsSecretValue(rText)
                 local cIsSecret = DebugIsSecretValue(curText)
@@ -2374,9 +2142,6 @@ local function RunCDMDebugProbe()
                     parity,
                     rTextDisplay, curTextDisplay, textParity))
 
-                -- Secret text rows go to the FontString overlay: AddMessage
-                -- is AllowedWhenUntainted and rejects secrets from tainted
-                -- code (see AppendSecretRow header).
                 if rIsSecret then
                     AppendSecretRow("  |cff888888\\_ rText[" .. name .. "]:|r ", rText)
                 end
@@ -2394,21 +2159,10 @@ local function RunCDMDebugProbe()
         resolverInactive))
 end
 
--- Mint-taint verdict for the native CooldownViewer pipeline. One cold boot
--- answers: (a) was Blizzard's provider displayData cache built by secure code
--- or by an addon (issecurevariable names the offender), and (b) were the
--- BuffIcon items minted clean (cooldownID/cooldownInfo/isActive secure) and
--- are they active while an aura is live. Raw field reads ONLY -- this dump
--- must never call provider getters, which would lazily BUILD the cache and
--- become the very first-toucher poison it exists to detect.
 local function RunCDMDebugMint()
     local P = "|cff34D399[CDM-Mint]|r"
 
-    local function secinfo(tbl, field)
-        local secure, taint = issecurevariable(tbl, field)
-        if secure then return "|cff34D399secure|r" end
-        return "|cffff5555tainted:" .. tostring(taint or "?") .. "|r"
-    end
+    local secinfo = SecureFieldInfo
 
     local settings = _G.CooldownViewerSettings
     local provider = settings and settings.GetDataProvider and settings:GetDataProvider()
@@ -2458,7 +2212,6 @@ local function RunCDMDebugMint()
     print(string.format("%s BuffIcon items=%d active=%d", P, items, active))
 end
 
--- Dump _specProfiles contents and current spec state.
 local function RunCDMDebugProfiles()
     local P = "|cff34D399[CDM-Profiles]|r"
     local db = ns.Addon and ns.Addon.db and ns.Addon.db.profile and ns.Addon.db.profile.ncdm
@@ -2519,11 +2272,6 @@ local function RunCDMDebugProfiles()
     end
 end
 
--- Purge cross-class spell corruption from _specProfiles.
--- For each spec belonging to the current character's class, removes spells
--- that this character does not know (cross-class contamination).
--- Specs belonging to other classes are left untouched — run the command on
--- each character to clean their own specs.
 local function CDMDebugIsSpellKnownByPlayer(spellID)
     if type(spellID) ~= "number" then return false end
 
@@ -2711,16 +2459,12 @@ local function RunCDMDebugClean()
 
     local _, playerClass = UnitClass("player")
     -- @secret-policy: collapse-only — UnitClass can return SECRET on 12.1 PTR7
-    -- (SecretWhenUnitIdentityRestricted); collapse so the bail below applies.
     if issecretvalue and issecretvalue(playerClass) then playerClass = nil end
     if not playerClass then
         print(P, "Could not determine player class.")
         return
     end
 
-    -- Build set of all spells the current character knows (any spec)
-    -- by querying the composer's Blizzard CDM index + spellbook for
-    -- comprehensive coverage.
     local knownSpells = {}
     local composer = ns.CDMComposer
     if composer and composer.CollectKnownCDMSpellIDs then
@@ -2756,7 +2500,6 @@ local okI = true; local ii = C_SpellBook.GetSpellBookItemInfo(offset + i, Enum.S
             end
 
             if specClass == playerClass then
-                -- This spec belongs to our class — surgically remove foreign spells
                 profilesChecked = profilesChecked + 1
                 local specCleaned = 0
                 for containerKey, cData in pairs(specData) do
@@ -2797,8 +2540,6 @@ local okI = true; local ii = C_SpellBook.GetSpellBookItemInfo(offset + i, Enum.S
                     print(P, specLabel .. ": clean")
                 end
             elseif specClass and specClass ~= playerClass then
-                -- Different class — surgically remove any of OUR spells that
-                -- leaked into their profile, preserving their legitimate spells.
                 local specCleaned = 0
                 for containerKey, cData in pairs(specData) do
                     if type(cData) == "table" and type(cData.ownedSpells) == "table" then
@@ -2877,23 +2618,9 @@ local okI = true; local ii = C_SpellBook.GetSpellBookItemInfo(offset + i, Enum.S
     print(P, "Run /cdmdebug profile to verify. Run this on each character to clean their specs.")
 end
 
----------------------------------------------------------------------------
--- CDMDebug NAMESPACE
--- Emitters and predicates relocated from the engine files. Consumer files
--- declare a `local X = function() end` placeholder at file-top, then in
--- their tail register a _BindDebugImports() that pulls from ns.CDMDebug.
--- We invoke each consumer's _BindDebugImports at the end of THIS file when the
--- load-on-demand debug addon is loaded.
----------------------------------------------------------------------------
 local CDMDebug = {}
 ns.CDMDebug = CDMDebug
 
----------------------------------------------------------------------------
--- FILTER MATCHING
--- One predicate that handles all the per-flag filters. flag is nil/false
--- (off), true (match all), or a string (substring on name, or exact match
--- on id). candidates is a list of strings/numbers to test against.
----------------------------------------------------------------------------
 function CDMDebug.MatchFilter(flag, ...)
     if not flag then return false end
     if flag == true then return true end
@@ -2917,9 +2644,6 @@ function CDMDebug.ShouldAura(entryName, spellID, entryID)
     return CDMDebug.MatchFilter(_G.QUI_CDM_AURA_DEBUG, entryName, spellID, entryID)
 end
 
----------------------------------------------------------------------------
--- FORMATTERS
----------------------------------------------------------------------------
 function CDMDebug.FormatIDList(ids)
     if type(ids) ~= "table" or #ids == 0 then return "nil" end
     local out = {}
@@ -2929,10 +2653,6 @@ function CDMDebug.FormatIDList(ids)
     return table.concat(out, ",")
 end
 
----------------------------------------------------------------------------
--- CHARGE DEBUG
--- Throttle keeps tick-based messages to 1/sec per spell+tag.
----------------------------------------------------------------------------
 local _chargeDebugThrottle = {}
 function CDMDebug.Charge(spellName, ...)
     if not _G.QUI_CDM_CHARGE_DEBUG then return end
@@ -2953,11 +2673,6 @@ function CDMDebug.Charge(spellName, ...)
     print(table.concat(parts, " "))
 end
 
----------------------------------------------------------------------------
--- STACKTEXT DEBUG (icon)
--- Moved from cdm_icons.lua. Attached to CDMIcons table so existing
--- CDMIcons.DebugStackText(...) call sites continue to work without churn.
----------------------------------------------------------------------------
 function CDMIcons.DebugStackText(icon, action, value, reason)
     if not _G.QUI_CDM_CHARGE_DEBUG then return end
     local entry = icon and icon._spellEntry
@@ -2984,21 +2699,11 @@ okText = true; text = icon.StackText.GetText(icon.StackText)
         "auraActive=", icon and icon._auraActive)
 end
 
----------------------------------------------------------------------------
--- BAR DEBUG
--- Single label-emitter used by cdm_bars.lua. The `_OnBarUpdate` path above
--- handles the per-tick dump separately.
----------------------------------------------------------------------------
 function CDMDebug.Bar(entry, spellID, ...)
     if not CDMDebug.ShouldBar(entry, spellID) then return end
     print("|cff34D399[CDM-BarDbg]|r", ...)
 end
 
----------------------------------------------------------------------------
--- BLIZZ-BIND DEBUG
--- /cdmdebug flags blizz toggle. Pre-checked predicate is passed in as `enabled`
--- so caller can compute it once outside a loop.
----------------------------------------------------------------------------
 function CDMDebug.Blizz(enabled, entry, label, ...)
     if not enabled then return end
     print("|cff34D399[CDM-BlizzBind]|r",
@@ -3012,21 +2717,6 @@ function CDMDebug.Blizz(enabled, entry, label, ...)
         ...)
 end
 
----------------------------------------------------------------------------
--- AURA-STATE DEBUG (secret-safe FontString sink)
---
--- Debug output is split between two sinks so secret values are never
--- destroyed nor crash the resolver:
---
---   * Clean (no secret args) → print() to chat. table.concat is fine
---     when nothing in the parts array is secret-typed.
---   * Secret-bearing → SetText to a dedicated FontString. table.concat
---     errors with "invalid value (secret) at index N" because secrets
---     can't flow through it; C_StringUtil.WrapString (AllowedWhenTainted)
---     produces a string whose secret content is renderable through
---     FontString:SetText (also AllowedWhenTainted) without ever being
---     compared, arithmetic'd, or tostring'd in Lua.
----------------------------------------------------------------------------
 local _auraDebugFrame
 local _auraDebugFontStrings
 local _auraDebugMaxLines = 30
@@ -3076,11 +2766,6 @@ function CDMDebug.Aura(enabled, ...)
         return
     end
 
-    -- Secret-bearing path: route to a FontString in the dedicated debug
-    -- frame. Build the message by chaining C_StringUtil.WrapString
-    -- (AllowedWhenTainted) for the secret args and Lua concat for the
-    -- non-secret ones. The final string can carry secret content; SetText
-    -- accepts it and renders without exposing the value to Lua-level ops.
     EnsureAuraDebugFrame()
     _auraDebugWriteIdx = (_auraDebugWriteIdx % _auraDebugMaxLines) + 1
     local fs = _auraDebugFontStrings and _auraDebugFontStrings[_auraDebugWriteIdx]
@@ -3101,18 +2786,10 @@ function CDMDebug.Aura(enabled, ...)
             piece = tostring(v)
         end
         if messageSecret or (vSecret and canWrap) then
-            -- The message rides as WrapString's INFIX (never empty: starts
-            -- with the prefix literal), so the empty-infix -> "" short-circuit
-            -- can't drop the line and Lua `..` never touches a secret; the
-            -- piece rides as the suffix (stringViews accept secrets).
             message = C_StringUtil.WrapString(message, nil, " ")
             message = C_StringUtil.WrapString(message, nil, piece)
             messageSecret = true
         else
-            -- messageSecret is kept in lockstep with message secrecy (any
-            -- secret piece flips it and routes every LATER piece through
-            -- WrapString above) — this concat only ever sees a clean
-            -- message and a clean piece.
             -- @secret-safe: messageSecret lockstep shadow flag; clean-only branch
             message = message .. " " .. piece
         end
@@ -3121,21 +2798,6 @@ function CDMDebug.Aura(enabled, ...)
     fs:SetText(message)
 end
 
----------------------------------------------------------------------------
--- TAINT DEBUG (EditBox sink)
---
--- Toggle: /cdmdebug flags taint on; /rl
--- Filter: /cdmdebug flags taint Sync; /rl
---
--- Instrumented call sites use Taint(label, k1, v1, k2, v2, ...) to emit a
--- single line describing each field's secrecy status. Secrets are rendered
--- as "<SECRET:type>" so the message string itself never carries secret
--- content (table.concat / SetText both work). Non-secret values render
--- with their type and literal value.
---
--- Output goes to a draggable EditBox panel (QUI_CDMTaintDebugFrame) —
--- print/chat would crash if any value managed to slip through unstripped.
----------------------------------------------------------------------------
 local function _formatTaintField(name, v)
     local prefix = tostring(name) .. "="
     if issecretvalue and issecretvalue(v) then
@@ -3503,11 +3165,6 @@ local function RunCDMDebugProfile(msg)
     end
 end
 
--- Reanchor BuffIcon pipeline dump. The discriminator for "buff icon stays shown
--- after the aura ended": native isActive=true while the aura is gone means the
--- Blizzard ITEM is stale (missed aura-removal dispatch — Blizzard-side); a
--- SECRET isActive with shown=true means QUI's combat fail-open kept the claim;
--- a stale lastPass seq/age means no refresh pass ran at all (trigger dead).
 local function RunCDMDebugBuff()
     local P = "|cff34D399[CDM-Buff]|r"
     local boot = ns._cdmBoot
@@ -3529,7 +3186,6 @@ local function RunCDMDebugBuff()
         return fmtv(v)
     end
 
-    -- 1) Last assemble/refresh pass for the buff container.
     local diag = runtime.GetLastDiag and runtime:GetLastDiag("buff")
     if not diag then
         print(P .. " lastPass: |cffffaa00none (no buff pass has run this session)|r")
@@ -3538,14 +3194,13 @@ local function RunCDMDebugBuff()
         print(string.format("%s lastPass: seq=%s age=%s early=%s mode=%s filterInactive=%s editing=%s auraProbe=%s",
             P, tostring(diag.seq), age, tostring(diag.earlyReturn), tostring(diag.displayMode),
             tostring(diag.filterInactive), tostring(diag.editing), tostring(diag.auraProbe)))
-        print(string.format("%s   curated=%s matched=%s frameless=%s nativeClaimed=%s staleNative=%s fallbackLive=%s minted=%s mintFailed=%s planNil=%s positioned=%s",
+        print(string.format("%s   curated=%s matched=%s frameless=%s nativeClaimed=%s staleNative=%s hiddenPreview=%s fallbackLive=%s minted=%s mintFailed=%s planNil=%s positioned=%s",
             P, tostring(diag.curated), tostring(diag.matched), tostring(diag.frameless),
-            tostring(diag.nativeClaimed), tostring(diag.staleNative), tostring(diag.fallbackLive),
-            tostring(diag.minted), tostring(diag.mintFailed), tostring(diag.planNil),
-            tostring(diag.positioned)))
+            tostring(diag.nativeClaimed), tostring(diag.staleNative), tostring(diag.hiddenPreview),
+            tostring(diag.fallbackLive), tostring(diag.minted), tostring(diag.mintFailed),
+            tostring(diag.planNil), tostring(diag.positioned)))
     end
 
-    -- 2) Native BuffIcon viewer + per-item state (the Blizzard-truth leg).
     local viewer = _G.BuffIconCooldownViewer
     if not viewer then
         print(P .. " BuffIconCooldownViewer missing")
@@ -3574,7 +3229,6 @@ local function RunCDMDebugBuff()
         end
     end
 
-    -- 3) Curated buff entries + QUI aura ground truth (the aura-truth leg).
     local deps = runtime._deps or {}
     local okCurated, curated = pcall(deps.getCurated or function() end, "buff")
     if okCurated and type(curated) == "table" then
@@ -3596,6 +3250,208 @@ local function RunCDMDebugBuff()
     end
 end
 
+local BORROW_VIEWER_GLOBALS = {
+    essential = "EssentialCooldownViewer",
+    utility   = "UtilityCooldownViewer",
+    buff      = "BuffIconCooldownViewer",
+}
+
+local borrowedNativeItem = nil
+
+local function BorrowReleaseCurrent()
+    local state = borrowedNativeItem
+    borrowedNativeItem = nil
+    if not state then return false end
+    local item, pool = state.item, state.pool
+    if item then
+        ns.SafeCallMethodIfPresent("compat", item, "ClearCooldownID")
+        ns.SafeCallMethodIfPresent("best-effort-style", item, "Hide")
+    end
+    if pool and pool.Release and item then
+        ns.SafeCall("compat", pool.Release, pool, item)
+    end
+    return true
+end
+
+local function BorrowResolveCooldownID(spellID, containerKey)
+    local Index = ns.CDMIndex
+    if not Index then return nil end
+    local rec
+    if Index.GetOrderedForContainer then
+        rec = Index.GetOrderedForContainer(containerKey, spellID)
+    end
+    if not rec and Index.GetOrdered then rec = Index.GetOrdered(spellID) end
+    if not rec and Index.Get then rec = Index.Get(spellID) end
+    return rec and rec.cooldownID or nil
+end
+
+local function BorrowReadable(fn, owner)
+    if type(fn) ~= "function" then return "no-method" end
+    local ok, value = pcall(fn, owner)
+    if not ok then return "ERR" end
+    if DebugIsSecretValue(value) then return "|cff34D399SECRET|r" end
+    return tostring(value)
+end
+
+local function BorrowDescribeItem(P, label, item)
+    if not item then
+        print(string.format("%s %s: |cffffaa00absent|r", P, label))
+        return
+    end
+    local cd = item.Cooldown
+    if not cd and item.GetCooldownFrame then
+        local okFrame, frame = ns.SafeCallMethod("compat", item, "GetCooldownFrame")
+        if okFrame then cd = frame end
+    end
+    print(string.format("%s %s: cooldownID=%s active=%s shown=%s alpha=%s",
+        P, label,
+        BorrowReadable(item.GetCooldownID, item),
+        BorrowReadable(item.IsActive, item),
+        BorrowReadable(item.IsShown, item),
+        BorrowReadable(item.GetAlpha, item)))
+    print(string.format("%s   taint: cooldownID=%s cooldownInfo=%s isActive=%s",
+        P,
+        SecureFieldInfo(item, "cooldownID"),
+        SecureFieldInfo(item, "cooldownInfo"),
+        SecureFieldInfo(item, "isActive")))
+    if cd then
+        print(string.format("%s   cooldown: duration=%s drawSwipe=%s paused=%s",
+            P,
+            BorrowReadable(cd.GetCooldownDuration, cd),
+            BorrowReadable(cd.GetDrawSwipe, cd),
+            BorrowReadable(cd.IsPaused, cd)))
+    else
+        print(string.format("%s   cooldown: |cffffaa00no cooldown frame|r", P))
+    end
+end
+
+local function BorrowFindNativeItem(cooldownID)
+    for _, globalName in pairs(BORROW_VIEWER_GLOBALS) do
+        local viewer = _G[globalName]
+        local pool = viewer and viewer.itemFramePool
+        if pool and pool.EnumerateActive then
+            for item in pool:EnumerateActive() do
+                local ok, id = pcall(item.GetCooldownID, item)
+                if ok and not DebugIsSecretValue(id) and id == cooldownID then
+                    return item
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function BorrowReport(P)
+    local state = borrowedNativeItem
+    if not state then
+        print(P .. " nothing borrowed. /cdmdebug borrow <spellID|name> [essential|utility|buff]")
+        return
+    end
+    print(string.format("%s target spellID=%s cooldownID=%s viewer=%s combat=%s",
+        P, tostring(state.spellID), tostring(state.cooldownID),
+        state.containerKey, tostring(InCombatLockdown())))
+    print(string.format("%s SetCooldownID: secure=%s raw=%s",
+        P, tostring(state.secureResult), tostring(state.rawResult)))
+    if state.setError then
+        print(string.format("%s   last error: |cffff5555%s|r", P, tostring(state.setError)))
+    end
+    BorrowDescribeItem(P, "borrowed", state.item)
+    local native = BorrowFindNativeItem(state.cooldownID)
+    if native ~= state.item then
+        BorrowDescribeItem(P, "native ref", native)
+    end
+    print(P .. " VERDICT: borrowed duration SECRET (or numeric > 0) = Blizzard is driving it.")
+    print(P .. "          duration=0 and no error = SetCooldownID did not take.")
+end
+
+local function RunCDMDebugBorrow(msg)
+    local P = "|cff34D399[CDM-Borrow]|r"
+    local text = TrimText(msg)
+    local sub = text:lower()
+
+    if sub == "off" or sub == "release" then
+        print(P .. (BorrowReleaseCurrent() and " released." or " nothing to release."))
+        return
+    end
+    if sub == "" or sub == "report" then
+        BorrowReport(P)
+        return
+    end
+
+    local target, containerKey = text:match("^(.-)%s+(%a+)$")
+    if not target or not BORROW_VIEWER_GLOBALS[containerKey:lower()] then
+        target, containerKey = text, "utility"
+    end
+    containerKey = containerKey:lower()
+
+    local spellID = FindDebugTargetID(target)
+    if not spellID then
+        print(P .. " no spellID found for '" .. tostring(target) .. "'")
+        return
+    end
+    local cooldownID = BorrowResolveCooldownID(spellID, containerKey)
+    if not cooldownID then
+        print(P .. " no cooldownID in CDMIndex for spellID " .. tostring(spellID))
+        return
+    end
+
+    local viewer = _G[BORROW_VIEWER_GLOBALS[containerKey]]
+    local pool = viewer and viewer.itemFramePool
+    if not (pool and pool.Acquire) then
+        print(P .. " " .. containerKey .. " viewer has no itemFramePool")
+        return
+    end
+
+    BorrowReleaseCurrent()
+
+    local okAcquire, item = pcall(pool.Acquire, pool)
+    if not okAcquire or not item then
+        print(P .. " pool:Acquire failed: " .. tostring(item))
+        return
+    end
+
+    ns.SafeCallMethodIfPresent("compat", viewer, "OnAcquireItemFrame", item)
+    item.layoutIndex = nil
+    ns.SafeCallMethodIfPresent("compat", item, "SetHideWhenInactive", false)
+    ns.SafeCallMethodIfPresent("compat", item, "SetTimerShown", true)
+    ns.SafeCallMethodIfPresent("compat", item, "SetIsEditing", false)
+
+    local secureResult, rawResult, setError = "skipped", "skipped", nil
+    if securecallfunction then
+        local okSecure, err = pcall(securecallfunction, item.SetCooldownID, item, cooldownID, true)
+        secureResult = okSecure and "ok" or "threw"
+        if not okSecure then setError = err end
+    end
+    if secureResult ~= "ok" then
+        local okRaw, err = pcall(item.SetCooldownID, item, cooldownID, true)
+        rawResult = okRaw and "ok" or "threw"
+        if not okRaw then setError = err end
+    end
+
+    ns.SafeCallMethodIfPresent("best-effort-style", item, "SetParent", UIParent)
+    ns.SafeCallMethodIfPresent("best-effort-style", item, "ClearAllPoints")
+    ns.SafeCallMethodIfPresent("best-effort-style", item, "SetPoint",
+        "CENTER", UIParent, "CENTER", 0, -160)
+    ns.SafeCallMethodIfPresent("best-effort-style", item, "SetScale", 2)
+    ns.SafeCallMethodIfPresent("best-effort-style", item, "Show")
+
+    borrowedNativeItem = {
+        item = item,
+        pool = pool,
+        viewer = viewer,
+        containerKey = containerKey,
+        spellID = spellID,
+        cooldownID = cooldownID,
+        secureResult = secureResult,
+        rawResult = rawResult,
+        setError = setError,
+    }
+
+    print(P .. " parked at screen centre, 0,-160. Pull a dummy, then /cdmdebug borrow report")
+    print(P .. " if the CooldownViewer error spam returns, /cdmdebug borrow off then /reload")
+    BorrowReport(P)
+end
+
 local function PrintCDMDebugHelp()
     print("|cff34D399[CDM-Debug]|r commands:")
     print("  /cdmdebug status                         -> command help + flag state")
@@ -3605,6 +3461,7 @@ local function PrintCDMDebugHelp()
     print("  /cdmdebug profile [status|clean]          -> CDM profile tools")
     print("  /cdmdebug probe                           -> resolver parity sweep")
     print("  /cdmdebug mint                            -> native mint/provider taint verdict")
+    print("  /cdmdebug borrow <spell> [container]      -> borrow a spare native item frame; off|report")
     print("  /cdmdebug buff                            -> reanchor BuffIcon pipeline dump")
     print("  direct flag shorthand: /cdmdebug icon on, /cdmdebug taint Sync, /cdmdebug off")
     ListDebugFlags()
@@ -3633,6 +3490,8 @@ local function RunCDMDebugCommand(msg)
         RunCDMDebugProbe()
     elseif lower == "mint" then
         RunCDMDebugMint()
+    elseif lower == "borrow" then
+        RunCDMDebugBorrow(rest)
     elseif lower == "buff" then
         RunCDMDebugBuff()
     else
@@ -3645,16 +3504,6 @@ SlashCmdList["QUI_CDMDEBUG"] = function(msg)
     RunCDMDebugCommand(msg)
 end
 
----------------------------------------------------------------------------
--- DEFERRED IMPORT BINDING
--- Each consumer file declares `local X = function() end` placeholders at
--- file-top (or file-local upvalues), and registers a _BindDebugImports
--- function that reassigns those upvalues from ns.CDMDebug. We invoke
--- each consumer's binder here, after all CDMDebug.* are defined.
---
--- After binding, hot-path callers in those files keep their existing
--- local-upvalue call form (no per-call table lookup overhead).
----------------------------------------------------------------------------
 local function BindAll()
     local mods = {
         ns.CDMIcons,
@@ -3669,10 +3518,6 @@ local function BindAll()
     end
 end
 
--- Re-attach the public surfaces that consumer files captured during
--- their own load (their local upvalues will point at the new functions
--- via BindAll(); these table-method assignments cover external callers
--- that go through the module table).
 CDMIcons.ChargeDebug = CDMDebug.Charge
 
 BindAll()

@@ -1,12 +1,3 @@
---[[
-    QUI Info Bar Shared Settings Provider
-    Owns the provider-backed settings content for the Info Bar page in the
-    shared settings layer. V3 body pattern (CreateAccentDotLabel +
-    CreateSettingsCardGroup + BuildSettingRow), structural rebuilds via
-    RenderAdapters.NotifyProviderChanged — same mechanism the datatext
-    panel selector uses.
-]]
-
 local _, ns = ...
 
 local Settings = ns.Settings
@@ -15,12 +6,6 @@ if not ProviderPanels or type(ProviderPanels.RegisterAfterLoad) ~= "function" th
     return
 end
 
--- NOTE: do NOT capture `ns.QUI_Options` as a local in this outer closure.
--- This file is loaded by the QUI addon before the on-demand QUI_Options
--- addon is loaded; at that point ns.QUI_Options is the minimal stub
--- installed by core/gui_shell.lua. Once QUI_Options/shared.lua runs it
--- REPLACES the table, so any captured local would be stale. Re-resolve
--- ns.QUI_Options at call time inside MakeLayout / row / build bodies.
 ProviderPanels:RegisterAfterLoad(function(ctx)
     local GUI = ctx.GUI
     local U = ctx.U
@@ -33,33 +18,22 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         return ns.QUI_Options.BuildSettingRow(parent, label, widget, desc)
     end
 
-    -- Hover tooltip for a CUSTOM-PLACED bare dropdown (no BuildSettingRow to
-    -- carry it): the widget's mouse-enabled dropdown Button swallows
-    -- enter/leave over almost the whole footprint, so hook the button AND
-    -- the container (AttachTooltip HookScripts, so the button's own hover
-    -- visual keeps working).
     local function AttachDropdownTooltip(dd, description, title)
         if not GUI.AttachTooltip then return end
         GUI:AttachTooltip(dd, description, title)
         if dd.dropdown then GUI:AttachTooltip(dd.dropdown, description, title) end
     end
 
-    ---------------------------------------------------------------------------
-    -- INFO BAR HELPERS
-    ---------------------------------------------------------------------------
     local ZONE_DEFS = {
         { key = "left",   label = ns.L["Left Zone"] },
         { key = "center", label = ns.L["Center Zone"] },
         { key = "right",  label = ns.L["Right Zone"] },
     }
 
-    -- Survives structural rebuilds (closure scope, like DatatextPanelState).
     local InfoBarPageState = {
         selectedWidget = nil,
     }
 
-    -- Sub-table guards only: AceDB defaults supply every scalar, so writing
-    -- them back here would pin shipped defaults into the profile.
     local function EnsureInfoBarConfig(profile)
         if not profile.infobar then profile.infobar = {} end
         local db = profile.infobar
@@ -74,8 +48,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         return db
     end
 
-    -- Shared with the context menu (core/infobar_shared.lua) so the seeded
-    -- defaults can never drift between the two write surfaces.
     local EnsureWidgetSettings = ns.QUI_InfoBarShared.EnsureWidgetSettings
 
     local function GetWidgetDef(addon, widgetId)
@@ -93,17 +65,12 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         return tostring(widgetId)
     end
 
-    -- Every registered widget (includes runtime plugin entries) minus ids
-    -- already placed in ANY zone.
     local function GetAvailableWidgetOptions(addon, placedSet)
         local opts = {}
         if addon and addon.Datatexts and type(addon.Datatexts.GetAll) == "function" then
             for _, def in ipairs(addon.Datatexts:GetAll()) do
                 if def and def.id and not placedSet[def.id] then
                     local text = def.displayName or def.id
-                    -- Third-party LDB feeds register under category
-                    -- "Plugins"; tag them so they're recognizable among the
-                    -- built-ins in this flat, searchable list.
                     if def.category == "Plugins" then
                         text = text .. " " .. ns.L["|cff999999(plugin)|r"]
                     end
@@ -134,14 +101,12 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         if _G.QUI_RefreshInfoBar then _G.QUI_RefreshInfoBar() end
     end
 
-    -- Live theme accent (same getter shared.lua's section labels use); the
-    -- structural rebuild on every mutation keeps build-time reads current.
     local function GetAccent()
         local QGUI = _G.QUI and _G.QUI.GUI
         if QGUI and QGUI.Colors and QGUI.Colors.accent then
             return QGUI.Colors.accent[1], QGUI.Colors.accent[2], QGUI.Colors.accent[3]
         end
-        return 0.376, 0.647, 0.980 -- fallback: Sky Blue
+        return 0.376, 0.647, 0.980
     end
 
     local function NotifyStructuralRefresh()
@@ -151,9 +116,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         end
     end
 
-    ---------------------------------------------------------------------------
-    -- INFO BAR PROVIDER
-    ---------------------------------------------------------------------------
     ctx.RegisterShared("infobar", { build = function(content, _key, _width)
         local profile = U.GetProfileDB()
         if not profile or not ns.QUI_Options then return 80 end
@@ -164,16 +126,11 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
 
         local L = MakeLayout(content)
 
-        -- Registry-absent notice (helper exported by the datatext panel page,
-        -- which loads earlier in the QUI_Options TOC): with QUI_Datatexts
-        -- disabled the zone "Add widget" lists below come up empty — explain
-        -- why instead of rendering a silently hollow page.
         if ns.QUI_DatatextsRegistryNotice then
             ns.QUI_DatatextsRegistryNotice(L, content,
                 ns.L["The Datatexts module addon is disabled — enable it under Modules to configure datatexts. The Info Bar's widget lists below are empty until it loads."])
         end
 
-        -- GENERAL
         L.headerAt(ns.L["General"])
         local g = L.sectionAt()
 
@@ -210,7 +167,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         g.AddRow(row(g.frame, ns.L["Widget Spacing"], spacingW), row(g.frame, ns.L["Zone Padding"], padW))
         L.closeSection(g)
 
-        -- VISIBILITY
         L.headerAt(ns.L["Visibility"])
         local vis = L.sectionAt()
         local fadeW = GUI:CreateFormCheckbox(vis.frame, nil, "mouseoverFade", db, RefreshInfoBar,
@@ -224,8 +180,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         vis.AddRow(row(vis.frame, ns.L["Hide in Combat"], combatW))
         L.closeSection(vis)
 
-        -- ZONES (one editable list per zone; every mutation refreshes the bar
-        -- and structurally rebuilds this page — the panel-selector mechanism)
         local ZONE_ROW_HEIGHT = 26
         for _, zdef in ipairs(ZONE_DEFS) do
             local zoneList = db.zones[zdef.key]
@@ -245,7 +199,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             local accR, accG, accB = GetAccent()
             local ZONE_LIST_TOP = 24
 
-            -- Insertion marker shown while a row is dragged.
             local dropLine = zoneFrame:CreateTexture(nil, "OVERLAY")
             dropLine:SetHeight(2)
             dropLine:SetColorTexture(accR, accG, accB, 0.9)
@@ -254,8 +207,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             end
             dropLine:Hide()
 
-            -- Gap index (1..#zoneList+1) nearest the cursor: gap g sits above
-            -- row g. Cursor coords are scaled; rows are fixed-height.
             local function DropGapFromCursor()
                 local top = zoneFrame:GetTop()
                 if not top then return 1 end
@@ -287,8 +238,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                     nameFs:SetTextColor(0.6, 0.6, 0.6, 1)
                 end
 
-                -- Hover highlight: shared by the row and its buttons so the
-                -- row stays lit while the cursor is over a child button.
                 local hoverBg = r:CreateTexture(nil, "BACKGROUND")
                 hoverBg:SetAllPoints()
                 hoverBg:SetColorTexture(accR, accG, accB, 0.08)
@@ -314,9 +263,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                     return btn
                 end
 
-                -- Structural rebuilds are debounced, so build-time indices go
-                -- stale under rapid clicks. Capture the widget id and re-derive
-                -- the row's CURRENT index at click time (no-op if it's gone).
                 local capturedId = widgetId
                 local function findCurrentIndex()
                     for i, id in ipairs(zoneList) do
@@ -325,8 +271,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                     return nil
                 end
 
-                -- Drag-to-reorder within the zone (arrows remain as the
-                -- keyboard-free alternative).
                 r:EnableMouse(true)
                 r:RegisterForDrag("LeftButton")
                 r:SetScript("OnEnter", function(self)
@@ -430,7 +374,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             L.placeCustom(zoneFrame, zoneHeight)
         end
 
-        -- WIDGET OVERRIDES (per-placed-widget label/width tweaks)
         L.headerAt(ns.L["Widget Overrides"])
         if #placedList > 0 then
             local selected = InfoBarPageState.selectedWidget
@@ -496,12 +439,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             L.placeCustom(noteRow, 18)
         end
 
-        -- CURRENCIES (conditional; section body exported by the datatexts
-        -- settings page, which always loads first — QUI_InfoBar hard-depends
-        -- on QUI_Datatexts. currencyOrder/currencyEnabled live in
-        -- profile.datatext and the currencies widget reads them at render
-        -- time wherever it's hosted, so this edits the same config the
-        -- datatext panel page does.)
         if placedSet["currencies"] and ns.QUI_BuildCurrencyOrderSection then
             if not profile.datatext then profile.datatext = {} end
             ns.QUI_BuildCurrencyOrderSection(L, content, {
@@ -517,9 +454,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             })
         end
 
-        -- ALTS (conditional; altsMode lives in profile.datatext like the
-        -- currency config above, so the bar-text mode applies everywhere the
-        -- Alts datatext is shown, including datatext panels.)
         if placedSet["alts"] then
             if not profile.datatext then profile.datatext = {} end
             L.headerAt(ns.L["Alts Options"])
@@ -537,7 +471,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             L.closeSection(al)
         end
 
-        -- MICRO MENU
         L.headerAt(ns.L["Micro Menu"])
         local mmButtons = db.micromenu.buttons
         local mm = L.sectionAt()
@@ -559,7 +492,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             row(mm.frame, ns.L["Support"], mmCheckbox("help", ns.L["Support"])))
         L.closeSection(mm)
 
-        -- TRAVEL
         L.headerAt(ns.L["Travel"])
         local tv = L.sectionAt()
         local hearthW = GUI:CreateFormCheckbox(tv.frame, nil, "useRandomHearth", db.travel, RefreshInfoBar,

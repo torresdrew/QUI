@@ -1,15 +1,5 @@
----------------------------------------------------------------------------
--- MAIL FRAME SKINNING
---
--- Blizzard_MailFrame is split across MailFrame, InboxFrame, SendMailFrame,
--- and OpenMailFrame, with decorative art on child frames outside the root
--- ButtonFrameTemplate chrome. This file owns that full surface.
----------------------------------------------------------------------------
-
 local _, ns = ...
 
--- Master skinning gate (skinning.enabled): disabled + /reload installs no QUI
--- skin hooks for this file. Default ON; reload-required. See core/uikit.lua.
 if ns.IsSkinningEnabled and not ns.IsSkinningEnabled() then return end
 local SkinBase = ns.SkinBase
 local GetCore = ns.Helpers.GetCore
@@ -125,23 +115,16 @@ local function SkinMailIconButton(button)
         SkinBase.SetFrameData(button, "skinColor", { sr, sg, sb, sa })
         SkinBase.SetFrameData(button, "skinKind", "button")
         SkinBase.SetFrameData(button, "bgBoost", ICON_BUTTON_BG_BOOST)
-        SkinBase.SetFrameData(button, "skinFont", true) -- RefreshWidget re-faces on theme change
+        SkinBase.SetFrameData(button, "skinFont", true)
         SkinBase.MarkStyled(button)
     end
 
-    -- Guarded once-per-button recursive face (avoids re-walking every region on each
-    -- InboxFrame_Update); theme-change re-face goes through RefreshWidget via skinFont.
     SkinBase.LockPooledRowText(button, 2)
 end
 
 local function SkinInboxArtwork()
     HideMailArtwork(_G.InboxFrameBg)
 
-    -- Canonical directional chevron + QUI backdrop — byte-identical to the merchant
-    -- page arrows. Replaces the former bespoke SkinButton + InsetButtonBackdrop +
-    -- ClampTexture + HideButtonStateTextures stack, which left the raw Blizzard
-    -- spellbook-arrow NormalTexture showing inside a QUI box (the user-reported
-    -- merchant-vs-mail arrow mismatch). SkinNextPrevButton is idempotent.
     if _G.InboxPrevPageButton then SkinBase.SkinNextPrevButton(_G.InboxPrevPageButton, "prev") end
     if _G.InboxNextPageButton then SkinBase.SkinNextPrevButton(_G.InboxNextPageButton, "next") end
 end
@@ -153,7 +136,7 @@ local function SkinMailItems()
         local item = _G["MailItem" .. i]
         if item then
             SkinBase.SkinScrollRow(item, { hover = false })
-            SkinBase.LockPooledRowText(item, 3) -- guarded once-per-row face (InboxFrame_Update fires often)
+            SkinBase.LockPooledRowText(item, 3)
             SkinBase.SkinButton(_G["MailItem" .. i .. "ExpireTime"])
             SkinMailIconButton(_G["MailItem" .. i .. "Button"])
         end
@@ -164,11 +147,6 @@ end
 
 local function SkinMoneyInputFrame(moneyInput)
     if not moneyInput then return end
-    -- MoneyInputFrameTemplate (Mainline) exposes the edit boxes as parentKey
-    -- gold/silver/copper (Blizzard_MoneyFrame/Mainline/MoneyInputFrame.xml:79/96/111);
-    -- the older LargeMoneyInputFrameTemplate uses GoldBox/SilverBox/CopperBox. The
-    -- previous *Box-only lookups were nil on the Mainline SendMail money input, so
-    -- accept either so both templates get skinned.
     local gold = moneyInput.gold or moneyInput.GoldBox
     local silver = moneyInput.silver or moneyInput.SilverBox
     local copper = moneyInput.copper or moneyInput.CopperBox
@@ -197,10 +175,6 @@ local function SkinSendMailControls()
     SkinMoneyInputFrame(_G.SendMailMoney)
     SkinBase.SkinButton(_G.SendMailCancelButton)
     SkinBase.SkinButton(_G.SendMailMailButton)
-    -- Send-money / C.O.D. are RADIO CheckButtons (SendMailRadioButtonTemplate, per
-    -- MailFrame.xml:741/751), NOT push buttons — SkinButton stripped their radio
-    -- art. Route through the canonical checkbox/radio verb (QUI box + accent-tinted
-    -- indicator) so they match every other QUI toggle.
     if _G.SendMailSendMoneyButton then SkinBase.SkinCheckBox(_G.SendMailSendMoneyButton) end
     if _G.SendMailCODButton then SkinBase.SkinCheckBox(_G.SendMailCODButton) end
 

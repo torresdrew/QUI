@@ -1,30 +1,9 @@
----------------------------------------------------------------------------
--- Bags search: query compiler (PURE — no WoW APIs, fully headless-testable).
--- Compile(query) → matcher(details) → true | false | nil (nil = a field the
--- term needs isn't loaded yet; caller re-evaluates when item data arrives).
---
--- Grammar (left-assoc, no parens): or := and ('|' and)* ; and := not ((' '|'&') not)* ;
--- not := ['~'] term. Terms: name substring (default), quality names, class
--- keywords, equip-slot names, expansion names, numeric ilvl (<n >n =n a-b).
--- details record: { name, quality, classID, subClassID, equipLoc, ilvl,
---                   count, isBound, itemID, expacID }
---
--- Tradeoffs (deliberate, v1):
--- * Keywords SHADOW name substrings: "chest"/"bag"/"ring" match the slot,
---   never item names containing those words (future: prefix syntax like
---   "slot:chest" as the escape hatch).
--- * Keywords are enUS-only; name matching uses ASCII lower() (non-ASCII
---   case-insensitivity is not attempted).
--- * Boolean keywords extend via KEYWORDS; parameterized terms (stat:crit
---   etc.) extend MakeTermMatcher's grammar.
----------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local Bags = ns.Bags or {}; ns.Bags = Bags
 
 local Search = {}
 Bags.Search = Search
 
--- tri-state combinators: nil = pending
 local function triAnd(a, b)
     if a == false or b == false then return false end
     if a == nil or b == nil then return nil end
@@ -55,15 +34,12 @@ local SLOT = {
     ring = "INVTYPE_FINGER", trinket = "INVTYPE_TRINKET", bag = "INVTYPE_BAG",
 }
 
--- keyword → check(details) → tri-state. Add new keywords here (tier-2 later).
 local KEYWORDS = {
     junk      = function(d) if d.quality == nil then return nil end return d.quality == 0 end,
     reagent   = function(d) if d.classID == nil then return nil end return d.classID == 7 or d.classID == 5 end,
     gear      = function(d) if d.classID == nil then return nil end return d.classID == 2 or d.classID == 4 end,
     quest     = function(d) if d.classID == nil then return nil end return d.classID == 12 end,
     pet       = function(d) if d.classID == nil then return nil end return d.classID == 17 end,
-    -- isBound is non-nilable in ContainerItemInfo → never pending (the one
-    -- keyword that deliberately skips the nil tri-state)
     soulbound = function(d) return d.isBound == true end,
     bound     = function(d) return d.isBound == true end,
 }
@@ -71,7 +47,6 @@ KEYWORDS.equipment = KEYWORDS.gear
 KEYWORDS.trash = KEYWORDS.junk
 
 local function MakeTermMatcher(term)
-    -- numeric: <n >n =n n-m  (ilvl)
     local op, num = term:match("^([<>=])(%d+)$")
     if op then
         num = tonumber(num)
@@ -111,13 +86,9 @@ local function MakeTermMatcher(term)
             return d.equipLoc == slot
         end
     end
-    -- exact keyword wins outright (deliberate filter, no name fallback)
     if KEYWORDS[term] then
         return KEYWORDS[term]
     end
-    -- as-you-type: term that PREFIXES keyword name(s) fires those filters,
-    -- UNION'd with plain name substring. Only adds highlights, never narrows,
-    -- so partial typing ("reag" -> reagent) lights up incrementally.
     local prefixChecks
     for kw, fn in pairs(KEYWORDS) do
         if #term < #kw and kw:sub(1, #term) == term then
@@ -129,7 +100,6 @@ local function MakeTermMatcher(term)
             if not seen then prefixChecks[#prefixChecks + 1] = fn end
         end
     end
-    -- default: case-insensitive name substring (plain find, no patterns)
     local needle = term
     local nameCheck = function(d)
         if d.name == nil then return nil end
@@ -149,7 +119,6 @@ local function MakeTermMatcher(term)
 end
 
 local function CompileUncached(query)
-    -- or-groups split on '|'; within a group, '&' and whitespace both AND
     local orMatchers = {}
     for orPart in (query .. "|"):gmatch("(.-)|") do
         local andMatchers = {}
@@ -173,7 +142,7 @@ local function CompileUncached(query)
         end
     end
     if #orMatchers == 0 then
-        return function() return true end -- empty query matches everything
+        return function() return true end
     end
     return function(d)
         local result = false
@@ -191,7 +160,7 @@ local function CompileUncached(query)
     end
 end
 
-local cache = {} -- query string → matcher (session-bounded: queries are user-typed)
+local cache = {}
 
 function Search.Compile(query)
     query = (query or ""):match("^%s*(.-)%s*$")

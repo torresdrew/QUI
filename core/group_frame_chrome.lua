@@ -1,35 +1,8 @@
---[[
-    QUI Group Frames - Shared frame chrome
-
-    The single source of truth for a group-frame's SKELETON and its
-    settings-driven styling: backdrop, health bar, the three health overlay
-    bars, power bar, text frame, name/level/health/status text, the corner
-    indicator textures, threat / target-highlight / dispel / cleanse overlays
-    and the portrait.
-
-    Loaded by BOTH QUI_GroupFrames (runtime) and QUI_Options (settings
-    preview) -- the CDM CreateIconBare pattern: ONE builder, thin wrappers.
-    groupframes.lua's DecorateGroupFrame adds the unit layer on top (context
-    tagging, tooltip/attribute hooks, unit mapping, click-cast registration);
-    the settings preview driver adds mock values and animation. Neither
-    re-derives geometry, frame levels or fonts, so the preview cannot drift
-    from what the runtime renders.
-
-    Unit-free by construction: nothing here reads a unit token, a secret value
-    or the roster, so it is safe on mock frames and outside combat gating.
-
-    Loadable headless: no CreateFrame and no WoW API call at file scope.
-]]
 local ADDON_NAME, ns = ...
 
--- Re-executed once per loading addon (both TOCs list this file); reuse the
--- existing table so ns.QUI_GroupFrameChrome is the same object for everyone.
 local Chrome = ns.QUI_GroupFrameChrome or {}
 ns.QUI_GroupFrameChrome = Chrome
 
--- Fallback colors for settings the user has never touched. Shared with
--- groupframes.lua's _state.defaultColors so live and preview fall back
--- identically.
 local DEFAULT_COLORS = Chrome.DEFAULT_COLORS or {
     darkHealth      = { 0.15, 0.15, 0.15, 1 },
     powerBar        = { 0.2, 0.4, 0.8, 1 },
@@ -43,10 +16,6 @@ local DEFAULT_COLORS = Chrome.DEFAULT_COLORS or {
 }
 Chrome.DEFAULT_COLORS = DEFAULT_COLORS
 
--- Collision-free frame-level ladder shared by live frames, Edit Mode and the
--- settings preview. HealthBar itself is parent+1. Health tint occupies
--- healthBar+1; the three configurable health overlays occupy healthBar+2..+4.
--- Everything after that gets a unique parent-relative level.
 local LEVELS = Chrome.LEVELS or {
     THREAT       = 6,
     TARGET       = 7,
@@ -60,12 +29,6 @@ local LEVELS = Chrome.LEVELS or {
 }
 Chrome.LEVELS = LEVELS
 
----------------------------------------------------------------------------
--- ASSET RESOLUTION (font / statusbar texture)
--- Cached BY NAME rather than globally: party and raid carry their own
--- `general` tables and may name different fonts, which a single-slot cache
--- would resolve to whichever context decorated first.
----------------------------------------------------------------------------
 local _fontPathCache, _texturePathCache = {}, {}
 
 local function FontPath(general)
@@ -96,20 +59,12 @@ local function TexturePath(textureName, general)
     return path
 end
 
--- Drop the resolved-asset caches (called by groupframes.lua's InvalidateCache
--- when the profile's font/texture selection changes).
 function Chrome.InvalidateAssetCache()
     for k in pairs(_fontPathCache) do _fontPathCache[k] = nil end
     for k in pairs(_texturePathCache) do _texturePathCache[k] = nil end
 end
 
----------------------------------------------------------------------------
--- CACHED BACKDROP TABLES: Avoid allocating a new table every SetBackdrop
--- call. SetBackdrop does field-by-field comparison, but reusing the same
--- table reference lets it short-circuit and reduces GC pressure.
----------------------------------------------------------------------------
 local _backdropCache = {}
--- memprobes registered in SetupDebugInstrumentation (debug gate)
 local function GetCachedBackdrop(bgFile, edgeFile, edgeSize)
     local key = (bgFile or "") .. "|" .. (edgeFile or "") .. "|" .. (edgeSize or 0)
     local bd = _backdropCache[key]
@@ -124,33 +79,12 @@ local function GetCachedBackdrop(bgFile, edgeFile, edgeSize)
     return bd
 end
 
--- Skip SetBackdrop when the same cached backdrop table is already applied.
--- Blizzard's SetBackdrop does NOT short-circuit on identical backdropInfo —
--- it unconditionally runs NineSliceUtil.ApplyLayout, which walks every
--- piece (corners + edges + center) and is expensive enough that repeated
--- calls across a full raid can exhaust WoW's 200ms script budget
--- ("script ran too long" in NineSlice.lua). Tracking the last-applied
--- cached table on the frame lets re-decoration passes skip the rebuild.
 local function EnsureBackdrop(frame, bd)
     if frame._quiBackdrop == bd then return end
     frame._quiBackdrop = bd
     frame:SetBackdrop(bd)
 end
 
--- Color the bg fill of a BackdropTemplate frame WITHOUT going through the
--- Lua mixin SetBackdropColor.
---
--- BackdropTemplateMixin:SetBackdropColor reads self.Center to find the
--- texture to color. Because EnsureBackdrop -> frame:SetBackdrop runs in
--- QUI's tainted execution context, the assignment to self.Center inherits
--- QUI's taint stamp. Every subsequent frame:SetBackdropColor(...) call
--- crosses from Blizzard secure code into a QUI-tainted field read,
--- emitting "Execution tainted by QUI while reading field Center" on every
--- raid-frame health update (~80+ events/session in the taint log).
---
--- SetVertexColor is C-side on the Texture object, so reading frame.Center
--- inside our own tainted code (no Blizzard-secure boundary crossed) and
--- forwarding straight to a C-side sink avoids the propagation entirely.
 local function SetBackdropFillColor(frame, r, g, b, a)
     local center = frame and frame.Center
     if center then
@@ -163,9 +97,6 @@ local function ApplyStatusBarTexture(statusBar, textureName, general)
 
     statusBar:SetStatusBarTexture(TexturePath(textureName, general))
 
-    -- Some texture objects retain stale coords/tiling after reload/layout churn.
-    -- Re-selecting the texture in options fixes that because WoW rebuilds the
-    -- internal region state; do the same normalization here.
     local tex = statusBar:GetStatusBarTexture()
     if tex then
         tex:SetTexCoord(0, 1, 0, 1)
@@ -175,40 +106,22 @@ local function ApplyStatusBarTexture(statusBar, textureName, general)
 end
 
 -- >>> QUI_TEST_EXTRACT ApplyOverlayBar (sentinel used by
--- tests/unit/groupframes_overlay_bar_test.lua; do not remove)
--- Shared config + geometry for the three health-bar overlay StatusBars
--- (absorb, heal-absorb, heal-prediction). Idempotent: called from
--- DecorateGroupFrame at build and on every options refresh (RefreshSettings
--- clears _quiDecorated and re-decorates). Per-event Update* paths push only
--- SetValue/SetMinMaxValues/SetStatusBarColor; everything that changes on
--- config/layout lives here.
---   opts.drawOrderDefault : Back/Middle/Front rank when settings.drawOrder is unset
---   opts.fillOrigin       : honor settings.fillFrom (absorb / heal-absorb)
---   opts.anchorToHealth   : pin to the health fill edge and grow outward (heal-pred)
---   opts.general          : the context's `general` table, so an overlay with no
---                           texture of its own inherits the profile's statusbar
 local function ApplyOverlayBar(bar, settings, healthBar, isVertical, opts)
     if not bar or not healthBar then return end
     settings = settings or {}
     opts = opts or {}
 
-    -- Texture (config-driven; replaces the old hardcoded Shield-Fill build path)
     ApplyStatusBarTexture(bar, settings.texture, opts.general)
 
-    -- Draw order among the overlays (never exposes raw strata). healthBar+1 is
-    -- reserved for the tracked-aura health tint, so Back/Middle/Front occupy
-    -- distinct healthBar+2/+3/+4 levels above it.
     local order = tonumber(settings.drawOrder) or opts.drawOrderDefault or 1
     if order < 1 then order = 1 elseif order > 3 then order = 3 end
     bar:SetFrameLevel(healthBar:GetFrameLevel() + order + 1)
     bar:SetFrameStrata(healthBar:GetFrameStrata())
 
-    -- Geometry + fill origin
     local reverse = false
     local resolvedVertical = isVertical
     bar:ClearAllPoints()
     if settings.mode == "detached" then
-        -- Detached mini-bar: own size, anchored to the unit frame (options-only).
         local frame = opts.frame or healthBar:GetParent()
         local w = settings.width or 60
         local h = settings.height or 8
@@ -245,9 +158,6 @@ local function ApplyOverlayBar(bar, settings, healthBar, isVertical, opts)
         bar:SetOrientation(isVertical and "VERTICAL" or "HORIZONTAL")
     end
 
-    -- Spark: 1px overlay pinned to the fill texture's leading edge. Position
-    -- tracks the (possibly secret) bar value through the anchor with NO Lua
-    -- arithmetic; never read GetValue/GetMinMaxValues.
     if settings.spark then
         local spark = bar._quiSpark
         if not spark then
@@ -277,8 +187,6 @@ local function ApplyOverlayBar(bar, settings, healthBar, isVertical, opts)
         bar._quiSpark:Hide()
     end
 
-    -- Outline: 4 static overlay edges framing the full bar. Config color
-    -- (non-secret) so plain textures are fine -- no SetVertexColor-secret concern.
     if settings.outline then
         local o = bar._quiOutline
         if not o then
@@ -312,9 +220,6 @@ local function ApplyOverlayBar(bar, settings, healthBar, isVertical, opts)
 end
 -- <<< QUI_TEST_EXTRACT ApplyOverlayBar
 
----------------------------------------------------------------------------
--- HELPERS: Anchor info
----------------------------------------------------------------------------
 local ANCHOR_MAP = {
     LEFT       = { point = "LEFT",       leftPoint = "LEFT",       rightPoint = "RIGHT",        justify = "LEFT",   justifyV = "MIDDLE" },
     RIGHT      = { point = "RIGHT",      leftPoint = "LEFT",       rightPoint = "RIGHT",        justify = "RIGHT",  justifyV = "MIDDLE" },
@@ -327,22 +232,12 @@ local ANCHOR_MAP = {
     BOTTOM     = { point = "BOTTOM",     leftPoint = "BOTTOMLEFT", rightPoint = "BOTTOMRIGHT",  justify = "CENTER", justifyV = "BOTTOM" },
 }
 
--- Publish for the Edit Mode preview (groupframes_editmode.lua, loaded later)
--- so its text placement always matches the live frames. The preview only reads
--- leftPoint/rightPoint/justify/justifyV; the extra `point` field is harmless.
 ns.QUI_GroupFrameTextAnchorMap = ANCHOR_MAP
 
 local function GetTextAnchorInfo(anchorName)
     return ANCHOR_MAP[anchorName] or ANCHOR_MAP.LEFT
 end
 
----------------------------------------------------------------------------
--- FRAME DIMENSIONS
--- Which size tier a roster falls in, and the width/height for that tier. The
--- runtime sizes its header children with this; the settings preview sizes its
--- mock tiles with it. Kept here because a preview tile that is not the live
--- tile's size makes every other fidelity fix moot.
----------------------------------------------------------------------------
 local DIMENSION_DEFAULTS = {
     party  = { 200, 40, "partyWidth",      "partyHeight" },
     small  = { 180, 36, "smallRaidWidth",  "smallRaidHeight" },
@@ -350,8 +245,6 @@ local DIMENSION_DEFAULTS = {
     large  = { 140, 24, "largeRaidWidth",  "largeRaidHeight" },
 }
 
--- Roster size -> tier. Thresholds match the live header sizing (<=5 party,
--- <=15 small, <=25 medium, else large).
 function Chrome.DimensionMode(count, contextMode)
     if contextMode == "party" then return "party" end
     count = tonumber(count) or 0
@@ -368,16 +261,6 @@ function Chrome.FrameDimensions(vdb, mode)
     return tonumber(dims[spec[3]]) or spec[1], tonumber(dims[spec[4]]) or spec[2]
 end
 
----------------------------------------------------------------------------
--- BOTTOM-PADDED ANCHORS
--- Every BOTTOM* anchored text and indicator has to clear the power bar, so
--- their Y offsets carry `bottomPad`. That pad is NOT constant per frame: the
--- build pass writes the GLOBAL power geometry, then the per-unit role filter
--- (Only Healers / Only Tanks) can reclaim the gap for one unit. Re-anchoring
--- lives here so both passes place text and icons with the SAME pad -- the
--- alternative is a frame whose health bar uses the per-unit pad while its text
--- still floats at the global one.
----------------------------------------------------------------------------
 local INDICATOR_ANCHORS = {
     { key = "roleIcon",       anchor = "roleIconAnchor",     x = "roleIconOffsetX",     y = "roleIconOffsetY",
       defAnchor = "TOPLEFT",    defX = 2,  defY = -2 },
@@ -396,9 +279,6 @@ local INDICATOR_ANCHORS = {
 }
 
 local function AnchorText(frame, region, anchorName, offX, offY, bottomPad)
-    -- Tolerate a region that never went through Apply: ResizeHealthForPower is
-    -- called from the per-unit power path, which can reach frames built by
-    -- other code (and the replay harness's minimal stubs).
     if not region or not region.ClearAllPoints or not region.SetPoint then return end
     local a = GetTextAnchorInfo(anchorName)
     local pad = a.point:find("BOTTOM") and bottomPad or 0
@@ -441,13 +321,6 @@ local function AnchorBottomPadded(frame, vdb, bottomPad)
 end
 Chrome.AnchorBottomPadded = AnchorBottomPadded
 
----------------------------------------------------------------------------
--- DISPEL-TYPE ICONS
--- Five overlapping StatusBars let the runtime forward a secret dispel-type
--- color directly into texture sinks: one step curve makes exactly one atlas
--- opaque while the other four remain transparent. When the type is readable,
--- ShowDispelTypeIcon simply selects the matching frame without using curves.
----------------------------------------------------------------------------
 local DISPEL_ICON_TYPES = Chrome.DISPEL_ICON_TYPES or {
     "Magic", "Curse", "Disease", "Poison", "Bleed",
 }
@@ -523,24 +396,6 @@ function Chrome.ApplyDispelIconLayout(frame, settings)
     end
 end
 
----------------------------------------------------------------------------
--- THE BUILDER
--- Apply(frame, vdb) styles `frame` from ONE context's visual settings table
--- (profile.quiGroupFrames.party / .raid). Idempotent: every child frame and
--- region is reused, so it is safe to re-run on every settings change.
---
--- `state` (optional) is the caller's ResizeHealthForPower dirty-check table.
--- Apply MUST reseed it: this pass rewrites the power gap from the GLOBAL
--- showPowerBar, ignoring the per-unit role filter, so a later
--- ResizeHealthForPower whose per-unit value is UNCHANGED (a damager still
--- filtered out) would dirty-check-match stale values and refuse to reclaim
--- the gap -- making showPowerBar behave as an override of the role filter.
--- Passing it here keeps that invariant in ONE place for every caller.
---
--- Returns the geometry the caller needs for its own bookkeeping:
---   { borderSize, px, powerHeight, separatorHeight, bottomPad, showPower,
---     isVertical }
----------------------------------------------------------------------------
 function Chrome.Apply(frame, vdb, state)
     if not frame then return end
     vdb = vdb or {}
@@ -549,7 +404,6 @@ function Chrome.Apply(frame, vdb, state)
     local Helpers = ns.Helpers
     local LSM = ns.LSM
 
-            -- Backdrop
         local borderPx = general and general.borderSize or 1
         local borderSize = borderPx > 0 and (QUICore.Pixels and QUICore:Pixels(borderPx, frame) or borderPx) or 0
         local px = QUICore.GetPixelSize and QUICore:GetPixelSize(frame) or 1
@@ -583,13 +437,11 @@ function Chrome.Apply(frame, vdb, state)
             frame:SetBackdropBorderColor(bdr, bdg, bdb, bda)
         end
 
-        -- Power bar height calculation
         local powerSettings = vdb.power
         local showPower = powerSettings and powerSettings.showPowerBar ~= false
         local powerHeight = showPower and (QUICore.PixelRound and QUICore:PixelRound(powerSettings.powerBarHeight or 4, frame) or 4) or 0
         local separatorHeight = showPower and px or 0
 
-        -- Health bar (reuse existing to avoid frame leaks on re-decoration)
         local healthBar = frame.healthBar or CreateFrame("StatusBar", nil, frame)
         healthBar:ClearAllPoints()
         healthBar:SetPoint("TOPLEFT", frame, "TOPLEFT", borderSize, -borderSize)
@@ -604,16 +456,11 @@ function Chrome.Apply(frame, vdb, state)
         frame._isVerticalFill = isVertical
         frame.healthBar = healthBar
 
-        -- No separate healthBg texture — the frame backdrop shows through the
-        -- unfilled StatusBar area, matching unit frame behavior.
         if frame.healthBg then
             frame.healthBg:Hide()
             frame.healthBg = nil
         end
 
-        -- Heal-bar overlays (absorb / heal-absorb / heal-prediction). Texture,
-        -- draw order, fill origin, spark and outline are all owned by the shared
-        -- ApplyOverlayBar; the per-event Update* paths only push value/color.
         local healPredictionBar = frame.healPredictionBar or CreateFrame("StatusBar", nil, healthBar)
         frame.healPredictionBar = healPredictionBar
         healPredictionBar:SetMinMaxValues(0, 1)
@@ -638,7 +485,6 @@ function Chrome.Apply(frame, vdb, state)
             { drawOrderDefault = 3, fillOrigin = true, frame = frame, general = general })
         healAbsorbBar:Hide()
 
-        -- Power bar
         if showPower then
             local powerBar = frame.powerBar or CreateFrame("StatusBar", nil, frame)
             powerBar:ClearAllPoints()
@@ -651,7 +497,6 @@ function Chrome.Apply(frame, vdb, state)
             powerBar:EnableMouse(false)
             frame.powerBar = powerBar
 
-            -- Power bar background
             if not frame._powerBg then
                 local powerBg = powerBar:CreateTexture(nil, "BACKGROUND")
                 powerBg:SetAllPoints()
@@ -660,7 +505,6 @@ function Chrome.Apply(frame, vdb, state)
                 frame._powerBg = powerBg
             end
 
-            -- Separator
             if not frame._powerSeparator then
                 local separator = powerBar:CreateTexture(nil, "OVERLAY")
                 separator:SetHeight(px)
@@ -672,14 +516,11 @@ function Chrome.Apply(frame, vdb, state)
             end
         end
 
-        -- Text/indicator frame: above every full-frame highlight and health
-        -- overlay, below cleanse glow, aura widgets and targeted spells.
         local textFrame = frame._textFrame or CreateFrame("Frame", nil, frame)
         textFrame:SetAllPoints()
         textFrame:SetFrameLevel(frame:GetFrameLevel() + LEVELS.TEXT)
         frame._textFrame = textFrame
 
-        -- Centered status text (DEAD / OFFLINE overlay)
         local statusText = frame.statusText or textFrame:CreateFontString(nil, "OVERLAY")
         statusText:ClearAllPoints()
         if Helpers and Helpers.ApplyFontWithFallback then
@@ -694,20 +535,9 @@ function Chrome.Apply(frame, vdb, state)
         statusText:Hide()
         frame.statusText = statusText
 
-        -- Bottom-anchor offset: push elements above power bar + separator
         local bottomPad = powerHeight + separatorHeight + borderSize
         frame._bottomPad = bottomPad
 
-        -- Sync the ResizeHealthForPower dirty-check to the geometry written above.
-        -- This build path (re-run on every settings change via the _quiDecorated
-        -- reset in RefreshSettings) reseeds the gap from the GLOBAL showPowerBar,
-        -- ignoring the per-unit role filter. Without syncing state, a later
-        -- ResizeHealthForPower whose per-unit show value is UNCHANGED (e.g. a damager
-        -- staying hidden when the second of Only-Healers/Only-Tanks is enabled) would
-        -- dirty-check-match the stale state and refuse to reclaim this gap — making
-        -- showPowerBar behave as an override of the role filter.
-
-        -- Name text
         local fontPath = FontPath(general)
         local fontOutline = FontOutline(general)
         local nameSettings = vdb.name
@@ -724,7 +554,6 @@ function Chrome.Apply(frame, vdb, state)
         nameText:SetWordWrap(false)
         frame.nameText = nameText
 
-        -- Level text
         local levelText = frame.levelText or textFrame:CreateFontString(nil, "OVERLAY")
         local levelFontPath = fontPath
         if nameSettings and type(nameSettings.levelFont) == "string" and nameSettings.levelFont ~= "" then
@@ -743,7 +572,6 @@ function Chrome.Apply(frame, vdb, state)
         end
         frame.levelText = levelText
 
-        -- Health text
         local healthSettings = vdb.health
         local healthFontSize = healthSettings and healthSettings.healthFontSize or 12
         local healthAnchor = GetTextAnchorInfo(healthSettings and healthSettings.healthAnchor or "RIGHT")
@@ -761,10 +589,8 @@ function Chrome.Apply(frame, vdb, state)
         healthText:SetWordWrap(false)
         frame.healthText = healthText
 
-        -- Read indicator positioning from DB
         local indDB = vdb.indicators or {}
 
-        -- Role icon
         local roleIconSize = indDB.roleIconSize or 12
         local roleAnchor = indDB.roleIconAnchor or "TOPLEFT"
         local roleOffX = indDB.roleIconOffsetX or 2
@@ -776,7 +602,6 @@ function Chrome.Apply(frame, vdb, state)
         roleIcon:Hide()
         frame.roleIcon = roleIcon
 
-        -- Ready check icon
         local readyCheckIcon = frame.readyCheckIcon or textFrame:CreateTexture(nil, "OVERLAY")
         readyCheckIcon:ClearAllPoints()
         local rcSize = indDB.readyCheckSize or 16
@@ -785,7 +610,6 @@ function Chrome.Apply(frame, vdb, state)
         readyCheckIcon:Hide()
         frame.readyCheckIcon = readyCheckIcon
 
-        -- Resurrection icon
         local resIcon = frame.resIcon or textFrame:CreateTexture(nil, "OVERLAY")
         resIcon:ClearAllPoints()
         local resSize = indDB.resurrectionSize or 16
@@ -795,7 +619,6 @@ function Chrome.Apply(frame, vdb, state)
         resIcon:Hide()
         frame.resIcon = resIcon
 
-        -- Summon pending icon
         local summonIcon = frame.summonIcon or textFrame:CreateTexture(nil, "OVERLAY")
         summonIcon:ClearAllPoints()
         local sumSize = indDB.summonSize or 20
@@ -805,7 +628,6 @@ function Chrome.Apply(frame, vdb, state)
         summonIcon:Hide()
         frame.summonIcon = summonIcon
 
-        -- Leader icon
         local leaderIcon = frame.leaderIcon or textFrame:CreateTexture(nil, "OVERLAY")
         leaderIcon:ClearAllPoints()
         local ldrSize = indDB.leaderSize or 12
@@ -814,7 +636,6 @@ function Chrome.Apply(frame, vdb, state)
         leaderIcon:Hide()
         frame.leaderIcon = leaderIcon
 
-        -- Target marker (raid icon)
         local targetMarker = frame.targetMarker or textFrame:CreateTexture(nil, "OVERLAY")
         targetMarker:ClearAllPoints()
         local tmSize = indDB.targetMarkerSize or 14
@@ -823,7 +644,6 @@ function Chrome.Apply(frame, vdb, state)
         targetMarker:Hide()
         frame.targetMarker = targetMarker
 
-        -- Phase icon
         local phaseIcon = frame.phaseIcon or textFrame:CreateTexture(nil, "OVERLAY")
         phaseIcon:ClearAllPoints()
         local phSize = indDB.phaseSize or 16
@@ -833,7 +653,6 @@ function Chrome.Apply(frame, vdb, state)
         phaseIcon:Hide()
         frame.phaseIcon = phaseIcon
 
-        -- Threat border (overlay frame)
         indDB = vdb.indicators or {}
         local threatBorderPx = px * (indDB.threatBorderSize or 3)
         local threatBorder = frame.threatBorder or CreateFrame("Frame", nil, frame, "BackdropTemplate")
@@ -850,7 +669,6 @@ function Chrome.Apply(frame, vdb, state)
         threatBorder:Hide()
         frame.threatBorder = threatBorder
 
-        -- Target highlight (overlay frame)
         local healerDB = vdb.healer
         local targetSettings = healerDB and healerDB.targetHighlight
         local targetHighlight = frame.targetHighlight or CreateFrame("Frame", nil, frame, "BackdropTemplate")
@@ -867,7 +685,6 @@ function Chrome.Apply(frame, vdb, state)
         targetHighlight:Hide()
         frame.targetHighlight = targetHighlight
 
-        -- Dispel overlay (StatusBar borders for secret-value-safe SetVertexColor)
         local dispelOverlay = frame.dispelOverlay or CreateFrame("Frame", nil, frame)
         dispelOverlay:ClearAllPoints()
         dispelOverlay:SetAllPoints(frame)
@@ -911,7 +728,6 @@ function Chrome.Apply(frame, vdb, state)
         bRight:SetWidth(dispelBorderSize)
         dispelOverlay.borderRight = bRight
 
-        -- Fill texture (full-frame tint behind borders)
         local dispelFill = dispelOverlay.fill
         if not dispelFill then
             dispelFill = dispelOverlay:CreateTexture(nil, "BACKGROUND")
@@ -919,19 +735,14 @@ function Chrome.Apply(frame, vdb, state)
         end
         dispelFill:SetAllPoints(dispelOverlay)
         dispelFill:SetColorTexture(1, 1, 1, 1)
-        dispelFill:SetVertexColor(0, 0, 0, 0) -- colored dynamically by SetDispelBorderColor
+        dispelFill:SetVertexColor(0, 0, 0, 0)
         dispelOverlay._fillOpacity = dispelSettings and dispelSettings.fillOpacity or 0
 
         dispelOverlay:Hide()
         frame.dispelOverlay = dispelOverlay
 
-        -- Optional native dispel-type atlas. Creation and geometry live here
-        -- so live frames, Edit Mode, and the settings preview stay identical.
         Chrome.ApplyDispelIconLayout(frame, dispelSettings)
 
-        -- Cleanse-ready glow: an additive halo (distinct from the dispel border tint)
-        -- shown when the player can dispel a debuff here. Driven by UpdateDispelOverlay
-        -- off the same non-secret playerDispellable probe; insecure texture, taint-safe.
         local cleanseGlow = frame.cleanseGlow or CreateFrame("Frame", nil, frame)
         cleanseGlow:ClearAllPoints()
         cleanseGlow:SetPoint("TOPLEFT", frame, "TOPLEFT", -4, 4)
@@ -948,7 +759,6 @@ function Chrome.Apply(frame, vdb, state)
         cleanseGlow:Hide()
         frame.cleanseGlow = cleanseGlow
 
-        -- Portrait (optional, side-attached)
         local portraitSettings = vdb.portrait
         if portraitSettings and portraitSettings.showPortrait then
             local portraitSizePx = portraitSettings.portraitSize or 30
@@ -982,8 +792,6 @@ function Chrome.Apply(frame, vdb, state)
         elseif frame.portrait then
             frame.portrait:Hide()
         end
-    -- One pass places every BOTTOM-padded text and icon, so the per-unit
-    -- resize below can re-run it with the reclaimed pad.
     AnchorBottomPadded(frame, vdb, bottomPad)
 
     if state then
@@ -1003,14 +811,6 @@ function Chrome.Apply(frame, vdb, state)
     }
 end
 
----------------------------------------------------------------------------
--- POST-BUILD GEOMETRY: per-unit power visibility
--- The global showPowerBar decides whether the bar EXISTS (Chrome.Apply); the
--- role filters (Only Healers / Only Tanks) decide whether a given unit shows
--- it, which re-anchors that frame's health bar and rewrites _bottomPad.
--- `state` is the caller's dirty-check table (runtime: the frame state entry;
--- preview: a per-mock-frame table) so repeated calls are cheap.
----------------------------------------------------------------------------
 function Chrome.ResizeHealthForPower(frame, vdb, showPowerForUnit, state)
     if not frame or not frame.healthBar then return end
     vdb = vdb or {}
@@ -1043,18 +843,10 @@ function Chrome.ResizeHealthForPower(frame, vdb, showPowerForUnit, state)
     frame.healthBar:ClearAllPoints()
     frame.healthBar:SetPoint("TOPLEFT", frame, "TOPLEFT", borderSize, -borderSize)
     frame.healthBar:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -borderSize, bottomPad)
-    -- Text and corner icons follow the SAME pad; leaving them on the build
-    -- pass's global pad is what made a filtered frame mix the two (health bar
-    -- hugging the frame bottom, text still floating a power bar's height up).
     AnchorBottomPadded(frame, vdb, bottomPad)
     return bottomPad
 end
 
----------------------------------------------------------------------------
--- Full-frame highlight tint helpers. Threat/target use BackdropTemplate
--- centers; dispel uses secret-value-safe StatusBars plus a texture. Shared so
--- runtime and preview cannot accidentally render border-only settings.
----------------------------------------------------------------------------
 function Chrome.SetBackdropOverlayColor(overlay, r, g, b, a)
     if not overlay then return end
     overlay:SetBackdropBorderColor(r, g, b, a)
@@ -1078,10 +870,6 @@ function Chrome.SetDispelBorderColor(overlay, r, g, b, a)
     end
 end
 
----------------------------------------------------------------------------
--- PUBLIC ALIASES — the runtime file consumes these instead of keeping its
--- own copies, so there is exactly one implementation of each.
----------------------------------------------------------------------------
 Chrome.FontPath              = FontPath
 Chrome.FontOutline           = FontOutline
 Chrome.TexturePath           = TexturePath
@@ -1091,10 +879,8 @@ Chrome.GetCachedBackdrop     = GetCachedBackdrop
 Chrome.EnsureBackdrop        = EnsureBackdrop
 Chrome.SetBackdropFillColor  = SetBackdropFillColor
 Chrome.ApplyOverlayBar       = ApplyOverlayBar
--- Exposed for groupframes.lua's memory probes (debug gate).
 Chrome.BackdropCache         = _backdropCache
 Chrome.FontPathCache         = _fontPathCache
--- Historical export name kept for the settings preview driver + tests.
 ns.QUI_GroupFrameApplyOverlayBar = ApplyOverlayBar
 
 return Chrome

@@ -1,7 +1,3 @@
---- QUI Alert & Toast Skinning
---- Skins Blizzard alert frames with QUI styling and adds movers
-
--- Blizzard FrameXML globals this module post-hooks (declared for luacheck).
 -- luacheck: read globals LootWonAlertFrame_SetUp MoneyWonAlertFrame_SetUp BonusRollFrame_StartBonusRoll BonusRollFrame
 
 local ADDON_NAME, ns = ...
@@ -9,47 +5,26 @@ local QUICore = ns.Addon
 local Helpers = ns.Helpers
 local SkinBase = ns.SkinBase
 
--- Module reference
 local Alerts = {}
 QUICore.Alerts = Alerts
 
----------------------------------------------------------------------------
--- CONSTANTS
----------------------------------------------------------------------------
-
--- Text color
 local QUI_TEXT_COLOR = { 0.953, 0.957, 0.965, 1 }
 
--- Icon styling
 local ICON_TEX_COORDS = { 0.08, 0.92, 0.08, 0.92 }
-
----------------------------------------------------------------------------
--- HELPER FUNCTIONS
----------------------------------------------------------------------------
 
 local function GetGeneralSettings()
     return Helpers.GetModuleDB("general") or {}
 end
 
 local function GetAlertSettings()
-    -- Returns (settings, enabled). enabled is derived from general.skinAlerts but is
-    -- NOT written onto the persisted alerts table — mutating it inside a getter would
-    -- clobber the saved profile.alerts.enabled key on every read.
     local alerts = Helpers.GetModuleDB("alerts") or {}
     return alerts, GetGeneralSettings().skinAlerts
 end
 
---- Get theme colors from QUI skinning system
 local function GetThemeColors()
-    -- Canonical eight-value resolver (border + per-module bg override) used across the
-    -- skinning tree, rather than hand-pairing GetSkinBorderColor + GetSkinBgColor.
     return SkinBase.GetSkinColors(GetGeneralSettings(), "alerts")
 end
 
---- Force alpha to 1 (prevents Blizzard fade animations)
--- TAINT SAFETY: Defer to break taint chain from secure context.
--- Re-entry guard: SetAlpha(1) re-triggers the hooksecurefunc that calls
--- ForceAlpha, which would schedule another redundant timer without this.
 local _forceAlphaActive = {}
 local _forceAlphaCallbacks = Helpers.CreateStateTable()
 
@@ -69,7 +44,6 @@ local function ForceAlpha(frame)
     C_Timer.After(0, cb)
 end
 
---- Create QUI-styled backdrop for alert frames
 local function CreateAlertBackdrop(frame, xOffset1, yOffset1, xOffset2, yOffset2)
     local existing = SkinBase.GetFrameData(frame, "backdrop")
     if existing then return existing end
@@ -88,10 +62,6 @@ local function CreateAlertBackdrop(frame, xOffset1, yOffset1, xOffset2, yOffset2
     return backdrop
 end
 
---- Create a backdrop anchored to an icon border frame (extends rightward by 180px)
---- @param frame frame Owner frame that stores/keys the backdrop
---- @param anchorFrame frame The icon border to anchor against
---- @param inset number Pixel inset for TOPLEFT/BOTTOMRIGHT corners
 local function CreateIconAnchoredBackdrop(frame, anchorFrame, inset)
     if SkinBase.GetFrameData(frame, "backdrop") or not anchorFrame then return end
     local sr, sg, sb, sa, bgr, bgg, bgb, bga = GetThemeColors()
@@ -107,7 +77,6 @@ local function CreateIconAnchoredBackdrop(frame, anchorFrame, inset)
     return backdrop
 end
 
---- Resolve an item rarity quality color {r,g,b} from a hyperlink, or nil
 local function GetQualityColor(hyperlink)
     if not hyperlink then return nil end
     local quality = C_Item.GetItemQualityByID(hyperlink)
@@ -118,14 +87,9 @@ local function GetQualityColor(hyperlink)
     return nil
 end
 
---- Create icon border frame with optional quality color
---- @param icon texture The icon texture
---- @param parent frame The parent frame
---- @param qualityColor table|nil Optional {r, g, b} quality color for rarity border
 local function CreateIconBorder(icon, parent, qualityColor)
     local sr, sg, sb, sa = GetThemeColors()
 
-    -- If border already exists (pooled frame), just update the color
     local existingBorder = SkinBase.GetFrameData(icon, "border")
     if existingBorder then
         if qualityColor then
@@ -142,7 +106,6 @@ local function CreateIconBorder(icon, parent, qualityColor)
     SkinBase.SetExpandedPixelPoints(border, icon, 2)
     SkinBase.ApplyPixelBackdrop(border, 1, false, false)
 
-    -- Use quality color if provided, otherwise use skin accent
     if qualityColor then
         Helpers.SetFrameBackdropBorderColor(border, qualityColor.r or qualityColor[1], qualityColor.g or qualityColor[2], qualityColor.b or qualityColor[3], 1)
     else
@@ -150,13 +113,10 @@ local function CreateIconBorder(icon, parent, qualityColor)
     end
 
     SkinBase.SetFrameData(icon, "border", border)
-    -- Tag the border on the alert frame under a stable key so RefreshAlertColors can
-    -- recolor it regardless of which icon handle (Icon/dungeonTexture/EmblemIcon/...) it wraps.
     if parent then SkinBase.SetFrameData(parent, "iconBorder", border) end
     return border
 end
 
---- Style an icon with tex coords and border
 local function StyleIcon(icon, parent, qualityColor)
     if not icon then return end
 
@@ -166,7 +126,6 @@ local function StyleIcon(icon, parent, qualityColor)
     CreateIconBorder(icon, parent, qualityColor)
 end
 
---- Kill (hide) a frame or texture
 local function Kill(obj)
     if obj then
         if obj.UnregisterAllEvents then
@@ -184,17 +143,7 @@ local function Kill(obj)
     end
 end
 
----------------------------------------------------------------------------
--- ALERT SKINNING FUNCTIONS
----------------------------------------------------------------------------
-
---- Skin Achievement Alert
 local function SkinAchievementAlert(frame)
-    -- Shield.Points re-fonts via SetFontObject on every alert setUp; the install
-    -- below must run BEFORE the IsSkinned early-return (alerts are recycled, so a
-    -- once-only post-return lock would be skipped on later displays). The
-    -- LockFontObject hook persists for the frame's lifetime and defeats every
-    -- later per-setUp revert.
     if frame and frame.Shield and frame.Shield.Points then
         SkinBase.LockFontObject(frame.Shield.Points, { fontOnly = true })
     end
@@ -206,25 +155,21 @@ local function SkinAchievementAlert(frame)
         SkinBase.SetFrameData(frame, "hooked", true)
     end
 
-    -- Create backdrop
     CreateAlertBackdrop(frame, -2, -6, -2, 6)
 
-    -- Kill Blizzard artwork
     Kill(frame.Background)
     Kill(frame.glow)
     Kill(frame.shine)
     Kill(frame.GuildBanner)
     Kill(frame.GuildBorder)
 
-    -- Style text
     if frame.Unlocked then
         frame.Unlocked:SetTextColor(unpack(QUI_TEXT_COLOR))
     end
     if frame.Name then
-        frame.Name:SetTextColor(1, 0.82, 0)  -- Gold for achievement name
+        frame.Name:SetTextColor(1, 0.82, 0)
     end
 
-    -- Style icon
     if frame.Icon and frame.Icon.Texture then
         Kill(frame.Icon.Overlay)
         StyleIcon(frame.Icon.Texture, frame)
@@ -233,7 +178,6 @@ local function SkinAchievementAlert(frame)
     SkinBase.MarkSkinned(frame)
 end
 
---- Skin Criteria Alert (achievement criteria)
 local function SkinCriteriaAlert(frame)
     if not frame or SkinBase.IsSkinned(frame) then return end
 
@@ -259,7 +203,6 @@ local function SkinCriteriaAlert(frame)
     SkinBase.MarkSkinned(frame)
 end
 
--- Refresh per-item quality border color on a pooled alert frame
 local function RefreshAlertQualityColor(frame, icon)
     if not frame or not icon then return end
     local lootItem = frame.lootItem or frame
@@ -267,8 +210,6 @@ local function RefreshAlertQualityColor(frame, icon)
     CreateIconBorder(icon, frame, qualityColor)
 end
 
--- Blizzard's lootItem:Init / LootWonAlertFrame_SetUp re-Shows the background atlas,
--- IconBorder and SpecRing on EVERY pooled re-use; re-suppress them each time.
 local function SuppressLootWonArt(frame, lootItem)
     Kill(frame.Background)
     Kill(frame.glow)
@@ -279,13 +220,10 @@ local function SuppressLootWonArt(frame, lootItem)
     Kill(lootItem.SpecRing)
 end
 
---- Skin Loot Won Alert
 local function SkinLootWonAlert(frame)
     if not frame then return end
     local lootItem = frame.lootItem or frame
 
-    -- Pooled frames: Blizzard re-shows art + re-SetText's (stock font) on re-use, so
-    -- re-suppress the art, re-apply the QUI font, and refresh the quality border.
     if SkinBase.IsSkinned(frame) then
         SuppressLootWonArt(frame, lootItem)
         RefreshAlertQualityColor(frame, lootItem.Icon)
@@ -300,23 +238,18 @@ local function SkinLootWonAlert(frame)
 
     SuppressLootWonArt(frame, lootItem)
 
-    -- Get quality color from item link
     local qualityColor = GetQualityColor(frame.hyperlink or (lootItem and lootItem.hyperlink))
 
     StyleIcon(lootItem.Icon, frame, qualityColor)
 
-    -- Create backdrop anchored to icon
     CreateIconAnchoredBackdrop(frame, SkinBase.GetFrameData(lootItem.Icon, "border"), 4)
 
     SkinBase.MarkSkinned(frame)
 end
 
---- Skin Loot Upgrade Alert
 local function SkinLootUpgradeAlert(frame)
     if not frame then return end
 
-    -- Pooled frames: refresh quality border + re-apply the QUI font (templates
-    -- re-SetText in the stock font on re-use).
     if SkinBase.IsSkinned(frame) then
         RefreshAlertQualityColor(frame, frame.Icon)
         return
@@ -335,33 +268,27 @@ local function SkinLootUpgradeAlert(frame)
     frame.Icon:SetTexCoord(unpack(ICON_TEX_COORDS))
     frame.Icon:SetDrawLayer("BORDER", 5)
 
-    -- Get quality color from item link
     local qualityColor = GetQualityColor(frame.hyperlink)
 
     CreateIconBorder(frame.Icon, frame, qualityColor)
 
-    -- Create backdrop
     CreateIconAnchoredBackdrop(frame, SkinBase.GetFrameData(frame.Icon, "border"), 8)
 
     SkinBase.MarkSkinned(frame)
 end
 
---- Skin Money Won Alert
 local function SkinMoneyWonAlert(frame)
     if not frame or SkinBase.IsSkinned(frame) then return end
 
     local sr, sg, sb, sa, bgr, bgg, bgb, bga = GetThemeColors()
 
-    -- Hide Blizzard textures
     if frame.Background then frame.Background:SetAlpha(0) end
     if frame.IconBorder then frame.IconBorder:SetAlpha(0) end
 
-    -- Style icon
     if frame.Icon then
         frame.Icon:SetTexCoord(unpack(ICON_TEX_COORDS))
     end
 
-    -- Create backdrop
     if not SkinBase.GetFrameData(frame, "backdrop") then
         local backdrop = CreateFrame("Frame", nil, frame, "BackdropTemplate")
         backdrop:SetFrameLevel(frame:GetFrameLevel())
@@ -376,7 +303,6 @@ local function SkinMoneyWonAlert(frame)
     SkinBase.MarkSkinned(frame)
 end
 
---- Skin Honor Awarded Alert
 local function SkinHonorAwardedAlert(frame)
     if not frame or SkinBase.IsSkinned(frame) then return end
 
@@ -396,7 +322,6 @@ local function SkinHonorAwardedAlert(frame)
     SkinBase.MarkSkinned(frame)
 end
 
---- Skin New Recipe Learned Alert
 local function SkinNewRecipeLearnedAlert(frame)
     if not frame or SkinBase.IsSkinned(frame) then return end
 
@@ -411,7 +336,6 @@ local function SkinNewRecipeLearnedAlert(frame)
     Kill(frame.glow)
     Kill(frame.shine)
 
-    -- Kill background texture (first region)
     local regions = { frame:GetRegions() }
     for _, region in ipairs(regions) do
         if region:IsObjectType("Texture") then
@@ -433,7 +357,6 @@ local function SkinNewRecipeLearnedAlert(frame)
     SkinBase.MarkSkinned(frame)
 end
 
---- Skin Dungeon Completion Alert
 local function SkinDungeonCompletionAlert(frame)
     if not frame or SkinBase.IsSkinned(frame) then return end
 
@@ -471,7 +394,6 @@ local function SkinDungeonCompletionAlert(frame)
     SkinBase.MarkSkinned(frame)
 end
 
---- Skin Scenario Alert
 local function SkinScenarioAlert(frame)
     if not frame or SkinBase.IsSkinned(frame) then return end
 
@@ -483,7 +405,6 @@ local function SkinScenarioAlert(frame)
 
     CreateAlertBackdrop(frame, 4, 4, -7, 6)
 
-    -- Kill atlas backgrounds
     local regions = { frame:GetRegions() }
     for _, region in ipairs(regions) do
         if region:IsObjectType("Texture") then
@@ -510,7 +431,6 @@ local function SkinScenarioAlert(frame)
     SkinBase.MarkSkinned(frame)
 end
 
---- Skin World Quest Complete Alert
 local function SkinWorldQuestCompleteAlert(frame)
     if not frame or SkinBase.IsSkinned(frame) then return end
 
@@ -535,11 +455,9 @@ local function SkinWorldQuestCompleteAlert(frame)
     SkinBase.MarkSkinned(frame)
 end
 
---- Skin Legendary Item Alert
 local function SkinLegendaryItemAlert(frame, itemLink)
     if not frame then return end
 
-    -- Pooled frames: refresh per-item quality border color
     if SkinBase.IsSkinned(frame) then
         if frame.Icon and itemLink then
             local quality = C_Item.GetItemQualityByID(itemLink)
@@ -577,7 +495,6 @@ local function SkinLegendaryItemAlert(frame, itemLink)
 
         local border = CreateIconBorder(frame.Icon, frame)
 
-        -- Color border by item quality
         if itemLink then
             local quality = C_Item.GetItemQualityByID(itemLink)
             if quality then
@@ -590,20 +507,13 @@ local function SkinLegendaryItemAlert(frame, itemLink)
     SkinBase.MarkSkinned(frame)
 end
 
---- Skin Misc Alerts (Pets, Mounts, Toys, Cosmetics, Warband)
 local function SkinMiscAlert(frame)
     if not frame then return end
 
-    -- Misc alerts (mounts/toys/pets) use the user's skin accent color: quality
-    -- detection is unreliable, accent color is cleaner and consistent (nil border).
     if frame.Icon then
-        -- Update existing border color or create new one
         CreateIconBorder(frame.Icon, frame, nil)
     end
 
-    -- Skip structural changes if already skinned (pooled frame), but ItemAlertFrameMixin
-    -- :SetUpDisplay re-SetAtlas's IconBorder on every show, reactivating the texture we
-    -- killed — so re-suppress it (and re-font) on each pooled re-use.
     if SkinBase.IsSkinned(frame) then
         Kill(frame.IconBorder)
         return
@@ -635,7 +545,6 @@ local function RestyleEntitlementAlertText(frame)
     SkinBase.LockFontObject(frame.Title, { fontOnly = true })
 end
 
---- Skin Entitlement/RAF Delivered Alert
 local function SkinEntitlementAlert(frame)
     if not frame then return end
     RestyleEntitlementAlertText(frame)
@@ -666,7 +575,6 @@ local function SkinEntitlementAlert(frame)
     SkinBase.MarkSkinned(frame)
 end
 
---- Skin Digsite Complete Alert
 local function SkinDigsiteCompleteAlert(frame)
     if not frame or SkinBase.IsSkinned(frame) then return end
 
@@ -681,7 +589,6 @@ local function SkinDigsiteCompleteAlert(frame)
     Kill(frame.glow)
     Kill(frame.shine)
 
-    -- Hide background region
     local regions = { frame:GetRegions() }
     if regions[1] then Kill(regions[1]) end
 
@@ -692,7 +599,6 @@ local function SkinDigsiteCompleteAlert(frame)
     SkinBase.MarkSkinned(frame)
 end
 
---- Skin Guild Challenge Alert
 local function SkinGuildChallengeAlert(frame)
     if not frame or SkinBase.IsSkinned(frame) then return end
 
@@ -704,7 +610,6 @@ local function SkinGuildChallengeAlert(frame)
 
     CreateAlertBackdrop(frame, -2, -6, -2, 6)
 
-    -- Kill guild challenge background
     local region = select(2, frame:GetRegions())
     if region and region:IsObjectType("Texture") then
         if region:GetTexture() == [[Interface\GuildFrame\GuildChallenges]] then
@@ -724,7 +629,6 @@ local function SkinGuildChallengeAlert(frame)
     SkinBase.MarkSkinned(frame)
 end
 
---- Skin Invasion Alert
 local function SkinInvasionAlert(frame)
     if not frame or SkinBase.IsSkinned(frame) then return end
 
@@ -736,7 +640,6 @@ local function SkinInvasionAlert(frame)
 
     CreateAlertBackdrop(frame, 4, 4, -7, 6)
 
-    -- Kill invasion background
     if frame.GetRegions then
         local region, icon = frame:GetRegions()
         if region and region:IsObjectType("Texture") then
@@ -746,7 +649,7 @@ local function SkinInvasionAlert(frame)
         end
 
         if icon and icon:IsObjectType("Texture") then
-            if icon:GetTexture() == 236293 then  -- interface\icons\ability_warlock_demonicpower
+            if icon:GetTexture() == 236293 then
                 CreateIconBorder(icon, frame)
                 icon:SetDrawLayer("OVERLAY")
                 icon:SetTexCoord(unpack(ICON_TEX_COORDS))
@@ -757,22 +660,9 @@ local function SkinInvasionAlert(frame)
     SkinBase.MarkSkinned(frame)
 end
 
----------------------------------------------------------------------------
--- BONUS ROLL FRAMES (Not part of AlertSystem)
----------------------------------------------------------------------------
-
--- The BonusRollFrame PROMPT window (loot spinner + item icon + Roll/Pass buttons +
--- currency cost + timer) is a standalone Blizzard frame that QUI otherwise only
--- positions. Skin it to match the loot-roll / alert look. Taint-safe: only
--- display-only methods on Blizzard regions + QUI-owned child backdrops (weak-keyed
--- via SetFrameData) -- no field writes, OnClick hooks, or secure attributes. The
--- Roll/Pass buttons are plain (insecure) buttons (OnClick just calls
--- Accept/DeclineSpellConfirmationPrompt), so a QUI border is safe.
 local function SkinBonusRollPromptButton(btn)
     if not btn or SkinBase.IsStyled(btn) then return end
     local sr, sg, sb, sa = GetThemeColors()
-    -- Accent border around the dice/pass icon. A border-only child keeps the
-    -- button's own NormalTexture (the dice / pass art) visible underneath.
     local border = CreateFrame("Frame", nil, btn, "BackdropTemplate")
     border:SetFrameLevel(btn:GetFrameLevel() + 1)
     border:SetAllPoints()
@@ -791,13 +681,10 @@ local function SkinBonusRollPrompt(frame)
     local sr, sg, sb, sa, bgr, bgg, bgb, bga = GetThemeColors()
 
     if not SkinBase.IsSkinned(frame) then
-        -- Strip Blizzard LootToast art (OnShow already hides LootSpinnerBG/IconBorder)
         Kill(frame.Background)
         Kill(frame.IconBorder)
         Kill(frame.LootSpinnerBG)
 
-        -- QUI backdrop behind the whole prompt, one level below the content frames
-        -- (PromptFrame/RollingFrame use the parent frame level) so it renders behind.
         if not SkinBase.GetFrameData(frame, "backdrop") then
             local backdrop = CreateFrame("Frame", nil, frame, "BackdropTemplate")
             backdrop:SetFrameLevel(math.max(0, frame:GetFrameLevel() - 1))
@@ -809,12 +696,10 @@ local function SkinBonusRollPrompt(frame)
             SkinBase.SetFrameData(frame, "backdrop", backdrop)
         end
 
-        -- Timer bar -> QUI accent tint (keep Blizzard's bar texture)
         if prompt.Timer then
             prompt.Timer:SetStatusBarColor(sr, sg, sb, 1)
         end
 
-        -- Global QUI font on the prompt labels
         if prompt.InfoFrame then
             SkinBase.SkinFontString(prompt.InfoFrame.Label)
             SkinBase.SkinFontString(prompt.InfoFrame.Cost)
@@ -822,8 +707,6 @@ local function SkinBonusRollPrompt(frame)
         if frame.CurrentCountFrame then SkinBase.SkinFontString(frame.CurrentCountFrame.Text) end
         if frame.RollingFrame then
             SkinBase.SkinFontString(frame.RollingFrame.Label)
-            -- The spinner's reward text is a separate fontstring Blizzard SetText's
-            -- on roll completion; skin it too or it shows in the stock font.
             if frame.RollingFrame.LootSpinnerFinalText then
                 SkinBase.SkinFontString(frame.RollingFrame.LootSpinnerFinalText)
             end
@@ -835,22 +718,11 @@ local function SkinBonusRollPrompt(frame)
         SkinBase.MarkSkinned(frame)
     end
 
-    -- The item icon is re-set on every StartBonusRoll, so re-crop + (re)border it
-    -- each roll. StyleIcon just updates the existing QUI border if one is present.
     if prompt.Icon then
         StyleIcon(prompt.Icon, prompt)
     end
 end
 
--- BonusRollLootWonFrame / BonusRollMoneyWonFrame are standalone ContainedAlertFrames
--- that Blizzard sets up by calling the GLOBAL LootWonAlertFrame_SetUp /
--- MoneyWonAlertFrame_SetUp directly (GroupLootFrame.lua) and adds straight to
--- AlertFrame. They never flow through the pooled Loot/MoneyWon alert systems whose
--- setUpFunction we hook in HookAlertSystems -- so a one-shot init skin both races
--- frame creation and is wiped every time Blizzard re-runs SetUp on show. Instead we
--- post-hook the two global setup funcs and route the bonus-roll frames through the
--- exact same idempotent skinners used for the pooled loot/money alerts, so they get
--- (re)skinned on every show.
 local bonusRollHooked = false
 local function HookBonusRollFrames()
     local _, enabled = GetAlertSettings()
@@ -869,9 +741,6 @@ local function HookBonusRollFrames()
         end)
         hooked = true
     end
-    -- The bonus-roll PROMPT window is populated/shown via the global
-    -- BonusRollFrame_StartBonusRoll; post-hook it so the prompt is (re)skinned on
-    -- every roll (the item icon is re-set each time, so this also re-crops it).
     if type(BonusRollFrame_StartBonusRoll) == "function" then
         hooksecurefunc("BonusRollFrame_StartBonusRoll", function()
             SkinBonusRollPrompt(BonusRollFrame)
@@ -881,14 +750,9 @@ local function HookBonusRollFrames()
     bonusRollHooked = hooked
 end
 
----------------------------------------------------------------------------
--- ALERT FRAME MOVER
----------------------------------------------------------------------------
-
 local alertHolder = nil
 local alertMover = nil
 
--- Positioning constants (grow down from anchor)
 local POSITION, ANCHOR_POINT, Y_OFFSET = "TOP", "BOTTOM", -5
 
 local function GetAlertAnchorRelativeFrame(relativeAlert)
@@ -898,10 +762,7 @@ local function GetAlertAnchorRelativeFrame(relativeAlert)
     return relativeAlert
 end
 
--- Custom AdjustAnchors for queued alert systems (most alerts)
 local function AdjustQueuedAnchors(self, relativeAlert)
-    -- Only use our holder for the first subsystem in the chain
-    -- (when relativeAlert is AlertFrame or its temporary base anchor, not a previous alert)
     relativeAlert = GetAlertAnchorRelativeFrame(relativeAlert)
     for alert in self.alertFramePool:EnumerateActive() do
         alert:ClearAllPoints()
@@ -911,9 +772,7 @@ local function AdjustQueuedAnchors(self, relativeAlert)
     return relativeAlert
 end
 
--- Custom AdjustAnchors for simple alert systems
 local function AdjustSimpleAnchors(self, relativeAlert)
-    -- Only use our holder for the first subsystem in the chain
     relativeAlert = GetAlertAnchorRelativeFrame(relativeAlert)
     local alert = self.alertFrame
     if alert:IsShown() then
@@ -924,9 +783,7 @@ local function AdjustSimpleAnchors(self, relativeAlert)
     return relativeAlert
 end
 
--- Custom AdjustAnchors for anchor frame systems
 local function AdjustAnchorFrameAnchors(self, relativeAnchor)
-    -- Only use our holder for the first subsystem in the chain
     relativeAnchor = GetAlertAnchorRelativeFrame(relativeAnchor)
     local anchor = self.anchorFrame
     if anchor:IsShown() then
@@ -937,7 +794,6 @@ local function AdjustAnchorFrameAnchors(self, relativeAnchor)
     return relativeAnchor
 end
 
--- Check if subsystem is TalkingHeadFrame (should not be repositioned)
 local function IsTalkingHeadSubSystem(alertFrameSubSystem)
     if alertFrameSubSystem.anchorFrame == TalkingHeadFrame then return true end
     if alertFrameSubSystem.alertFrame == TalkingHeadFrame then return true end
@@ -946,24 +802,18 @@ local function IsTalkingHeadSubSystem(alertFrameSubSystem)
     return false
 end
 
--- Replace AdjustAnchors on an alert subsystem
 local function ReplaceSubSystemAnchors(alertFrameSubSystem)
-    -- Skip TalkingHeadFrame - it has its own positioning
     if IsTalkingHeadSubSystem(alertFrameSubSystem) then return end
 
     if alertFrameSubSystem.alertFramePool then
-        -- Queued alert system (most common)
         alertFrameSubSystem.AdjustAnchors = AdjustQueuedAnchors
     elseif not alertFrameSubSystem.anchorFrame then
-        -- Simple alert system
         alertFrameSubSystem.AdjustAnchors = AdjustSimpleAnchors
     else
-        -- Anchor frame system
         alertFrameSubSystem.AdjustAnchors = AdjustAnchorFrameAnchors
     end
 end
 
--- Called after AlertFrame:UpdateAnchors to reposition to our holder
 local function PostAlertMove()
     if not alertHolder then return end
 
@@ -978,16 +828,13 @@ end
 
 local alertHolderHooked = false
 local function CreateAlertMover()
-    -- Create holder frame
     if not alertHolder then
         alertHolder = CreateFrame("Frame", "QUI_AlertFrameHolder", UIParent)
         alertHolder:SetSize(180, 20)
-        -- Default position; ApplyAllFrameAnchors overrides from frameAnchoring DB
         alertHolder:SetPoint("TOP", UIParent, "TOP", 0, -20)
         alertHolder:SetMovable(true)
         alertHolder:SetClampedToScreen(true)
 
-        -- Create mover overlay
         alertMover = CreateFrame("Frame", "QUI_AlertFrameMover", alertHolder, "BackdropTemplate")
         alertMover:SetAllPoints(alertHolder)
         SkinBase.ApplyPixelBackdrop(alertMover, 1, true, false)
@@ -999,14 +846,12 @@ local function CreateAlertMover()
         alertMover:SetFrameStrata("FULLSCREEN_DIALOG")
         alertMover:Hide()
 
-        -- Mover text
         local text = alertMover:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         text:SetPoint("CENTER")
         text:SetText(ns.L["Alert Frames"])
-        SkinBase.SkinFontString(text) -- QUI global font + CJK fallback (was stock GameFontNormal/FRIZQT)
+        SkinBase.SkinFontString(text)
         alertMover.text = text
 
-        -- Drag handlers
         alertMover:SetScript("OnDragStart", function(self)
             alertHolder:StartMoving()
         end)
@@ -1016,46 +861,25 @@ local function CreateAlertMover()
         end)
     end
 
-    -- Replace AdjustAnchors on all existing alert subsystems
     for _, alertFrameSubSystem in ipairs(AlertFrame.alertFrameSubSystems) do
         ReplaceSubSystemAnchors(alertFrameSubSystem)
     end
 
-    -- Hook once (idempotent across re-inits). TAINT SAFETY: deferred so the
-    -- hook bodies run outside the secure execution context.
     if not alertHolderHooked then
         alertHolderHooked = true
-        -- Hook for any new subsystems added later.
         hooksecurefunc(AlertFrame, "AddAlertFrameSubSystem", function(_, alertFrameSubSystem)
             C_Timer.After(0, function()
                 ReplaceSubSystemAnchors(alertFrameSubSystem)
             end)
         end)
-        -- Hook UpdateAnchors to reposition after Blizzard updates.
         hooksecurefunc(AlertFrame, "UpdateAnchors", function()
             C_Timer.After(0, PostAlertMove)
         end)
     end
 
-    -- Disable mouse on GroupLootContainer for cleaner interaction, and opt it
-    -- out of Blizzard's UIParent frame-position manager.
-    --
-    -- GroupLootContainer inherits UIParentBottomManagedFrameTemplate, so each
-    -- time it shows *from its default position* Blizzard's
-    -- UIParentManagedFrameContainerMixin:AddManagedFrame reparents it into the
-    -- bottom-managed container and Layout()s it back to screen-bottom-center
-    -- (UIParent.lua). Because GroupLootContainer is the HEAD of the alert anchor
-    -- chain (AddExternallyAnchoredSubSystem at priority 30, GroupLootFrame.lua),
-    -- a roll-won toast chained off it then intermittently lands at that Blizzard
-    -- default location instead of QUI's Alert Anchor mover. The correct opt-out
-    -- is ignoreFramePositionManager (the flag AddManagedFrame early-returns on) --
-    -- NOT ignoreInLayout, which is the unrelated LayoutFrame child-region flag and
-    -- does nothing to the position manager. Deregister first so a stale
     -- showingFrames ref can't drive a later Layout pass (taint hazard) -- mirrors
-    -- the managed-frame detach in modules/layout/anchoring.lua.
     if GroupLootContainer then
         GroupLootContainer:EnableMouse(false)
-        -- TAINT SAFETY: Defer the field writes to break the taint chain.
         C_Timer.After(0, function()
             if not GroupLootContainer then return end
             local mgr = GroupLootContainer.layoutParent
@@ -1065,17 +889,11 @@ local function CreateAlertMover()
         end)
     end
 
-    -- Set alert subsystem priorities (lower = appears first/top)
-    -- Ensures WQ completion appears above loot alerts
     if WorldQuestCompleteAlertSystem and LootAlertSystem then
         AlertFrame:SetSubSystemAnchorPriority(WorldQuestCompleteAlertSystem, 100)
         AlertFrame:SetSubSystemAnchorPriority(LootAlertSystem, 200)
     end
 end
-
----------------------------------------------------------------------------
--- EVENT TOAST MOVER
----------------------------------------------------------------------------
 
 local toastHolder = nil
 local toastMover = nil
@@ -1092,11 +910,9 @@ local function HookEventToastFrame()
     if eventToastHooked then return end
     if not EventToastManagerFrame then return false end
 
-    -- Hook SetPoint directly — catches ALL repositioning regardless of code path
     local redirecting = false
     hooksecurefunc(EventToastManagerFrame, "SetPoint", function()
         if redirecting or not toastHolder then return end
-        -- TAINT SAFETY: Defer to break taint chain from secure context
         C_Timer.After(0, function()
             if not toastHolder then return end
             redirecting = true
@@ -1111,17 +927,13 @@ local function HookEventToastFrame()
 end
 
 local function CreateEventToastMover()
-    -- Always create the holder frame so frameAnchoring can position it,
-    -- even if EventToastManagerFrame doesn't exist yet
     if not toastHolder then
         toastHolder = CreateFrame("Frame", "QUI_EventToastHolder", UIParent)
         toastHolder:SetSize(300, 20)
-        -- Default position; ApplyAllFrameAnchors overrides from frameAnchoring DB
         toastHolder:SetPoint("TOP", UIParent, "TOP", 0, -150)
         toastHolder:SetMovable(true)
         toastHolder:SetClampedToScreen(true)
 
-        -- Create mover overlay
         toastMover = CreateFrame("Frame", "QUI_EventToastMover", toastHolder, "BackdropTemplate")
         toastMover:SetAllPoints(toastHolder)
         SkinBase.ApplyPixelBackdrop(toastMover, 1, true, false)
@@ -1133,14 +945,12 @@ local function CreateEventToastMover()
         toastMover:SetFrameStrata("FULLSCREEN_DIALOG")
         toastMover:Hide()
 
-        -- Mover text
         local text = toastMover:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         text:SetPoint("CENTER")
         text:SetText(ns.L["Event Toasts"])
-        SkinBase.SkinFontString(text) -- QUI global font + CJK fallback (was stock GameFontNormal/FRIZQT)
+        SkinBase.SkinFontString(text)
         toastMover.text = text
 
-        -- Drag handlers
         toastMover:SetScript("OnDragStart", function(self)
             toastHolder:StartMoving()
         end)
@@ -1151,7 +961,6 @@ local function CreateEventToastMover()
         end)
     end
 
-    -- Try to hook EventToastManagerFrame now; if it doesn't exist yet, retry periodically
     if not HookEventToastFrame() then
         local retries = 0
         local ticker
@@ -1163,10 +972,6 @@ local function CreateEventToastMover()
         end)
     end
 end
-
----------------------------------------------------------------------------
--- BATTLE.NET TOAST MOVER
----------------------------------------------------------------------------
 
 local bnetToastHolder = nil
 local bnetToastMover = nil
@@ -1183,13 +988,9 @@ local function HookBNetToastFrame()
     if bnetToastHooked then return end
     if not BNToastFrame then return false end
 
-    -- Hook SetPoint directly — this catches ALL repositioning regardless of which
-    -- Blizzard function triggers it (UpdateAnchor, AlertFrame, or direct calls).
-    -- Use a guard flag to prevent infinite recursion from our own SetPoint calls.
     local redirecting = false
     hooksecurefunc(BNToastFrame, "SetPoint", function()
         if redirecting or not bnetToastHolder then return end
-        -- TAINT SAFETY: Defer to break taint chain from secure context
         C_Timer.After(0, function()
             if not bnetToastHolder then return end
             redirecting = true
@@ -1204,17 +1005,13 @@ local function HookBNetToastFrame()
 end
 
 local function CreateBNetToastMover()
-    -- Always create the holder frame so frameAnchoring can position it,
-    -- even if BNToastFrame doesn't exist yet
     if not bnetToastHolder then
         bnetToastHolder = CreateFrame("Frame", "QUI_BNetToastHolder", UIParent)
         bnetToastHolder:SetSize(300, 50)
-        -- Default position; ApplyAllFrameAnchors overrides from frameAnchoring DB
         bnetToastHolder:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -200, -80)
         bnetToastHolder:SetMovable(true)
         bnetToastHolder:SetClampedToScreen(true)
 
-        -- Create mover overlay
         bnetToastMover = CreateFrame("Frame", "QUI_BNetToastMover", bnetToastHolder, "BackdropTemplate")
         bnetToastMover:SetAllPoints(bnetToastHolder)
         SkinBase.ApplyPixelBackdrop(bnetToastMover, 1, true, false)
@@ -1226,14 +1023,12 @@ local function CreateBNetToastMover()
         bnetToastMover:SetFrameStrata("FULLSCREEN_DIALOG")
         bnetToastMover:Hide()
 
-        -- Mover text
         local text = bnetToastMover:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         text:SetPoint("CENTER")
         text:SetText(ns.L["Battle.Net Toasts"])
-        SkinBase.SkinFontString(text) -- QUI global font + CJK fallback (was stock GameFontNormal/FRIZQT)
+        SkinBase.SkinFontString(text)
         bnetToastMover.text = text
 
-        -- Drag handlers
         bnetToastMover:SetScript("OnDragStart", function(self)
             bnetToastHolder:StartMoving()
         end)
@@ -1244,7 +1039,6 @@ local function CreateBNetToastMover()
         end)
     end
 
-    -- Try to hook BNToastFrame now; if it doesn't exist yet, retry periodically
     if not HookBNetToastFrame() then
         local retries = 0
         local ticker
@@ -1257,41 +1051,9 @@ local function CreateBNetToastMover()
     end
 end
 
----------------------------------------------------------------------------
--- MOVER TOGGLE (called from options)
----------------------------------------------------------------------------
-
-function Alerts:ShowMovers()
-    if alertMover then alertMover:Show() end
-    if toastMover then toastMover:Show() end
-    if bnetToastMover then bnetToastMover:Show() end
-end
-
-function Alerts:HideMovers()
-    if alertMover then alertMover:Hide() end
-    if toastMover then toastMover:Hide() end
-    if bnetToastMover then bnetToastMover:Hide() end
-end
-
-function Alerts:ToggleMovers()
-    local isShown = (alertMover and alertMover:IsShown()) or (toastMover and toastMover:IsShown()) or (bnetToastMover and bnetToastMover:IsShown())
-    if isShown then
-        self:HideMovers()
-    else
-        self:ShowMovers()
-    end
-end
-
----------------------------------------------------------------------------
--- REFRESH FUNCTION (for live color updates from options panel)
----------------------------------------------------------------------------
-
 local function RefreshAlertColors()
-    -- Get current colors
     local sr, sg, sb, sa, bgr, bgg, bgb, bga = GetThemeColors()
 
-    -- Update all skinned alert backdrops
-    -- Since alerts are pooled and created dynamically, we iterate through known alert systems
     local alertSystems = {
         AchievementAlertSystem,
         CriteriaAlertSystem,
@@ -1325,7 +1087,6 @@ local function RefreshAlertColors()
                     Helpers.SetFrameBackdropColor(bd, bgr, bgg, bgb, bga)
                     Helpers.SetFrameBackdropBorderColor(bd, sr, sg, sb, sa)
                 end
-                -- Update icon border (keyed on the alert frame, set by CreateIconBorder)
                 local ib = SkinBase.GetFrameData(frame, "iconBorder")
                 if ib then
                     Helpers.SetFrameBackdropBorderColor(ib, sr, sg, sb, sa)
@@ -1334,7 +1095,6 @@ local function RefreshAlertColors()
         end
     end
 
-    -- Update bonus roll frames
     local moneyBd = BonusRollMoneyWonFrame and SkinBase.GetFrameData(BonusRollMoneyWonFrame, "backdrop")
     if moneyBd then
         Helpers.SetFrameBackdropColor(moneyBd, bgr, bgg, bgb, bga)
@@ -1347,7 +1107,6 @@ local function RefreshAlertColors()
     end
 end
 
--- Expose refresh function globally
 _G.QUI_RefreshAlertColors = RefreshAlertColors
 
 if ns.Registry then
@@ -1371,16 +1130,10 @@ if Helpers and Helpers.BorderRegistry then
     })
 end
 
----------------------------------------------------------------------------
--- MAIN INITIALIZATION
----------------------------------------------------------------------------
-
 function Alerts:HookAlertSystems()
     local _, enabled = GetAlertSettings()
     if not enabled then return end
 
-    -- TAINT SAFETY: All setUpFunction hooks defer via C_Timer.After(0) to break taint chain.
-    -- Alert system setUpFunction fires from Blizzard's internal alert pool, which can propagate taint.
     local function DeferredHook(system, skinFunc)
         if system then
             hooksecurefunc(system, "setUpFunction", function(frame, ...)
@@ -1393,22 +1146,18 @@ function Alerts:HookAlertSystems()
         end
     end
 
-    -- Achievements
     DeferredHook(AchievementAlertSystem, SkinAchievementAlert)
     DeferredHook(CriteriaAlertSystem, SkinCriteriaAlert)
     DeferredHook(MonthlyActivityAlertSystem, SkinCriteriaAlert)
 
-    -- Encounters
     DeferredHook(DungeonCompletionAlertSystem, SkinDungeonCompletionAlert)
     DeferredHook(GuildChallengeAlertSystem, SkinGuildChallengeAlert)
     DeferredHook(InvasionAlertSystem, SkinInvasionAlert)
     DeferredHook(ScenarioAlertSystem, SkinScenarioAlert)
     DeferredHook(WorldQuestCompleteAlertSystem, SkinWorldQuestCompleteAlert)
 
-    -- Honor
     DeferredHook(HonorAwardedAlertSystem, SkinHonorAwardedAlert)
 
-    -- Loot
     DeferredHook(LegendaryItemAlertSystem, SkinLegendaryItemAlert)
     DeferredHook(LootAlertSystem, SkinLootWonAlert)
     DeferredHook(LootUpgradeAlertSystem, SkinLootUpgradeAlert)
@@ -1416,19 +1165,15 @@ function Alerts:HookAlertSystems()
     DeferredHook(EntitlementDeliveredAlertSystem, SkinEntitlementAlert)
     DeferredHook(RafRewardDeliveredAlertSystem, SkinEntitlementAlert)
 
-    -- Professions
     DeferredHook(DigsiteCompleteAlertSystem, SkinDigsiteCompleteAlert)
     DeferredHook(NewRecipeLearnedAlertSystem, SkinNewRecipeLearnedAlert)
 
-    -- Collections (Pets/Mounts/Toys/Cosmetics/Warband)
     DeferredHook(NewPetAlertSystem, SkinMiscAlert)
     DeferredHook(NewMountAlertSystem, SkinMiscAlert)
     DeferredHook(NewToyAlertSystem, SkinMiscAlert)
     DeferredHook(NewCosmeticAlertFrameSystem, SkinMiscAlert)
     DeferredHook(NewWarbandSceneAlertSystem, SkinMiscAlert)
 
-    -- Garrison / Order Hall (still live in current FrameXML —
-    -- AlertFrameSystems.lua:10-16)
     DeferredHook(GarrisonBuildingAlertSystem, SkinMiscAlert)
     DeferredHook(GarrisonMissionAlertSystem, SkinMiscAlert)
     DeferredHook(GarrisonShipMissionAlertSystem, SkinMiscAlert)
@@ -1437,23 +1182,16 @@ function Alerts:HookAlertSystems()
     DeferredHook(GarrisonShipFollowerAlertSystem, SkinMiscAlert)
     DeferredHook(GarrisonTalentAlertSystem, SkinMiscAlert)
 
-    -- Runeforge / Skill specs / Guild rename
-    -- (AlertFrameSystems.lua:23, :1056, :1436)
     DeferredHook(NewRuneforgePowerAlertSystem, SkinMiscAlert)
     DeferredHook(SkillLineSpecsUnlockedAlertSystem, SkinMiscAlert)
     DeferredHook(GuildRenameAlertSystem, SkinMiscAlert)
 
-    -- Bonus roll won frames: hook the global setup funcs so they skin on show
     HookBonusRollFrames()
 end
 
 function Alerts:Initialize()
-    if ns.IsSkinningEnabled and not ns.IsSkinningEnabled() then return end -- master skinning gate
+    if ns.IsSkinningEnabled and not ns.IsSkinningEnabled() then return end
     local _, enabled = GetAlertSettings()
-    -- Anchor movers are created when skinning is ON, or when the user opted in to
-    -- keep anchor control while unskinned. This keeps alert/toast frames
-    -- repositionable without QUI skinning, while leaving existing unskinned users
-    -- on Blizzard's default placement unless they enable the option.
     local controlAnchors = GetGeneralSettings().controlAlertAnchors
     if enabled or controlAnchors then
         CreateAlertMover()
@@ -1463,6 +1201,5 @@ function Alerts:Initialize()
 
     if not enabled then return end
 
-    -- Hook all alert systems for skinning (only when alert skinning is enabled).
     self:HookAlertSystems()
 end

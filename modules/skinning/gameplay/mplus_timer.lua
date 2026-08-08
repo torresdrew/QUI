@@ -1,18 +1,9 @@
----------------------------------------------------------------------------
--- QUI Mythic+ Timer Skinning
--- Applies QUI skin colors to the custom M+ timer frame
--- Frame created in utils/qui_mplus_timer.lua
----------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 local GetCore = ns.Helpers.GetCore
 local SkinBase = ns.SkinBase
 
----------------------------------------------------------------------------
--- Utility: Calculate luminance to determine if color is "dark"
----------------------------------------------------------------------------
 local function GetLuminance(r, g, b)
-    -- Standard luminance formula (perceived brightness)
     return 0.299 * r + 0.587 * g + 0.114 * b
 end
 
@@ -20,9 +11,6 @@ local function IsDarkBackground(r, g, b)
     return GetLuminance(r, g, b) < 0.35
 end
 
----------------------------------------------------------------------------
--- Get M+ Timer Settings
----------------------------------------------------------------------------
 local function GetMPlusTimerSettings()
     local core = GetCore()
     if core and core.db and core.db.profile and core.db.profile.mplusTimer then
@@ -31,40 +19,32 @@ local function GetMPlusTimerSettings()
     return { showBorder = true }
 end
 
----------------------------------------------------------------------------
--- Get contrast-aware colors based on background
----------------------------------------------------------------------------
 local function GetContrastColors(bgr, bgg, bgb)
     local isDark = IsDarkBackground(bgr, bgg, bgb)
 
     if isDark then
-        -- Dark background: use light text, lighter bar backgrounds to stand out from frame
         return {
-            text = { 1.0, 1.0, 1.0, 1 },              -- Pure white
-            textMuted = { 0.75, 0.75, 0.75, 1 },      -- Lighter grey
-            textRed = { 1.0, 0.45, 0.45, 1 },         -- Bright red
-            textGreen = { 0.45, 1.0, 0.65, 1 },       -- Bright green
-            textYellow = { 1.0, 0.9, 0.3, 1 },        -- Bright yellow
-            barBg = { 0.18, 0.18, 0.20, 1 },          -- Lighter bar bg to contrast with dark frame
-            barBorder = 1.0,                          -- Full brightness borders
+            text = { 1.0, 1.0, 1.0, 1 },
+            textMuted = { 0.75, 0.75, 0.75, 1 },
+            textRed = { 1.0, 0.45, 0.45, 1 },
+            textGreen = { 0.45, 1.0, 0.65, 1 },
+            textYellow = { 1.0, 0.9, 0.3, 1 },
+            barBg = { 0.18, 0.18, 0.20, 1 },
+            barBorder = 1.0,
         }
     else
-        -- Light background: use dark text
         return {
-            text = { 0.1, 0.1, 0.1, 1 },              -- Dark text
-            textMuted = { 0.3, 0.3, 0.3, 1 },         -- Medium grey
-            textRed = { 0.8, 0.15, 0.15, 1 },         -- Dark red
-            textGreen = { 0.1, 0.6, 0.3, 1 },         -- Dark green
-            textYellow = { 0.7, 0.5, 0.0, 1 },        -- Dark yellow/gold
-            barBg = { 0.15, 0.15, 0.15, 0.9 },        -- Dark bar background
-            barBorder = 0.5,                          -- Border multiplier
+            text = { 0.1, 0.1, 0.1, 1 },
+            textMuted = { 0.3, 0.3, 0.3, 1 },
+            textRed = { 0.8, 0.15, 0.15, 1 },
+            textGreen = { 0.1, 0.6, 0.3, 1 },
+            textYellow = { 0.7, 0.5, 0.0, 1 },
+            barBg = { 0.15, 0.15, 0.15, 0.9 },
+            barBorder = 0.5,
         }
     end
 end
 
----------------------------------------------------------------------------
--- Apply Backdrop to Frame
----------------------------------------------------------------------------
 local function ApplyBackdrop(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga, showBorder)
     if not frame then return end
 
@@ -80,12 +60,10 @@ local function ApplyBackdrop(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga, showBord
     SkinBase.ApplyPixelBackdrop(backdrop, 1, true, true)
     Helpers.SetFrameBackdropColor(backdrop, bgr, bgg, bgb, bga)
 
-    -- Border visibility controlled by showBorder setting (alpha 0 when hidden)
     local borderAlpha = showBorder and sa or 0
     Helpers.SetFrameBackdropBorderColor(backdrop, sr, sg, sb, borderAlpha)
 end
 
--- Apply the forces text color override (settings.forcesTextColor) or fall back to colors.text
 local function ApplyForcesTextColor(fontString, colors, settings)
     if settings and type(settings.forcesTextColor) == "table" then
         local r, g, b, a = unpack(settings.forcesTextColor)
@@ -95,9 +73,6 @@ local function ApplyForcesTextColor(fontString, colors, settings)
     end
 end
 
----------------------------------------------------------------------------
--- Apply Bar Styling
----------------------------------------------------------------------------
 local function ApplyBarSkin(bar, sr, sg, sb, br, bg, bb, colors, isTimerBar, barIndex, showBorder, settings)
     if not bar or not bar.frame then return end
 
@@ -144,11 +119,8 @@ local function ApplyBarSkin(bar, sr, sg, sb, br, bg, bb, colors, isTimerBar, bar
     end
 end
 
----------------------------------------------------------------------------
--- Main Skin Application
----------------------------------------------------------------------------
 local function ApplyMPlusTimerSkin()
-    if ns.IsSkinningEnabled and not ns.IsSkinningEnabled() then return end -- master skinning gate
+    if ns.IsSkinningEnabled and not ns.IsSkinningEnabled() then return end
     local MPlusTimer = _G.QUI_MPlusTimer
     if not MPlusTimer or not MPlusTimer.frames or not MPlusTimer.frames.root then
         return
@@ -160,41 +132,33 @@ local function ApplyMPlusTimerSkin()
     if opacityMul == nil then opacityMul = 1 end
     opacityMul = math.max(0, math.min(1, opacityMul))
     bga = math.max(0, math.min(1, bga * opacityMul))
-    -- bar fills use a fixed alpha of 1; the bar-color alpha is intentionally not threaded.
     local br, bg, bb = SkinBase.GetSkinBarColor(settings)
     local colors = GetContrastColors(bgr, bgg, bgb)
-    local showBorder = settings.showBorder ~= false  -- Default true
+    local showBorder = settings.showBorder ~= false
 
-    -- Root frame backdrop
     ApplyBackdrop(MPlusTimer.frames.root, sr, sg, sb, sa, bgr, bgg, bgb, bga, showBorder)
 
-    -- Deaths text (red)
     if MPlusTimer.frames.deathsText then
         MPlusTimer.frames.deathsText:SetTextColor(
             colors.textRed[1], colors.textRed[2], colors.textRed[3], colors.textRed[4]
         )
     end
 
-    -- Timer text
     if MPlusTimer.frames.timerText then
         MPlusTimer.frames.timerText:SetTextColor(
             colors.text[1], colors.text[2], colors.text[3], colors.text[4]
         )
     end
 
-    -- Dungeon name text
     if MPlusTimer.frames.dungeonText then
         MPlusTimer.frames.dungeonText:SetTextColor(
             colors.text[1], colors.text[2], colors.text[3], colors.text[4]
         )
     end
 
-    -- Key level text (accent color - but ensure visibility)
     if MPlusTimer.frames.keyText then
-        -- Use accent but boost brightness if needed for dark backgrounds
         local kr, kg, kb = sr, sg, sb
         if IsDarkBackground(bgr, bgg, bgb) then
-            -- Ensure accent is bright enough on dark bg
             local lum = GetLuminance(sr, sg, sb)
             if lum < 0.4 then
                 kr = math.min(sr * 1.5, 1)
@@ -205,14 +169,12 @@ local function ApplyMPlusTimerSkin()
         MPlusTimer.frames.keyText:SetTextColor(kr, kg, kb, 1)
     end
 
-    -- Affixes text (muted) - legacy, usually hidden
     if MPlusTimer.frames.affixText then
         MPlusTimer.frames.affixText:SetTextColor(
             colors.textMuted[1], colors.textMuted[2], colors.textMuted[3], colors.textMuted[4]
         )
     end
 
-    -- Timer bars (+3, +2, +1)
     if MPlusTimer.bars then
         for i = 1, 3 do
             if MPlusTimer.bars[i] then
@@ -220,13 +182,11 @@ local function ApplyMPlusTimerSkin()
             end
         end
 
-        -- Forces bar
         if MPlusTimer.bars.forces then
             ApplyBarSkin(MPlusTimer.bars.forces, sr, sg, sb, br, bg, bb, colors, false, nil, showBorder, settings)
         end
     end
 
-    -- Forces text-only display (for text mode)
     if MPlusTimer.frames.forcesLabelText then
         MPlusTimer.frames.forcesLabelText:SetTextColor(
             colors.textMuted[1], colors.textMuted[2], colors.textMuted[3], colors.textMuted[4]
@@ -236,7 +196,6 @@ local function ApplyMPlusTimerSkin()
         ApplyForcesTextColor(MPlusTimer.frames.forcesValueText, colors, settings)
     end
 
-    -- Sleek mode: Segmented bar backdrop
     if MPlusTimer.frames.sleekBar then
         local barBg = colors.barBg
         local borderMult = colors.barBorder
@@ -246,31 +205,22 @@ local function ApplyMPlusTimerSkin()
         Helpers.SetFrameBackdropBorderColor(MPlusTimer.frames.sleekBar, sr * borderMult, sg * borderMult, sb * borderMult, borderAlpha)
     end
 
-    -- Sleek mode: Update segment colors to use accent for +1
     if MPlusTimer.sleekSegments then
-        -- +3 segment: green
         if MPlusTimer.sleekSegments[3] then
             MPlusTimer.sleekSegments[3]:SetVertexColor(0.2, 0.85, 0.4, 1)
         end
-        -- +2 segment: yellow
         if MPlusTimer.sleekSegments[2] then
             MPlusTimer.sleekSegments[2]:SetVertexColor(0.95, 0.75, 0.2, 1)
         end
-        -- +1 segment: accent color
         if MPlusTimer.sleekSegments[1] then
             MPlusTimer.sleekSegments[1]:SetVertexColor(sr, sg, sb, 1)
         end
     end
 
-    -- Sleek mode: Position marker
     if MPlusTimer.frames.sleekPosMarker then
-        -- White marker for visibility
         MPlusTimer.frames.sleekPosMarker:SetVertexColor(1, 1, 1, 0.95)
     end
 
-    -- Sleek mode: Pace text (color handled dynamically in RenderTimer based on pace status)
-
-    -- Objective texts
     if MPlusTimer.objectives then
         for i, objText in ipairs(MPlusTimer.objectives) do
             if objText and objText.SetTextColor then
@@ -281,14 +231,10 @@ local function ApplyMPlusTimerSkin()
         end
     end
 
-    -- Store colors for refresh
     SkinBase.MarkSkinned(MPlusTimer.frames.root)
     SkinBase.SetFrameData(MPlusTimer.frames.root, "colors", colors)
 end
 
----------------------------------------------------------------------------
--- Color Refresh (for live preview in options)
----------------------------------------------------------------------------
 local function RefreshMPlusTimerColors()
     local MPlusTimer = _G.QUI_MPlusTimer
     if not MPlusTimer or not MPlusTimer.frames or not MPlusTimer.frames.root then
@@ -296,13 +242,9 @@ local function RefreshMPlusTimerColors()
     end
     if not SkinBase.IsSkinned(MPlusTimer.frames.root) then return end
 
-    -- Re-apply full skin to pick up new contrast colors
     ApplyMPlusTimerSkin()
 end
 
----------------------------------------------------------------------------
--- Expose Functions Globally
----------------------------------------------------------------------------
 _G.QUI_ApplyMPlusTimerSkin = ApplyMPlusTimerSkin
 _G.QUI_RefreshMPlusTimerColors = RefreshMPlusTimerColors
 

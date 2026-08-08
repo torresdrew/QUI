@@ -1,19 +1,8 @@
--- Consolidated CDM source (canonical; the one-shot consolidation tool is retired — edit directly).
--- CDM Icon Policies -- consolidated private controllers for CDMIcons.
 -- Each `do -- Inlined from X ... end` block is a self-contained chunk that
--- tests load individually via load_cdm_consolidated_chunk.lua.
 
 do
 -- Inlined from cdm_icon_stack_text.lua
 local _, ns = ...
-
----------------------------------------------------------------------------
--- CDM Icon Stack Text
---
--- Taint-aware stack/count text sink for icon FontStrings. CDMIconStackPolicy
--- decides what value should be shown; this module owns the write/clear
--- mechanics.
----------------------------------------------------------------------------
 
 local CDMIconStackText = {}
 ns.CDMIconStackText = CDMIconStackText
@@ -38,10 +27,6 @@ local function ApplyVisibilityGate(fontString, gate)
     end
 end
 
--- ACTION POLICY, not a truth claim: "route to the text sink". A SECRET
--- text is INDETERMINATE (may wrap empty) — it must reach the C-side
--- renderer, which resolves the real content; only readable emptiness is
--- "no display".
 function CDMIconStackText.TextHasDisplay(text)
     if issecretvalue(text) then
         return true -- @secret-policy: route-to-text-sink
@@ -111,14 +96,6 @@ do
 -- Inlined from cdm_icon_stack_policy.lua
 local _, ns = ...
 
----------------------------------------------------------------------------
--- CDM Icon Stack Policy
---
--- Private controller used by CDMIcons. It owns stack/count resolution,
--- aura application fallbacks, and stack text show/hide policy.
--- CDMIconStackText owns only the FontString write sink.
----------------------------------------------------------------------------
-
 local CDMIconStackPolicy = {}
 ns.CDMIconStackPolicy = CDMIconStackPolicy
 
@@ -133,8 +110,6 @@ end
 
 local issecretvalue = issecretvalue or function() return false end
 
--- ACTION POLICY (see CDMIconStackText.TextHasDisplay): "route to the text
--- sink", never "text is non-empty" — a secret is indeterminate.
 local function DefaultTextHasDisplay(text)
     if issecretvalue(text) then
         return true -- @secret-policy: route-to-text-sink
@@ -224,7 +199,6 @@ function CDMIconStackPolicy.Create(callbacks)
         if not auraData then return nil end
 
         local apps = auraData.applications
-        -- Probe BEFORE the nil compare — `secret == nil` throws in-game.
         if issecretvalue(apps) then
             return nil -- @secret-policy: reject-secret-value
         end
@@ -247,13 +221,6 @@ function CDMIconStackPolicy.Create(callbacks)
     function controller:GetAuraApplicationsFromData(auraData, unit, source)
         if not auraData then return nil end
 
-        -- C-side display-count sink first: it accepts the (possibly secret) instance
-        -- ID and returns a secret-safe display string we forward verbatim to SetText
-        -- -- a secret applications value is never Lua-compared. minDisplayCount = 1 so
-        -- abilities that count from 1 (e.g. Reaper's Mark) show their stack.
-        -- The instance ID itself can be secret in combat: probe before any
-        -- truth-test (`x or y` / `if x and` boolean-test x and throw), and let
-        -- a secret ID flow to the display-count sink untouched.
         local auraInstanceID = callbacks.getAuraDataInstanceID
             and callbacks.getAuraDataInstanceID(auraData)
         local idSecret = issecretvalue(auraInstanceID)
@@ -269,9 +236,6 @@ function CDMIconStackPolicy.Create(callbacks)
             end
         end
 
-        -- No instance to query (out-of-combat name/data fallbacks only): a confirmed
-        -- non-secret count. GetDisplayableAuraApplicationsFromData secret-guards before
-        -- its Lua comparison, so a secret value never reaches a Lua compare here either.
         local apps = controller:GetDisplayableAuraApplicationsFromData(auraData)
         if controller:ValueIsPresent(apps) then
             return apps, source
@@ -565,10 +529,6 @@ function CDMIconStackPolicy.Create(callbacks)
         local entry = icon._spellEntry
 
         if IsAuraEntry(entry) then
-            -- Live aura applications query. In-combat target-debuff C_UnitAuras
-            -- data is restricted, so this returns nothing even for a debuff that
-            -- genuinely stacks (e.g. Reaper's Mark) -- it is the out-of-combat /
-            -- unrestricted path.
             local active, auraUnit, instID
             if callbacks.resolveAuraActiveState then
                 active, auraUnit, instID = callbacks.resolveAuraActiveState(entry)
@@ -730,13 +690,6 @@ do
 -- Inlined from cdm_icon_item_visual_policy.lua
 local _, ns = ...
 
----------------------------------------------------------------------------
--- CDM Icon Item Visual Policy
---
--- Private renderer policy used by CDMIcons. It owns item texture refreshes
--- and profession-quality overlays for item, trinket, and slot icons.
----------------------------------------------------------------------------
-
 local CDMIconItemVisualPolicy = {}
 ns.CDMIconItemVisualPolicy = CDMIconItemVisualPolicy
 
@@ -880,8 +833,6 @@ function CDMIconItemVisualPolicy.Create(callbacks)
         overlay:Show()
     end
 
-    -- Compare the item texture against the icon's cached _lastTexture; apply and
-    -- store it when changed. Returns true when the texture was updated.
     local function applyItemTextureIfChanged(icon, itemID)
         local texture = controller:GetItemTexture(itemID)
         if texture and texture ~= icon._lastTexture then
@@ -934,13 +885,6 @@ end
 do
 -- Inlined from cdm_icon_visibility_policy.lua
 local _, ns = ...
-
----------------------------------------------------------------------------
--- CDM Icon Visibility Policy
---
--- Private controller used by CDMIcons. It owns container-level visibility
--- filters, dynamic-layout dirty tracking, and show/hide/alpha application.
----------------------------------------------------------------------------
 
 local CDMIconVisibilityPolicy = {}
 ns.CDMIconVisibilityPolicy = CDMIconVisibilityPolicy
@@ -1055,14 +999,6 @@ function CDMIconVisibilityPolicy.Create(callbacks)
     end
 
     function controller:RequestBuffIconLayoutRefresh()
-        -- WakeBuffIconContainer calls container:Show(). When this refresh is
-        -- requested synchronously inside an in-combat cooldown/aura dispatch (a
-        -- secure-execution context), that Show is a blocked protected action
-        -- (ADDON_ACTION_BLOCKED on QUI_CDMBuffIconContainer:Show). Never wake
-        -- here synchronously -- defer it one frame (below) so it runs outside
-        -- the secure dispatch. The container is a plain UIParent child, so a
-        -- deferred Show is safe even mid-combat. Mirrors the secure-context-vs-
-        -- combat defer pattern used elsewhere in QUI.
         if controller.buffIconLayoutRefreshPending then return end
         controller.buffIconLayoutRefreshPending = true
         local schedule = callbacks.scheduleAfter
@@ -1146,13 +1082,6 @@ end
 do
 -- Inlined from cdm_icon_range_policy.lua
 local _, ns = ...
-
----------------------------------------------------------------------------
--- CDM Icon Range Policy
---
--- Private controller used by CDMIcons. It owns spell range registration,
--- range/usability tint caches, and event-targeted visual refresh.
----------------------------------------------------------------------------
 
 local CDMIconRangePolicy = {}
 ns.CDMIconRangePolicy = CDMIconRangePolicy
@@ -1524,12 +1453,6 @@ do
 -- Inlined from cdm_icon_cooldown_policy.lua
 local _, ns = ...
 
----------------------------------------------------------------------------
--- CDM Icon Cooldown Policy
---
--- Private controller used by CDMIcons. It owns icon-local GCD swipe flags.
----------------------------------------------------------------------------
-
 local CDMIconCooldownPolicy = {}
 ns.CDMIconCooldownPolicy = CDMIconCooldownPolicy
 
@@ -1554,14 +1477,6 @@ end
 do
 -- Inlined from cdm_icon_custom_bar_policy.lua
 local _, ns = ...
-
----------------------------------------------------------------------------
--- CDM Icon Custom-Bar Policy
---
--- Private controller used by CDMIcons. It owns custom-bar active-state
--- adaptation, usability filtering, visibility decisions, recharge swipe
--- styling, and active glow lifecycle.
----------------------------------------------------------------------------
 
 local CDMIconCustomBarPolicy = {}
 ns.CDMIconCustomBarPolicy = CDMIconCustomBarPolicy
@@ -1792,9 +1707,6 @@ function CDMIconCustomBarPolicy.Create(callbacks)
         elseif entry.type == "trinket" or entry.type == "slot" then
             local equippedItemID = sources and sources.QueryInventoryItemID and sources.QueryInventoryItemID("player", entry.id)
             if not equippedItemID then return false end
-            -- Trinket slots (13/14) track the slot rather than a specific item,
-            -- so passive equipped items with no on-use spell should still fail
-            -- custom-bar hideNonUsable checks.
             if entry.id == 13 or entry.id == 14 then
                 local spellName = sources and sources.QueryItemSpell and sources.QueryItemSpell(equippedItemID)
                 if not spellName then return false end
@@ -1809,9 +1721,6 @@ function CDMIconCustomBarPolicy.Create(callbacks)
                and not spellData:IsSpellKnown(sid) then
                 return false
             end
-            -- Known spells remain usable for visibility while their cooldown
-            -- or recharge is active, even when the live usability query says
-            -- false during that cooldown window.
             if cooldownState and (cooldownState.isOnCooldown or cooldownState.rechargeActive) then
                 return true
             end
@@ -1969,13 +1878,6 @@ function CDMIconCustomBarPolicy.Create(callbacks)
             end
         elseif icon._customBarActive and icon._lastAuraDurObj and containerDB.showAuraSwipe == true
             and ns.CDMRenderers and ns.CDMRenderers.ApplyDurationObjectCooldown then
-            -- Aura-mode swipe (opt-in): drain the tracked aura's DurationObject so a
-            -- custom bar tracking a buff shows the same radial swipe the icon
-            -- containers draw. The DurationObject is forwarded straight to the C-side
-            -- setter (ApplyDurationObjectCooldown) — no Lua duration read — so it is
-            -- secret-safe in combat. Default off → existing custom bars are unchanged.
-            -- Only draw the swipe when the binder is available, so a missing
-            -- DurationObject path never leaves a misleading static full swipe.
             icon.Cooldown:SetDrawEdge(false)
             icon.Cooldown:SetSwipeTexture("Interface\\Buttons\\WHITE8X8")
             icon.Cooldown:SetSwipeColor(0, 0, 0, 0.6)

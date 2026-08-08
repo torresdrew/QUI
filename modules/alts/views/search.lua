@@ -1,23 +1,3 @@
----------------------------------------------------------------------------
--- Alts search tab. Cross-character item search over the storage summaries
--- inverted index (Summaries.IterateOwnerItems per owner). An EditBox at the
--- top (chassis search-box styling) drives an on-demand query: ≥2 chars
--- searches every owner (characters + warband + guilds), case-insensitive
--- plain-substring against resolved item names; results render in the roster
--- pool/wheel scaffold below.
---
--- On-demand, NOT bus-driven: a stale result list simply refreshes on the
--- next keystroke (the index it reads is itself lazily rebuilt). Item names
--- may be uncached at query time (C_Item.GetItemInfo nil) — misses trigger
--- one delayed re-run after RequestLoadItemDataByID populates the cache.
---
--- Pure helpers exported on Alts.SearchView (tested headless):
---   MatchName(name, query)      → bool (case-insensitive plain find)
---   OwnerLabel(ownerKey)        → { label, isChar, guild? }, kind
---   LocationsText(byLocation)   → "bags 3, bank 5" (alphabetical)
---   SortResults(results)        → in-place name-then-owner-label sort
--- Frame parts are NOT tested (no WoW frame API headless).
----------------------------------------------------------------------------
 -- luacheck: read globals ITEM_QUALITY_COLORS RAID_CLASS_COLORS ColorManager
 local ADDON_NAME, ns = ...
 
@@ -49,38 +29,21 @@ local MIN_CHARS = 2
 
 local NAME_W, OWNER_W = 280, 160
 
--- Owner-key constants. Resolved from the live Summaries table when present
--- (the data layer owns the canonical values); literal fallbacks keep the
--- pure helpers working under the headless test's Summaries stub.
 local Summaries = ns.Storage and ns.Storage.Summaries
 local WARBAND_OWNER = (Summaries and Summaries.WARBAND_OWNER) or ":warband"
 local GUILD_PREFIX = (Summaries and Summaries.GUILD_PREFIX) or ":guild:"
 
----------------------------------------------------------------------------
--- Pure helpers (tested headless).
----------------------------------------------------------------------------
-
---- Case-insensitive plain-substring match. nil name → false. `query` may
---- be any case; both sides are lowercased and matched with a PLAIN find
---- (Lua-pattern magic in the query is literal, like the bag grids).
 function SearchView.MatchName(name, query)
     if not name or not query then return false end
     return name:lower():find(query:lower(), 1, true) ~= nil
 end
 
---- Owner display label for a summaries owner key. → table, kind:
----   character key "Name-Realm" → { label = "Name", isChar = true }, "char"
----   WARBAND_OWNER               → { label = "Warband" }, "warband"
----   GUILD_PREFIX..key           → { label = "Guild: Name", guild = "Name" }, "guild"
---- The character label is the name part (before the first "-"); the caller
---- class-colors it from the record (the key carries no class).
 function SearchView.OwnerLabel(ownerKey)
     if ownerKey == WARBAND_OWNER then
         return { label = "Warband" }, "warband"
     end
     if ownerKey:sub(1, #GUILD_PREFIX) == GUILD_PREFIX then
         local guildKey = ownerKey:sub(#GUILD_PREFIX + 1)
-        -- name part before the first "-" of the "GuildName-Realm" store key
         local namePart = guildKey:match("^(.-)%-") or guildKey
         return { label = "Guild: " .. namePart, guild = namePart }, "guild"
     end
@@ -88,8 +51,6 @@ function SearchView.OwnerLabel(ownerKey)
     return { label = namePart, isChar = true }, "char"
 end
 
---- Compact locations summary: "bags 3, bank 5". Location keys taken as-is
---- from the index, sorted alphabetically. Empty/nil → "".
 function SearchView.LocationsText(byLocation)
     if not byLocation then return "" end
     local keys = {}
@@ -102,8 +63,6 @@ function SearchView.LocationsText(byLocation)
     return table.concat(parts, ", ")
 end
 
---- In-place sort: item name asc, then owner label asc. Nil names sort last;
---- ties broken by itemID for stability.
 function SearchView.SortResults(results)
     table.sort(results, function(a, b)
         local an, bn = a.name, b.name
@@ -118,20 +77,7 @@ function SearchView.SortResults(results)
     end)
 end
 
----------------------------------------------------------------------------
--- Frame parts (no headless test).
----------------------------------------------------------------------------
-
-
-
-
-
---- Quality color for an item name. Prefers the 12.0 ColorManager path
---- (honors quality-color accessibility overrides), then the legacy global,
---- then white.
 local function QualityColor(quality)
-    -- shape proven by QUI_Bags item_buttons.GetQualityColor: the return
-    -- carries .r/.g/.b directly (both ColorManager and the legacy global)
     local c
     if quality and ColorManager and ColorManager.GetColorDataForItemQuality then
         c = ColorManager.GetColorDataForItemQuality(quality)
@@ -143,8 +89,8 @@ local function QualityColor(quality)
     return 1, 1, 1
 end
 
-local nameCache = {}     -- [itemID] = { name, quality } (session memo)
-local loadRequested = {} -- [itemID] = true (RequestLoadItemDataByID issued)
+local nameCache = {}
+local loadRequested = {}
 
 local function Builder(parent)
     local Store = ns.Storage and ns.Storage.Store
@@ -154,9 +100,9 @@ local function Builder(parent)
 
     local view    = { frame = frame }
     local offset  = 0
-    local results = {}     -- last result rows
+    local results = {}
     local rowPool = {}
-    local lastQuery = ""   -- last dispatched lowercased query
+    local lastQuery = ""
 
     local function VisibleRows()
         local h = frame:GetHeight() or 0
@@ -165,7 +111,6 @@ local function Builder(parent)
         return math.max(1, math.floor(usable / ROW_H))
     end
 
-    ---- search box (top, full width) -------------------------------------
     local search = CreateFrame("EditBox", nil, frame)
     search:SetHeight(SEARCH_H)
     search:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
@@ -199,7 +144,6 @@ local function Builder(parent)
         end
     end
 
-    ---- row pool ----------------------------------------------------------
     local function GetRow(i)
         local r = rowPool[i]
         if r then return r end
@@ -211,16 +155,12 @@ local function Builder(parent)
         return r
     end
 
-    ---- query core --------------------------------------------------------
-    -- Walks every owner's lazily-rebuilt index, matches resolved item names,
-    -- and builds result rows. Returns (rows, missCount): missCount > 0 means
-    -- some names were uncached and a delayed re-run is worthwhile.
     local function RunQuery(query)
         local rows, missCount = {}, 0
         if not (Store and Summ and Summ.IterateOwnerItems) then return rows, 0 end
 
         local owners = {}
-        local classCache = {}   -- ownerKey → classToken (chars only)
+        local classCache = {}
         for _, key in ipairs(Store.ListCharacters()) do
             owners[#owners + 1] = key
             local rec = Store.GetCharacter(key)
@@ -237,9 +177,6 @@ local function Builder(parent)
             local lbl, kind = SearchView.OwnerLabel(ownerKey)
             local lc = { lbl = lbl, kind = kind }
             Summ.IterateOwnerItems(ownerKey, function(itemID, byLocation)
-                -- session memo: a resolved name never changes, and a cache
-                -- miss only requests the data load ONCE per session — without
-                -- this every keystroke re-sweeps and re-requests all misses
                 local cached = nameCache[itemID]
                 local name, quality
                 if cached then
@@ -260,7 +197,7 @@ local function Builder(parent)
                             C_Item.RequestLoadItemDataByID(itemID)
                         end
                     end
-                    return -- unresolved name can't match; delayed re-run retries
+                    return
                 end
                 if SearchView.MatchName(name, query) then
                     rows[#rows + 1] = {
@@ -278,7 +215,6 @@ local function Builder(parent)
         return rows, missCount
     end
 
-    ---- render -------------------------------------------------------------
     local truncated = 0
     local function RenderRows()
         local visible = VisibleRows()
@@ -331,15 +267,10 @@ local function Builder(parent)
         end
     end
 
-    -- footer
     local footer = MakeFS(frame, 11)
     footer:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", CELL_PAD, 4)
     footer:SetTextColor(0.8, 0.8, 0.8)
 
-    ---- search dispatch ---------------------------------------------------
-    -- Re-run after uncached names load. ONE timer per dispatch; the closure
-    -- re-checks the frame is still visible and the query text is unchanged
-    -- so a stale timer from an old keystroke is a no-op.
     local function ScheduleRerun(query)
         if not (C_Timer and C_Timer.After) then return end
         C_Timer.After(0.7, function()
@@ -349,8 +280,6 @@ local function Builder(parent)
         end)
     end
 
-    -- skipRerun guards against an endless reschedule loop on perpetually
-    -- uncached items: the delayed pass renders what it has and stops.
     function view.DoSearch(query, skipRerun)
         if not (Store and Store.IsInitialized and Store.IsInitialized()) then return end
         if #query < MIN_CHARS then
@@ -392,7 +321,6 @@ local function Builder(parent)
 
     function view.Refresh()
         RefreshChrome()
-        -- on-demand: re-run the current query (index/names may have changed)
         if #lastQuery >= MIN_CHARS then
             view.DoSearch(lastQuery, true)
         else
@@ -400,7 +328,6 @@ local function Builder(parent)
         end
     end
 
-    -- mouse-wheel scroll
     frame:EnableMouseWheel(true)
     frame:SetScript("OnMouseWheel", function(_, delta)
         local maxOff = math.max(0, #results - VisibleRows())
@@ -409,10 +336,6 @@ local function Builder(parent)
         if offset > maxOff then offset = maxOff end
         RenderRows()
     end)
-
-    -- No bus subscriptions: search is on-demand. A stale result list refreshes
-    -- on the next keystroke; the summaries index it reads is itself lazily
-    -- rebuilt, so the next query always sees current data.
 
     return view
 end

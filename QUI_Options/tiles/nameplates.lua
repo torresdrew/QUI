@@ -1,16 +1,3 @@
---[[
-    QUI Options V2 — Nameplates tile
-    Pattern mirrors tiles/group_frames.lua (minus the layout-mode CTA and
-    docked preview — plates aren't movable frames and have no mock preview).
-
-    tabIndex 22 is a fresh static route id: the legacy tab bar never had a
-    Nameplates page, so unlike the older tiles there is no historical index
-    to preserve. 21 belongs to the Auras hub, so 22 is the next free constant
-    after Bags (19), Alts (20) and Auras (21).
-    Must stay in sync with NAMEPLATES_SEARCH_TAB_INDEX in
-    QUI_Nameplates/nameplates/settings/nameplates_schema.lua.
-]]
-
 local ADDON_NAME, ns = ...
 
 local V2 = {}

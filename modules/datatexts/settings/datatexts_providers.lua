@@ -1,10 +1,3 @@
---[[
-    QUI Datatexts Shared Settings Providers
-    Owns provider-backed settings content for the Datatext panel surfaces
-    in the shared settings layer. Migrated to V3 body pattern
-    (CreateAccentDotLabel + CreateSettingsCardGroup + BuildSettingRow).
-]]
-
 local _, ns = ...
 
 local Settings = ns.Settings
@@ -13,12 +6,6 @@ if not ProviderPanels or type(ProviderPanels.RegisterAfterLoad) ~= "function" th
     return
 end
 
--- NOTE: do NOT capture `ns.QUI_Options` as a local in this outer closure.
--- This file is loaded by the QUI addon before the on-demand QUI_Options
--- addon is loaded; at that point ns.QUI_Options is the minimal stub
--- installed by core/gui_shell.lua. Once QUI_Options/shared.lua runs it
--- REPLACES the table, so any captured local would be stale. Re-resolve
--- ns.QUI_Options at call time inside MakeLayout / row / build bodies.
 ProviderPanels:RegisterAfterLoad(function(ctx)
     local GUI = ctx.GUI
     local U = ctx.U
@@ -31,7 +18,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         ctx.RegisterShared(key, provider)
     end
 
-    -- Shared provider-panel layout scaffold (core/settings_layout_shared.lua).
     local function MakeLayout(content)
         if U._layoutModePositionOnly then
             return U.MakeSuppressedProviderLayout(content)
@@ -43,14 +29,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         return ns.QUI_Options.BuildSettingRow(parent, label, widget, desc)
     end
 
-    -- Top-of-page notice shown when the QUI_Datatexts module addon is
-    -- disabled: the shared registry (ns.Addon.Datatexts) is absent, so the
-    -- datatext dropdowns below render empty with no other explanation. Same
-    -- visual idiom as the page's gray note rows, but warning-colored and
-    -- full-size so it can't be missed. The page still builds (degrade
-    -- gracefully), this only explains the emptiness. Exported on ns for the
-    -- Info Bar page (its zone widget lists come from the same registry);
-    -- both files load from the QUI_Options TOC, this one first.
     local function PlaceRegistryMissingNotice(L, content, text)
         if ns.Addon and ns.Addon.Datatexts then return end
         local noticeRow = CreateFrame("Frame", nil, content)
@@ -65,37 +43,16 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
     end
     ns.QUI_DatatextsRegistryNotice = PlaceRegistryMissingNotice
 
-    -- Hover tooltip for a CUSTOM-PLACED bare dropdown (no BuildSettingRow to
-    -- carry it): the widget's mouse-enabled dropdown Button swallows
-    -- enter/leave over almost the whole footprint, so hook the button AND
-    -- the container (AttachTooltip HookScripts, so the button's own hover
-    -- visual keeps working).
     local function AttachDropdownTooltip(dd, description, title)
         if not GUI.AttachTooltip then return end
         GUI:AttachTooltip(dd, description, title)
         if dd.dropdown then GUI:AttachTooltip(dd.dropdown, description, title) end
     end
 
-    ---------------------------------------------------------------------------
-    -- Shared Currencies order/visibility section. currencyOrder/currencyEnabled
-    -- live in profile.datatext and are surface-agnostic — the currencies
-    -- datatext reads them at render time wherever it's hosted (datatext
-    -- panels, minimap panel, Info Bar). Exported on ns for the Info Bar page
-    -- (QUI_InfoBar hard-depends on QUI_Datatexts, so the export exists by the
-    -- time that page builds; consumers still guard the read).
-    -- opts: dtGlobal  = config table holding currencyOrder/currencyEnabled
-    --                   (profile.datatext for the datatext surfaces;
-    --                   bags.currencyBar for the bag window's bar — every
-    --                   consumer lists the same Blizzard backpack-tracked
-    --                   pool, only the edited config differs),
-    --       refresh   = re-render the host surface(s) after a change,
-    --       notify    = structural rebuild for the host provider (receives
-    --                   a region owned by that provider's page),
-    --       header/hint/emptyText/toggleDescription/note = text overrides.
-    ---------------------------------------------------------------------------
     local function BuildCurrencyOrderSection(L, content, opts)
         local dtGlobal = opts.dtGlobal
         local refresh = opts.refresh or function() end
+        ---@type fun(...) -- the `or` fallback is narrower than the real opts.notify(region)
         local notify = opts.notify or function() end
 
         local trackedCurrencies = {}
@@ -176,14 +133,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 r:Show()
 
                 if not r._built then
-                    -- CreateFormCheckbox is the toggle widget: no SetChecked/
-                    -- GetChecked/OnClick surface. State flows through
-                    -- SetValue(val, skipCallback) and the onChange callback;
-                    -- r._cid keeps the callback current when reorders reuse
-                    -- this row for a different currency. BARE mode (nil
-                    -- label): the row owns the name fontstring directly —
-                    -- the zone-row pattern — rather than driving the
-                    -- widget's internal label.
                     r._cb = GUI:CreateFormCheckbox(r, nil, nil, nil, function(val)
                         dtGlobal.currencyEnabled[r._cid] = val and true or false
                         refresh()
@@ -217,7 +166,7 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
 
                 r._cid = cid
                 r._name:SetText(displayName)
-                r._cb:SetValue(dtGlobal.currencyEnabled[cid] ~= false, true) -- render-only, skip onChange
+                r._cb:SetValue(dtGlobal.currencyEnabled[cid] ~= false, true)
 
                 local capturedIdx = idx
                 r._upBtn:SetScript("OnClick", function()
@@ -246,21 +195,13 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             end
         end
 
-        -- Track-a-currency dropdown: currencies the character owns that are
-        -- NOT backpack-tracked yet, from the visible currency-list walk
-        -- (GetCurrencyListSize/GetCurrencyListInfo — collapsed headers hide
-        -- their children, and ExpandCurrencyList mutates user UI state so we
-        -- never call it; those currencies need their header expanded in the
-        -- Currency tab first). Selecting one calls SetCurrencyBackpackByID —
-        -- the same Blizzard tracked list the Currency tab's checkbox edits —
-        -- and the structural notify rebuilds this section with the new row.
         local function BuildTrackableOptions()
             local rows = {}
             if _G.C_CurrencyInfo and C_CurrencyInfo.GetCurrencyListSize
                 and C_CurrencyInfo.GetCurrencyListInfo then
                 local n = C_CurrencyInfo.GetCurrencyListSize() or 0
                 for i = 1, n do
-                    local info = C_CurrencyInfo.GetCurrencyListInfo(i) -- MayReturnNothing
+                    local info = C_CurrencyInfo.GetCurrencyListInfo(i)
                     if info and not info.isHeader and not info.isShowInBackpack
                         and info.currencyID and info.name then
                         rows[#rows + 1] = { value = info.currencyID, text = info.name }
@@ -311,9 +252,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
     end
     ns.QUI_BuildCurrencyOrderSection = BuildCurrencyOrderSection
 
-    ---------------------------------------------------------------------------
-    -- DATATEXT PANEL HELPERS
-    ---------------------------------------------------------------------------
     local DATATEXT_MINIMAP_KEY = "__minimap"
     local DatatextPanelState = {
         activePanel = DATATEXT_MINIMAP_KEY,
@@ -388,8 +326,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             local allDatatexts = addon.Datatexts:GetAll()
             for _, datatextDef in ipairs(allDatatexts) do
                 local text = datatextDef.displayName
-                -- Third-party LDB feeds register under category "Plugins";
-                -- tag them so they're recognizable among the built-ins.
                 if datatextDef.category == "Plugins" then
                     text = text .. ns.L[" |cff999999(plugin)|r"]
                 end
@@ -677,7 +613,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         if dtSettings and dtSettings.useClassColor then
             local _, class = UnitClass("player")
             -- @secret-policy: collapse-only — UnitClass can return SECRET on 12.1 PTR7
-            -- (SecretWhenUnitIdentityRestricted); collapse so the valueColor fallback applies.
             if issecretvalue and issecretvalue(class) then class = nil end
             local classColor = class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
             if classColor then
@@ -954,9 +889,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         return preview
     end
 
-    ---------------------------------------------------------------------------
-    -- DATATEXT PANEL PROVIDER
-    ---------------------------------------------------------------------------
     RegisterSharedOnly("datatextPanel", { build = function(content, key, _width)
         local profile = U.GetProfileDB()
         if not profile or not ns.QUI_Options then return 80 end
@@ -1026,7 +958,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         PlaceRegistryMissingNotice(L, content,
             ns.L["The Datatexts module addon is disabled — enable it under Modules to configure datatexts. The datatext dropdowns below are empty until it loads."])
 
-        -- PANEL SELECTOR + PREVIEW (custom layout, outside cards)
         L.headerAt(ns.L["Panel Selector"])
         local selectorRow = CreateFrame("Frame", nil, content)
         L.placeCustom(selectorRow, 30)
@@ -1100,7 +1031,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         hint:SetJustifyH("LEFT")
         L.placeCustom(hintRow, 22)
 
-        -- PANEL SETTINGS + SLOT CONFIGURATION
         if selected.isMinimap then
             L.headerAt(ns.L["Panel Settings"])
             local ps = L.sectionAt()
@@ -1228,7 +1158,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             end
         end
 
-        -- TEXT STYLING
         L.headerAt(ns.L["Text Styling"])
         local ts = L.sectionAt()
         local useClassW = GUI:CreateFormCheckbox(ts.frame, nil, "useClassColor", dtGlobal, RefreshAllDatatextSurfaces,
@@ -1245,7 +1174,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         note:SetText(ns.L["Text Styling applies to every datatext panel."])
         L.placeCustom(noteRow, 18)
 
-        -- SPEC DISPLAY (conditional)
         if CountSlotsWithValue(selected.slots, selected.numSlots, "playerspec") then
             L.headerAt(ns.L["Spec Display"])
             local sp = L.sectionAt()
@@ -1260,7 +1188,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             L.closeSection(sp)
         end
 
-        -- TIME OPTIONS (conditional)
         if CountSlotsWithValue(selected.slots, selected.numSlots, "time") then
             L.headerAt(ns.L["Time Options"])
             local tm = L.sectionAt()
@@ -1282,7 +1209,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             L.closeSection(tm)
         end
 
-        -- ALTS OPTIONS (conditional)
         if CountSlotsWithValue(selected.slots, selected.numSlots, "alts") then
             L.headerAt(ns.L["Alts Options"])
             local al = L.sectionAt()
@@ -1296,8 +1222,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             L.closeSection(al)
         end
 
-        -- CURRENCIES (conditional, custom layout with reorder controls;
-        -- section body shared with the Info Bar page)
         if CountSlotsWithValue(selected.slots, selected.numSlots, "currencies") then
             BuildCurrencyOrderSection(L, content, {
                 dtGlobal = dtGlobal,
@@ -1306,7 +1230,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             })
         end
 
-        -- Layout-mode chrome
         if selected.isMinimap then
             U.BuildPositionCollapsible(content, "datatextPanel", nil, L.sections, L.relayoutSections)
         else

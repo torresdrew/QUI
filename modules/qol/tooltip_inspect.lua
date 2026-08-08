@@ -1,8 +1,3 @@
---[[
-    QUI Tooltip Inspect Service
-    Provides cached, serialized inspect-backed player tooltip data.
-]]
-
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 
@@ -37,9 +32,6 @@ local function IsTooltipPlayerItemLevelEnabled()
 end
 
 local function IsSafeGUID(guid)
-    -- Route the param through the SafeValue unwrap: a secret GUID folds to nil
-    -- (issecretvalue-checked inside SafeValue) so no truth-test/compare touches
-    -- an opaque value here or at any call site.
     return Helpers.SafeValue(guid) ~= nil
 end
 
@@ -286,20 +278,10 @@ local function GetClassData(unit)
     if not unit or not UnitExists(unit) then return nil, nil end
 
     local localizedClassName, classToken, classID = UnitClass(unit)
-    -- PTR7: classID is secret when the inspected unit has secret identity.
-    -- Direct collapse statements (no intermediate probe local — the analyzer
-    -- only credits the probe when the collapse branches on the probe call
-    -- itself) so the truth-tests and the C_CreatureInfo.GetClassInfo call
-    -- below only ever see collapsed values.
     -- @secret-policy: collapse-only — inspect panel shows nothing for secret units
     if issecretvalue and issecretvalue(classID) then classID = nil end
-    -- localizedClassName is ConditionalSecret alongside classID (same PTR7
-    -- identity gate) and reaches the `or` below on its own if the
-    -- C_CreatureInfo overwrite is skipped.
     -- @secret-policy: collapse-only — inspect panel shows nothing for secret units
     if issecretvalue and issecretvalue(localizedClassName) then localizedClassName = nil end
-    -- classToken is the `or` fallback AND the second return value handed
-    -- straight to callers — must be collapsed too, not just the primary.
     -- @secret-policy: collapse-only — inspect panel shows nothing for secret units
     if issecretvalue and issecretvalue(classToken) then classToken = nil end
     if classID and C_CreatureInfo and C_CreatureInfo.GetClassInfo then
@@ -366,10 +348,6 @@ local ProcessQueuedRequest
 
 local function FinalizeRequest(matchingGUID)
     if activeRequest and IsSafeGUID(activeRequest.guid) and IsSafeGUID(matchingGUID) and Helpers.SafeCompare(activeRequest.guid, matchingGUID) == true then
-        -- Do not ClearInspectPlayer while the user has InspectFrame open --
-        -- it wipes the addon's cached inventory data for the unit they're
-        -- looking at, producing the "items flash then disappear" symptom.
-        -- Just release our own state and let the user's inspect keep the data.
         local inspectFrame = GetInspectFrame()
         if not (inspectFrame and inspectFrame:IsShown()) then
             if type(ClearInspectPlayer) == "function" then
@@ -381,8 +359,6 @@ local function FinalizeRequest(matchingGUID)
     end
 end
 
--- When the user opens InspectFrame, abandon any in-flight tooltip request
--- without calling ClearInspectPlayer (which would wipe the user's data).
 local function AbandonForUserInspect()
     ClearActiveRequest()
     queuedRequest = nil
@@ -436,7 +412,6 @@ function TooltipInspect:GetCachedPlayerData(unit)
     return GetCacheEntry(guid)
 end
 
-
 local function SafeCanInspect(unit)
     local ok, canInspect = pcall(function()
         return CanInspect(unit)
@@ -454,7 +429,6 @@ function TooltipInspect:QueueInspect(unit)
     if not IsSafeGUID(guid) or GetCacheEntry(guid) then return false end
     if IsGUIDSuppressed(guid) then return false end
 
-    -- Avoid competing with the dedicated inspect pane's own NotifyInspect flow.
     local inspectFrame = GetInspectFrame()
     if inspectFrame and inspectFrame:IsShown() then
         return false
@@ -500,13 +474,6 @@ ProcessQueuedRequest = function()
         if InCombatLockdown() then return end
         if not IsTooltipPlayerItemLevelEnabled() then return end
 
-        -- The user may have opened InspectFrame during the REQUEST_DELAY window.
-        -- AbandonForUserInspect clears queuedRequest, but a C_Timer.After closure
-        -- cannot be cancelled, so re-check here (QueueInspect makes the same check
-        -- at queue time). Firing NotifyInspect now would either redirect the
-        -- server off the unit the user is inspecting or flood a duplicate request
-        -- (the server drops inspect data when flooded), blanking the open inspect
-        -- pane's item levels and gear tooltips a few seconds after it opened.
         local inspectFrame = GetInspectFrame()
         if inspectFrame and inspectFrame:IsShown() then return end
 

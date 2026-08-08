@@ -1,8 +1,3 @@
----------------------------------------------------------------------------
--- QUI Alts Module — entry point. A pure consumer of core storage
--- (ns.Storage): no scanners, no SavedVariables of its own. `alts.enabled`
--- gates only the window; collection runs regardless (core service).
----------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local Alts = ns.Alts or {}; ns.Alts = Alts
 
@@ -39,12 +34,9 @@ SlashCmdList["QUIALTS"] = function()
         print("|cff00ff00QUI:|r the Alts module is disabled (Options → Modules).")
         return
     end
-    -- Route through the trigger; the roster UI compiles at login and
-    -- Window.Toggle builds frames on first open.
     if _G.QUI_OpenAltsRoster then _G.QUI_OpenAltsRoster() end
 end
 
--- Options surfaces call _G.QUI_RefreshAlts after DB writes (bags precedent).
 _G.QUI_RefreshAlts = Refresh
 
 if ns.Registry then

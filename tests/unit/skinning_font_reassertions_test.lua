@@ -39,12 +39,12 @@ local character = readFile("modules/skinning/frames/character.lua")
 assertContains(character, "local function RestyleEquipmentSetEntryText(entry)",
     "equipment manager must split text restyle from one-time row chrome")
 local equipEntry = blockBetween(character, "local function SkinEquipmentSetEntry(entry)",
-    "-- Style Equip/Save buttons")
+    "local function StyleEquipMgrButton(btn)")
 assertOrdered(equipEntry, "RestyleEquipmentSetEntryText(entry)",
     "if skinnedEntries[entry] then return end",
     "equipment row text must be reasserted before the already-skinned early return")
 local equipRefresh = blockBetween(character, "RefreshEquipmentManagerColors = function()",
-    "-- Update buttons")
+    "if PaperDollFrameEquipSet and skinnedEntries[PaperDollFrameEquipSet] then")
 assertContains(equipRefresh, "RestyleEquipmentSetEntryText(entry)",
     "equipment manager refresh must reassert visible row text")
 
@@ -55,7 +55,7 @@ local alerts = readFile("modules/skinning/notifications/alerts.lua")
 assertContains(alerts, "local function RestyleEntitlementAlertText(frame)",
     "entitlement alerts need a per-toast text restyle helper")
 local entitlement = blockBetween(alerts, "local function SkinEntitlementAlert(frame)",
-    "--- Skin Digsite Complete Alert")
+    "local function SkinDigsiteCompleteAlert(frame)")
 assertAbsent(entitlement, "if not frame or SkinBase.IsSkinned(frame) then return end",
     "entitlement alerts must not skip text restyle on already-skinned pooled frames")
 assertOrdered(entitlement, "RestyleEntitlementAlertText(frame)",
@@ -66,7 +66,7 @@ assertOrdered(entitlement, "RestyleEntitlementAlertText(frame)",
 -- Professions/crafting/PVP/dropdown/interaction frames: lock text rebinds.
 ---------------------------------------------------------------------------
 local crafting = readFile("modules/skinning/frames/craftingorders.lua")
-local durationBlock = blockBetween(crafting, "-- Duration dropdown", "-- Note edit box")
+local durationBlock = blockBetween(crafting, "if pc.DurationDropdown then", "if pc.NoteEditBox then")
 -- SkinDropdown owns the dropdown text durability: it faces the visible text in the QUI
 -- font (SkinFontString{fontOnly}) AND locks it against Blizzard SetFontObject
 -- (LockFontObject + LockFrameTextObjects(dropdown, 2)) — see SkinBase.SkinDropdown ->
@@ -81,15 +81,15 @@ assertContains(crafting, "SkinBase.SkinDropdown(form.OrderRecipientDropdown)",
     "customer order recipient dropdown must route through SkinDropdown (faces + locks its text)")
 
 local professions = readFile("modules/skinning/frames/professions.lua")
-local orderTypeTabs = blockBetween(professions, "-- Order type tab buttons",
-    "    end\n\n    -- Order view")
+local orderTypeTabs = blockBetween(professions, "local orderTabs = { browseFrame.PublicOrdersButton",
+    "local orderView = ordersPage.OrderView")
 assertContains(orderTypeTabs, "SkinBase.SkinTab(tab, browseFrame, { hover = true })",
     "crafter order type tabs must use durable tab font-object handling")
 -- LockFrameTextObjects(tab, 2) was removed from the order-type tab loop; SkinTab
 -- owns tab font-object durability via its own selection hooks. Interactive font-object
 -- reverts on bare-root tab surfaces are accepted under the global object override.
-local orderView = blockBetween(professions, "-- Order view (individual order detail)",
-    "end\nend\n\n---------------------------------------------------------------------------\n-- SKIN SPEC PAGE")
+local orderView = blockBetween(professions, "local orderView = ordersPage.OrderView",
+    "local function StyleSpecPoolTab(tab, owner)")
 assertContains(orderView, "local noteTitle = orderView.OrderInfo and orderView.OrderInfo.NoteBox and orderView.OrderInfo.NoteBox.NoteTitle",
     "crafter order note title must be targeted explicitly")
 assertContains(orderView, "SkinBase.LockFontObject(noteTitle, { fontOnly = true })",
@@ -97,7 +97,7 @@ assertContains(orderView, "SkinBase.LockFontObject(noteTitle, { fontOnly = true 
 
 local instanceFrames = readFile("modules/skinning/frames/instanceframes.lua")
 local pveGroupButtons = blockBetween(instanceFrames, "local function StyleGroupFinderButton(button",
-    "-- Skin PVEFrame (main container)")
+    "local function SkinPVEFrame()")
 assertContains(pveGroupButtons, "SkinBase.SkinFontString(button.name, { fontOnly = true })",
     "PVE group finder labels must reapply the QUI font")
 -- LockFrameTextObjects(button, 2) was removed from StyleGroupFinderButton;
@@ -184,7 +184,7 @@ local columnDisplayButtonShort = blockBetween(sharedPanelTemplates, "<Button nam
 assertContains(columnDisplayButtonShort, "<NormalFont style=\"GameFontHighlightSmall\"/>",
     "Auction House sort headers inherit a stock button font object that can reappear on button state changes")
 local auctionHeaderSkin = blockBetween(auctionhouse, "local function HookAuctionHeaderSkin()",
-    "-- Skin browse panel")
+    "local function SkinBrowsePanel()")
 assertContains(auctionHeaderSkin, "SkinBase.ApplyButtonFontObjects(self)",
     "Auction House sort headers must drive normal/highlight/disabled font objects")
 -- LockFrameTextObjects(self, 2) was removed from HookAuctionHeaderSkin; ApplyButtonFontObjects
@@ -197,7 +197,7 @@ assertContains(auctionsTabs, "SkinBase.SkinTabGroup(tabs, auctionsFrame, { font 
 -- LockFrameTextObjects(tab, 2) was removed from SkinAuctionHouseAuctionsTabs; interactive
 -- font-object reverts on bare-root tab surfaces are accepted under the global override.
 local auctionsPanel = blockBetween(auctionhouse, "local function SkinAuctionsPanel()",
-    "-- Suppress a category button's default textures")
+    "local function SuppressCategoryTextures(button)")
 assertContains(auctionsPanel, "SkinAuctionHouseAuctionsTabs(auctionsFrame)",
     "Auction House auctions panel must skin its inner Auctions/Bids tabs")
 assertContains(auctionhouse, "local function LockDurationDropdownText(dropdown)",
@@ -245,8 +245,9 @@ local mailBtnFontCount = select(2, mail:gsub("SkinBase%.ApplyButtonFontObjectsDe
 assert(mailBtnFontCount >= 1, "Mail skin must drive descendant button font objects via ApplyButtonFontObjectsDeep")
 
 local characterPane = readFile("modules/skinning/character_pane/character.lua")
-local characterSettings = blockBetween(characterPane, "-- \"Settings\" label",
-    "-- Close button (X)")
+local characterSettings = blockBetween(characterPane,
+    "local gearLabel = gearBtn:CreateFontString(nil, \"OVERLAY\", \"GameFontNormalSmall\")",
+    "local closeBtn = CreateFrame(\"Button\", nil, settingsPanel, \"UIPanelCloseButton\")")
 assertContains(characterSettings, "CJKFont(gearLabel, GeneralFontFace(), 12, \"\")",
     "Character settings gear label must route through CJK fallback")
 assertContains(characterSettings, "CJKFont(title, GeneralFontFace(), 14, \"\")",
@@ -254,7 +255,7 @@ assertContains(characterSettings, "CJKFont(title, GeneralFontFace(), 14, \"\")",
 
 local inspectPane = readFile("modules/skinning/character_pane/inspect.lua")
 local inspectSettings = blockBetween(inspectPane, "local gearLabel = gearBtn:CreateFontString",
-    "-- Close button")
+    "local closeBtn = CreateFrame(\"Button\", nil, inspectSettingsPanel, \"UIPanelCloseButton\")")
 assertContains(inspectSettings, "CJKFont(gearLabel, GeneralFontFace(), 12, \"\")",
     "Inspect settings gear label must route through CJK fallback")
 assertContains(inspectSettings, "CJKFont(title, GeneralFontFace(), 14, \"\")",
@@ -336,21 +337,21 @@ assertContains(characterRows, "SkinCurrencyEntry(row)\n                SkinBase.
     "Currency rows must lock pooled-row text after SkinCurrencyEntry")
 
 local ahRow = blockBetween(readFile("modules/skinning/frames/auctionhouse.lua"),
-    "local function skinRow(row)", "end\n\n-- TableBuilder")
+    "local function skinRow(row)", "local function HookAuctionHeaderSkin()")
 assertContains(ahRow, "SkinBase.LockPooledRowText(row, 4)",
     "AH row text must route through the shared helper")
 assertAbsent(ahRow, "SkinBase.SkinFrameText(row, { recurse = true })",
     "AH row text must not do a duplicate recursive pass before LockPooledRowText")
 
 local coRow = blockBetween(readFile("modules/skinning/frames/craftingorders.lua"),
-    "local function skinRow(row)", "end\n\n-- Order-table")
+    "local function skinRow(row)", "local function HookProfessionTableHeaderFonts()")
 assertContains(coRow, "SkinBase.LockPooledRowText(row, 4)",
     "Crafting Orders row text must route through the shared helper")
 assertAbsent(coRow, "SkinBase.SkinFrameText(row, { recurse = true })",
     "Crafting Orders row text must not do a duplicate recursive pass before LockPooledRowText")
 
 local profRow = blockBetween(readFile("modules/skinning/frames/professions.lua"),
-    "local function StyleScrollBoxRow(row)", "end\n\n---------------------------------------------------------------------------\n-- HIDE DECORATIONS")
+    "local function StyleScrollBoxRow(row)", "local function HideDecorations(frame)")
 assertContains(profRow, "SkinBase.LockPooledRowText(row, 4)",
     "Professions row text must route through the shared helper")
 assertAbsent(profRow, "SkinBase.SkinFrameText(row, { recurse = true })",

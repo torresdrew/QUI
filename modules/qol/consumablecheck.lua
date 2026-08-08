@@ -3,11 +3,6 @@ local Helpers = ns.Helpers
 local SkinBase = ns.SkinBase
 local UIKit = ns.UIKit
 
----------------------------------------------------------------------------
--- CONSUMABLE CHECK
--- Shows consumable status buttons on ready check, instance entry, resurrect
----------------------------------------------------------------------------
-
 local LCG = LibStub and LibStub("LibCustomGlow-1.0", true)
 
 local DEFAULT_BUTTON_SIZE = 40
@@ -21,32 +16,25 @@ local RUNE_ICON_FALLBACK = "Interface\\Icons\\inv_10_enchanting_crystal_color2"
 local PICKER_ROW_HEIGHT = 24
 local PICKER_MIN_WIDTH = 200
 
----------------------------------------------------------------------------
--- BUFF / ITEM DATA
----------------------------------------------------------------------------
-
 local FOOD_BUFFS = {
-    -- Midnight / current retail generic Well Fed auras
     [1232324] = true, [285719] = true,
 }
 
 local FLASK_BUFFS = {
-    -- Midnight Flasks
     [1235057] = true, [1235108] = true, [1235110] = true, [1235111] = true,
 }
 
 local RUNE_BUFFS = {
-    [1234969] = true,  -- Midnight Augment Rune
-    [1242347] = true,  -- Greater Midnight Augment Rune
-    [1264426] = true,  -- Void-Touched Augment Rune (Midnight)
+    [1234969] = true,
+    [1242347] = true,
+    [1264426] = true,
 }
 
 local FLASK_ITEMS = {
-    -- Midnight Flasks (all current item variants)
-    245926, 245927, 241320, 241321, -- Flask of Thalassian Resistance
-    245932, 245933, 241322, 241323, -- Flask of the Magisters
-    245930, 245931, 241324, 241325, -- Flask of the Blood Knights
-    245928, 245929, 241326, 241327, -- Flask of the Shattered Sun
+    245926, 245927, 241320, 241321,
+    245932, 245933, 241322, 241323,
+    245930, 245931, 241324, 241325,
+    245928, 245929, 241326, 241327,
 }
 local FLASK_ITEM_SET = {}
 for _, itemID in ipairs(FLASK_ITEMS) do
@@ -54,26 +42,23 @@ for _, itemID in ipairs(FLASK_ITEMS) do
 end
 
 local RUNE_ITEMS = {
-    259085,  -- Void-Touched Augment Rune (Midnight)
-    243191,  -- Ethereal Augment Rune (infinite)
+    259085,
+    243191,
 }
 
 local OIL_ITEMS = {
-    -- Midnight Oils
-    243733, 243734, -- Thalassian Phoenix Oil
-    243735, 243736, -- Oil of Dawn
-    243737, 243738, -- Smuggler's Enchanted Edge
-    -- Midnight Stones
-    237370, 237371, -- Refulgent Whetstone
-    237367, 237369, -- Refulgent Weightstone
+    243733, 243734,
+    243735, 243736,
+    243737, 243738,
+    237370, 237371,
+    237367, 237369,
 }
 
 local AMMO_ITEMS = {
-    -- Midnight Hunter Ammo (Engineering)
-    257746, 257745, -- Farstrider's Hawkeye (Crit)
-    257748, 257747, -- Smuggler's Lynxeye (Mastery)
-    257750, 257749, -- Laced Zoomshots (Nature DoT)
-    257752, 257751, -- Weighted Boomshots (AoE Fire)
+    257746, 257745,
+    257748, 257747,
+    257750, 257749,
+    257752, 257751,
 }
 
 local WEAPON_ENCHANTS = {}
@@ -86,9 +71,6 @@ local PREFERENCE_KEYS = {
     oilOH = "consumablePreferredOilOH",
 }
 
--- Maps a consumable-check button type to the macro slot dbKey it follows.
--- Healthstone is listed for completeness, but the popup shows it as a count
--- only, so the link is inert there.
 local MACRO_SLOT_FOR_BUTTON = {
     flask       = "selectedFlask",
     rune        = "selectedAugment",
@@ -96,16 +78,11 @@ local MACRO_SLOT_FOR_BUTTON = {
     oilMH       = "selectedWeapon",
 }
 
--- Layout order of the category buttons (matches the positioning pass).
 local BUTTON_TYPES = { "food", "flask", "oilMH", "rune", "healthstone", "oilOH" }
 
--- Test-only instrumentation: repaintLog is nil in production (single cheap
--- nil-check per paint); layoutRuns is a plain counter.
 local repaintLog = nil
 local layoutRuns = 0
 
--- Returns { itemID, label } for the macro family configured for this button,
--- or nil. Safe when the macro module isn't present (e.g. unit tests / early load).
 local function GetMacroSelection(buttonType)
     local dbKey = MACRO_SLOT_FOR_BUTTON[buttonType]
     if not dbKey then return nil end
@@ -119,28 +96,12 @@ local function GetMacroPreferredItemID(buttonType)
     return sel and sel.itemID or nil
 end
 
----------------------------------------------------------------------------
--- CLASS-AWARE WEAPON ENHANCEMENT CONFIG
----------------------------------------------------------------------------
-
-local BuildOwnedItemsFromList  -- forward declaration (defined in utility section below)
+local BuildOwnedItemsFromList
 
 local _, playerClass = UnitClass("player")
--- PTR7: probe FIRST — a secret class token would throw on every comparison
--- and CLASS_ENHANCEMENT_CONFIG table index below. Existence-guarded like the
--- other probes here: unit-test harnesses stub Helpers without IsSecretValue.
 -- @secret-policy: collapse-only — unknown class = no enhancement config
 if Helpers.IsSecretValue and Helpers.IsSecretValue(playerClass) then playerClass = nil end
 
--- Each class entry has MH and/or OH sub-configs:
---   source: "spell" (cast via /cast) or "item" (use via /use, default for non-class configs)
---   label: display name for UI
---   checkType: "weaponEnchant" (GetWeaponEnchantInfo) or "playerAura" (buff scan)
---   anyEnchantIDs: set of enchant IDs for weaponEnchant detection
---   anyBuffIDs: set of aura spell IDs for playerAura detection
---   spells: ordered list of { spellID, name } for spell-based enhancements
---   items: item ID list for item-based enhancements (hunter ammo)
---   requiresShield: only show if shield equipped (shaman OH)
 local CLASS_ENHANCEMENT_CONFIG = {
     ROGUE = {
         MH = {
@@ -168,8 +129,6 @@ local CLASS_ENHANCEMENT_CONFIG = {
         },
     },
     SHAMAN = {
-        -- Enhancement: Windfury → MH. Resto: Earthliving → MH.
-        -- Flametongue is OH-only for Enhancement and lives in OHWeapon below.
         MH = {
             source = "spell",
             label = ns.L["Weapon Imbue"],
@@ -180,7 +139,6 @@ local CLASS_ENHANCEMENT_CONFIG = {
                 { spellID = 382021, name = "Earthliving Weapon" },
             },
         },
-        -- Resto/Ele with shield equipped
         OHShield = {
             source = "spell",
             label = ns.L["Shield Enchant"],
@@ -191,7 +149,6 @@ local CLASS_ENHANCEMENT_CONFIG = {
                 { spellID = 457481, name = "Tidecaller's Guard" },
             },
         },
-        -- Enhancement dual-wielding: Flametongue → OH
         OHWeapon = {
             source = "spell",
             label = ns.L["Offhand Imbue"],
@@ -224,7 +181,6 @@ local CLASS_ENHANCEMENT_CONFIG = {
     },
 }
 
--- Forward declarations: SHAMAN OH dispatch (below) needs these before they are defined.
 local HasShieldEquipped, IsDualWielding
 
 local function GetEnhancementConfig(slot)
@@ -256,7 +212,7 @@ function HasShieldEquipped()
     local ohItemID = GetInventoryItemID("player", INVSLOT_OFFHAND)
     if not ohItemID then return false end
     local _, _, _, _, _, classID, subClassID = C_Item.GetItemInfoInstant(ohItemID)
-    return classID == 4 and subClassID == 6  -- Armor / Shield
+    return classID == 4 and subClassID == 6
 end
 
 local function GetKnownSpellsForConfig(config)
@@ -283,7 +239,6 @@ local function ResolveDefaultEnhancementIcon(slot)
         if config.source == "spell" then
             local spells = GetKnownSpellsForConfig(config)
             if spells[1] and spells[1].icon then return spells[1].icon end
-            -- Fallback: try first spell even if not yet known at load time
             if config.spells and config.spells[1] then
                 local icon = C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(config.spells[1].spellID)
                 if icon then return icon end
@@ -291,21 +246,17 @@ local function ResolveDefaultEnhancementIcon(slot)
         elseif config.items then
             local items = BuildOwnedItemsFromList(config.items)
             if items[1] and items[1].icon then return items[1].icon end
-            -- Fallback: use first item's icon from game data
             local icon = select(5, C_Item.GetItemInfoInstant(config.items[1]))
             if icon then return icon end
         end
     end
-    -- Default: try first owned oil icon
     local oils = BuildOwnedItemsFromList(OIL_ITEMS)
     if oils[1] and oils[1].icon then return oils[1].icon end
-    return 609892  -- generic fallback
+    return 609892
 end
 
 local function GetEnhancementLabel(slot)
     local config = GetEnhancementConfig(slot)
-    -- Item-based slots (Hunter) follow the configured weapon-macro family label
-    -- when one is set, so the popup/options text matches the oil being suggested.
     if config and config.items then
         local buttonType = slot == "MH" and "oilMH" or "oilOH"
         local sel = GetMacroSelection(buttonType)
@@ -315,7 +266,6 @@ local function GetEnhancementLabel(slot)
     return ns.L["Weapon Oil"]
 end
 
--- Export label function for options panel
 ns.ConsumableCheckLabels = {
     GetMHLabel = function() return GetEnhancementLabel("MH") end,
     GetOHLabel = function() return GetEnhancementLabel("OH") end,
@@ -331,10 +281,6 @@ local ITEM_CLASS_CONSUMABLE_ID = (Enum and Enum.ItemClass and Enum.ItemClass.Con
 local FOOD_AND_DRINK_SUBCLASS_ID = Enum and Enum.ItemConsumableSubclass and Enum.ItemConsumableSubclass.FoodAndDrink
 local FLASK_SUBCLASS_ID = Enum and Enum.ItemConsumableSubclass and Enum.ItemConsumableSubclass.Flask
 local PHIAL_SUBCLASS_ID = Enum and Enum.ItemConsumableSubclass and Enum.ItemConsumableSubclass.Phial
-
----------------------------------------------------------------------------
--- UTILITY FUNCTIONS
----------------------------------------------------------------------------
 
 local GetSettings = Helpers.CreateDBGetter("general")
 
@@ -379,7 +325,6 @@ end
 
 local function HasWarlockInGroup()
     local _, playerClass = UnitClass("player")
-    -- Probe FIRST — comparing a secret class token throws.
     -- @secret-policy: collapse-only — secret class treated as non-warlock
     if Helpers.IsSecretValue and Helpers.IsSecretValue(playerClass) then playerClass = nil end
     if playerClass == "WARLOCK" then return true end
@@ -390,7 +335,6 @@ local function HasWarlockInGroup()
         local unit = prefix .. i
         if UnitExists(unit) then
             local _, class = UnitClass(unit)
-            -- Probe FIRST — comparing a secret class token throws.
             -- @secret-policy: collapse-only — secret class treated as non-warlock
             if Helpers.IsSecretValue and Helpers.IsSecretValue(class) then class = nil end
             if class == "WARLOCK" then return true end
@@ -403,7 +347,7 @@ function IsDualWielding()
     local offhand = GetInventoryItemID("player", INVSLOT_OFFHAND)
     if not offhand then return false end
     local _, _, _, _, _, itemClassID = C_Item.GetItemInfoInstant(offhand)
-    return itemClassID == 2  -- LE_ITEM_CLASS_WEAPON
+    return itemClassID == 2
 end
 
 local function FormatTimeRemaining(seconds)
@@ -442,19 +386,14 @@ local function SetPreferredItemID(buttonType, itemID)
     end
 end
 
--- Whether left-click-to-use should persist the used item as an explicit
--- preference. While a category is following its configured macro (a macro is
--- set and the user hasn't right-click-picked an explicit item), using the
--- suggestion must NOT pin it, so the popup keeps tracking later macro changes.
--- Categories with no macro, or with an explicit pref already set, pin as before.
 local function ShouldPersistPreferenceOnUse(buttonType)
     if GetPreferredItemID(buttonType) ~= nil then
-        return true   -- an explicit right-click preference exists; re-affirm it
+        return true
     end
     if GetMacroPreferredItemID(buttonType) ~= nil then
-        return false  -- following the macro default; don't pin on use
+        return false
     end
-    return true       -- no macro, no pref: legacy pin-on-use
+    return true
 end
 
 local function GetMacroVariantOrder(itemID)
@@ -558,8 +497,6 @@ local function ResolveBestOwnedVariantItemData(itemID, ownedItems)
     return ownedByID[itemID]
 end
 
--- Concatenates item-ID lists, dropping duplicates so a shared item isn't
--- double-counted. Order is preserved (first list's items rank first).
 local function MergeItemLists(a, b)
     local merged, seen = {}, {}
     for _, list in ipairs({ a, b }) do
@@ -699,9 +636,6 @@ local function GetOwnedItemsForButton(buttonType)
             if config.source == "spell" then
                 return GetKnownSpellsForConfig(config)
             elseif config.items then
-                -- Item-based slots (Hunter ammo) also surface weapon oils/stones,
-                -- so a configured oil macro can be suggested on the bow. Ammo keeps
-                -- its priority (listed first), so the no-macro default is unchanged.
                 return BuildOwnedItemsFromList(MergeItemLists(config.items, OIL_ITEMS))
             end
         end
@@ -716,17 +650,11 @@ local function ResolveSelectedOwnedItem(buttonType, ownedItems)
     if preferredItemID then
         local preferredVariant = ResolveBestOwnedVariantItemData(preferredItemID, ownedItems)
         if preferredVariant then
-            -- Runes intentionally defer to the list-ordered top entry (current
-            -- augment rune) over any explicit/macro preference; with today's
-            -- single configurable augment family this matches the macro default.
             if buttonType == "rune" and ownedItems[1] and ownedItems[1]._listOrder then
                 return ownedItems[1]
             end
             return preferredVariant
         end
-        -- Only an explicit right-click preference is stored in settings, so it's
-        -- the only thing that can be stale and cleared. The macro default is
-        -- derived live and must never be written back.
         if explicitItemID then
             SetPreferredItemID(buttonType, nil)
         end
@@ -734,16 +662,6 @@ local function ResolveSelectedOwnedItem(buttonType, ownedItems)
     return ownedItems[1]
 end
 
----------------------------------------------------------------------------
--- STATE DIFF + INVENTORY SNAPSHOT CACHE
--- One on-demand snapshot of per-button owned items + resolved selection.
--- UNIT_AURA repaints reuse it; it is invalidated only on bag / equipment /
--- roster / preference changes (seams wired near eventFrame below).
----------------------------------------------------------------------------
-
--- Pure equality over the comparable per-button state fields. Both sides
--- hold only plain values (probed via SafeValue/SafeToNumber before they
--- are stored), so == is safe here.
 local function ButtonStatesEqual(a, b)
     if a == nil or b == nil then
         return a == b
@@ -757,9 +675,6 @@ local function ButtonStatesEqual(a, b)
         and a.count == b.count
 end
 
--- Pure diff of two per-button state maps. Returns the array of buttonTypes
--- whose state changed (repaint set) and whether the shown set changed
--- (layout/resize needed). prev may be nil (forced full repaint).
 local function DiffButtonStates(prev, next, buttonTypes)
     local changed = {}
     local visibilityChanged = false
@@ -783,7 +698,7 @@ local snapshotCache = { entries = nil, hasWarlock = nil, lastStates = nil, layou
 local function InvalidateInventorySnapshot()
     snapshotCache.entries = nil
     snapshotCache.hasWarlock = nil
-    snapshotCache.lastStates = nil -- next update repaints everything
+    snapshotCache.lastStates = nil
 end
 
 local function GetSnapshotEntry(buttonType)
@@ -838,14 +753,10 @@ local function ConfigureButtonClickAction(button, buttonType, data, showGlow)
     end
 end
 
--- Per-button preferred-icon override (was the aggregate
--- ApplyPreferredItemIcons); PaintButton applies it in the same position of
--- the paint sequence, so the last-write-wins icon result is unchanged.
 local function ApplyPreferredIcon(button, buttonType)
     if not button then return end
     local preferredID = GetPreferredItemID(buttonType) or GetMacroPreferredItemID(buttonType)
     if not preferredID then return end
-    -- Check if this is a spell preference (for class-based enhancements)
     local slot = (buttonType == "oilMH" and "MH") or (buttonType == "oilOH" and "OH") or nil
     local config = slot and GetEnhancementConfig(slot)
     if config and config.source == "spell" then
@@ -857,15 +768,6 @@ local function ApplyPreferredIcon(button, buttonType)
     end
 end
 
--- 12.1: GetAuraDataByIndex throws while aura data is secret. Player consumable
--- buffs can't change in combat, so when auras are secret the walk doesn't start
--- and callers keep the last displayed state instead of erroring. Otherwise the
--- walk is UNBOUNDED, matching the iterator's own termination contract: plain
--- nil terminates, pcall-fail terminates, and a per-spell SECRET entry is
--- SKIPPED (secret entry ≠ end-of-list) — the old 1..40 bound silently
--- truncated heavy aura sets, and folding a secret entry to nil then breaking
--- ended the scan at the first secret element. Callback returning true stops
--- the walk early.
 local C_Secrets = C_Secrets
 local function ForEachPlayerHelpfulAura(callback)
     if C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret() then
@@ -894,7 +796,6 @@ local function ScanPlayerBuffs()
         foodData = nil, flaskData = nil, runeData = nil,
         weaponMHData = nil, weaponOHData = nil,
     }
-    -- Check aura-based weapon enhancements (rogues)
     local mhConfig = GetEnhancementConfig("MH")
     local ohConfig = GetEnhancementConfig("OH")
     local checkMHAura = mhConfig and mhConfig.checkType == "playerAura"
@@ -922,10 +823,6 @@ local function ScanPlayerBuffs()
     return result
 end
 
----------------------------------------------------------------------------
--- CONSUMABLES FRAME
----------------------------------------------------------------------------
-
 local ConsumablesFrame = CreateFrame("Frame", "QUI_ConsumablesFrame", UIParent)
 ConsumablesFrame:SetSize(DEFAULT_BUTTON_SIZE * 6 + BUTTON_SPACING * 5, DEFAULT_BUTTON_SIZE + 18)
 ConsumablesFrame:Hide()
@@ -943,8 +840,6 @@ local function HideConsumablesFrameNow()
             button.click:Hide()
         end
     end
-    -- Rendered state diverged from the diff bookkeeping (clicks hidden);
-    -- the next update after a re-show must repaint everything.
     snapshotCache.lastStates = nil
 end
 
@@ -956,7 +851,6 @@ local function EnsureConsumableCombatDeferFrame()
         f:UnregisterEvent("PLAYER_REGEN_ENABLED")
         if hideConsumablesAfterCombat then
             hideConsumablesAfterCombat = false
-            -- In persistent mode, restore visibility instead of hiding
             local settings = GetSettings()
             if settings and settings.consumablePersistent and settings.consumableCheckEnabled ~= false then
                 ConsumablesFrame:SetAlpha(1)
@@ -970,7 +864,6 @@ end
 
 RequestHideConsumablesFrame = function()
     HideConsumablePicker()
-    -- In persistent mode, never auto-hide (close button calls HideConsumablesFrameNow directly)
     local settings = GetSettings()
     if settings and settings.consumablePersistent and settings.consumableCheckEnabled ~= false then
         return
@@ -978,7 +871,6 @@ RequestHideConsumablesFrame = function()
     if InCombatLockdown() then
         hideConsumablesAfterCombat = true
         if ConsumablesFrame:IsShown() then
-            -- In combat we cannot hide this protected frame safely, so make it invisible immediately.
             ConsumablesFrame:SetAlpha(0)
         end
         EnsureConsumableCombatDeferFrame()
@@ -990,7 +882,6 @@ RequestHideConsumablesFrame = function()
     HideConsumablesFrameNow()
 end
 
--- Close button
 local CLOSE_BUTTON_HEIGHT = 18
 
 local closeButton = CreateFrame("Button", nil, ConsumablesFrame)
@@ -1019,10 +910,6 @@ closeButton:SetScript("OnClick", function()
     RequestHideConsumablesFrame()
 end)
 ConsumablesFrame.closeButton = closeButton
-
----------------------------------------------------------------------------
--- BUTTON CREATION
----------------------------------------------------------------------------
 
 local function CreateConsumableButton(parent, index, buttonType, iconID, isClickable, buttonSize)
     local button = CreateFrame("Frame", nil, parent)
@@ -1166,11 +1053,11 @@ local function EnsurePickerFrame()
     pickerFrame.rows = {}
     pickerFrame.activeRows = {}
     do
-        local bgr, bgg, bgb = 0.05, 0.05, 0.05     -- original fallback literals
+        local bgr, bgg, bgb = 0.05, 0.05, 0.05
         if Helpers and Helpers.GetSkinBgColor then
             bgr, bgg, bgb = Helpers.GetSkinBgColor()
         end
-        local sr, sg, sb = 0.35, 0.35, 0.35        -- original fallback literals
+        local sr, sg, sb = 0.35, 0.35, 0.35
         if Helpers and Helpers.GetSkinBorderColor then
             sr, sg, sb = Helpers.GetSkinBorderColor()
         end
@@ -1216,7 +1103,6 @@ HideConsumablePicker = function()
         end
         pickerFrame.ownerButton = nil
         if InCombatLockdown() then
-            -- Defer hide until combat ends to avoid ADDON_ACTION_BLOCKED
             local f = CreateFrame("Frame")
             f:RegisterEvent("PLAYER_REGEN_ENABLED")
             f:SetScript("OnEvent", function(self)
@@ -1372,17 +1258,10 @@ local function InitializeButtons()
         buttons[def[1]] = button
     end
 
-    snapshotCache.lastStates = nil -- buttons recreated; nothing is painted yet
+    snapshotCache.lastStates = nil
     ConsumablesFrame.buttonSize = buttonSize
 end
 
----------------------------------------------------------------------------
--- CLASS-AWARE ENHANCEMENT DETECTION
----------------------------------------------------------------------------
-
--- Probed aura display fields. Both literals below are load-bearing pins
--- (consumablecheck_pcall_removal_test): SafeValue/SafeToNumber run before
--- any use, so the returned values are plain and ==-comparable.
 local function AuraStateFields(auraData, now)
     if not auraData then return nil, "" end
     local icon = Helpers.SafeValue(auraData.icon)
@@ -1394,13 +1273,6 @@ local function AuraStateFields(auraData, now)
     return icon, timeText
 end
 
--- Compute-only replacement for the old per-slot paint-while-checking
--- enhancement function: same three branches (playerAura / class
--- weaponEnchant / default item oil), but it
--- returns state instead of painting. The aura branch reads the weapon aura
--- ScanPlayerBuffs already collected (fields probed there), so the per-slot
--- aura re-walk is gone. SaveLastWeaponEnchant keeps its old default-branch
--- side effect (runs only for slots with no class config).
 local function ComputeEnhancementState(slot, hasEnchant, enchantExpiration, enchantID, buffs, now)
     local config = GetEnhancementConfig(slot)
 
@@ -1417,7 +1289,6 @@ local function ComputeEnhancementState(slot, hasEnchant, enchantExpiration, ench
         if hasEnchant then
             local icon
             if enchantID and config.anyEnchantIDs and config.anyEnchantIDs[enchantID] then
-                -- Known class enchant - use the spell icon for the active enchant
                 if config.spells then
                     for _, spell in ipairs(config.spells) do
                         local spellIcon = C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(spell.spellID)
@@ -1428,7 +1299,6 @@ local function ComputeEnhancementState(slot, hasEnchant, enchantExpiration, ench
                     end
                 end
             elseif enchantID and WEAPON_ENCHANTS[enchantID] then
-                -- Fallback: known item enchant (should not happen for class enhancements)
                 icon = WEAPON_ENCHANTS[enchantID].icon
             end
             local timeText = ""
@@ -1440,7 +1310,6 @@ local function ComputeEnhancementState(slot, hasEnchant, enchantExpiration, ench
         return false, nil, ""
     end
 
-    -- Default: item-based oil/stone detection via GetWeaponEnchantInfo
     local invSlot = slot == "MH" and INVSLOT_MAINHAND or INVSLOT_OFFHAND
     if hasEnchant then
         local icon
@@ -1455,7 +1324,6 @@ local function ComputeEnhancementState(slot, hasEnchant, enchantExpiration, ench
         end
         return true, icon, timeText
     end
-    -- Restore last known icon when enchant has expired
     local lastEnchant = GetLastWeaponEnchant(invSlot)
     if lastEnchant and lastEnchant.icon then
         return false, lastEnchant.icon, ""
@@ -1463,7 +1331,6 @@ local function ComputeEnhancementState(slot, hasEnchant, enchantExpiration, ench
     return false, nil, ""
 end
 
--- Checks whether an OH enhancement button should be visible for the current class
 local function ShouldShowOHButton(settings)
     if settings.consumableOilOH == false then return false end
     local config = GetEnhancementConfig("OH")
@@ -1473,25 +1340,13 @@ local function ShouldShowOHButton(settings)
         end
         return true
     end
-    -- No class config for OH: check if class explicitly has no OH (Paladin, Hunter)
     local classConfig = CLASS_ENHANCEMENT_CONFIG[playerClass]
     if classConfig and classConfig.MH and not classConfig.OH then
         return false
     end
-    -- Default: show if dual wielding
     return IsDualWielding()
 end
 
--- Desired-state computation: one comparable table per category button.
--- Every field is a PLAIN value (probed upstream) so ButtonStatesEqual can
--- ==-compare freely:
---   shown      button is in the visible layout set
---   active     buff/enchant present
---   icon       icon to force while dressed (nil keeps default/preferred)
---   timeText   pre-rendered remaining-time label ("" when none)
---   clickable  a secure use-action can be (re)configured this pass
---   itemID     resolved use-item from the snapshot (nil when not clickable)
---   count      rendered count (selected item stack / healthstone total)
 local function ComputeDesiredStates(settings, canUseItems)
     local now = GetTime()
     local buffs = ScanPlayerBuffs()
@@ -1548,8 +1403,6 @@ local function ComputeDesiredStates(settings, canUseItems)
         end
     end
 
-    -- Snapshot-backed action fields. Only touched out of combat, so the
-    -- on-demand snapshot build (bag walk) can never run in lockdown.
     if canUseItems then
         for _, buttonType in ipairs(BUTTON_TYPES) do
             local state = states[buttonType]
@@ -1568,14 +1421,9 @@ local function ComputeDesiredStates(settings, canUseItems)
     return states
 end
 
--- Repaints ONE button from its computed state. Mirrors the old
--- reset -> aura dress -> preferred icon -> action-config sequence exactly,
--- so the final pixels match the pre-split pipeline; callers invoke it only
--- for buttons whose state actually changed.
 local function PaintButton(button, buttonType, state)
     if repaintLog then repaintLog[#repaintLog + 1] = buttonType end
 
-    -- Reset (old lines: per-button reset loop)
     button.status:SetTexture("Interface\\RaidFrame\\ReadyCheck-NotReady")
     if button.defaultIcon then
         button.icon:SetTexture(button.defaultIcon)
@@ -1592,7 +1440,6 @@ local function PaintButton(button, buttonType, state)
     end
     StopButtonGlow(button)
 
-    -- Dress
     if state.active then
         button.status:SetTexture("Interface\\RaidFrame\\ReadyCheck-Ready")
         button.icon:SetDesaturated(false)
@@ -1607,11 +1454,8 @@ local function PaintButton(button, buttonType, state)
         button.countText:SetText(tostring(state.count or 0))
     end
 
-    -- If a preferred item is configured, use that icon for the category.
     ApplyPreferredIcon(button, buttonType)
 
-    -- Action (combat-gated via state.clickable, which is computed from
-    -- canUseItems = not InCombatLockdown())
     if state.clickable then
         local entry = GetSnapshotEntry(buttonType)
         if entry and entry.selected then
@@ -1620,15 +1464,12 @@ local function PaintButton(button, buttonType, state)
     end
 end
 
--- Position + resize pass. Runs only when the shown set changed (or a full
--- repaint was forced) and NEVER in combat — identical gating to the old
--- inline layout block.
 local function ApplyButtonLayout(states)
     layoutRuns = layoutRuns + 1
     local buttons = ConsumablesFrame.buttons
     local xOffset = 0
     local buttonSize = ConsumablesFrame.buttonSize or DEFAULT_BUTTON_SIZE
-    local buttonY = CLOSE_BUTTON_HEIGHT  -- buttons sit above close button
+    local buttonY = CLOSE_BUTTON_HEIGHT
     local visibleCount = 0
     for _, buttonType in ipairs(BUTTON_TYPES) do
         local button = buttons[buttonType]
@@ -1651,18 +1492,10 @@ local function ApplyButtonLayout(states)
     ConsumablesFrame:SetSize(frameWidth, buttonSize + CLOSE_BUTTON_HEIGHT)
 end
 
----------------------------------------------------------------------------
--- UPDATE CONSUMABLE STATUS
----------------------------------------------------------------------------
-
 UpdateConsumables = function()
     local settings = GetSettings()
     if not settings then return end
 
-    -- Aura data secret (combat restriction): the buff scan below collapses to
-    -- nothing (AuraScanCount() == 0), so resetting first would wipe the
-    -- last-known display and repaint everything Not-Ready. Player consumable
-    -- buffs can't change while restricted; keep the last rendered state.
     if C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret() then
         return
     end
@@ -1678,7 +1511,6 @@ UpdateConsumables = function()
 
     local canUseItems = not InCombatLockdown()
 
-    -- Compute desired button states
     local states = ComputeDesiredStates(settings, canUseItems)
 
     local forceFull = snapshotCache.lastStates == nil
@@ -1696,9 +1528,6 @@ UpdateConsumables = function()
         HideConsumablePicker()
     end
 
-    -- Layout only when the visible set changed (or a full repaint was
-    -- forced). A combat-deferred layout is remembered in layoutDirty and
-    -- applied by the first out-of-combat update (PLAYER_REGEN_ENABLED path).
     if forceFull or visibilityChanged or snapshotCache.layoutDirty then
         if InCombatLockdown() then
             snapshotCache.layoutDirty = true
@@ -1708,10 +1537,6 @@ UpdateConsumables = function()
         end
     end
 end
-
----------------------------------------------------------------------------
--- WEAPON ENCHANT POLLING
----------------------------------------------------------------------------
 
 local lastMainHandEnchant = nil
 local lastOffHandEnchant = nil
@@ -1728,11 +1553,6 @@ local function CheckWeaponEnchantChanges()
     end
 end
 
--- Player-only registration (:1637 below) — never read the payload unit;
--- the C-level filter already restricts delivery to "player". PTR 68569
--- marks UNIT_AURA event-wide SecretWhenAurasRestricted, so the payload
--- unit may arrive as an opaque secret value in combat; updateInfo is
--- never consumed here so no probe is needed for it.
 ConsumablesFrame:SetScript("OnEvent", function(self, event)
     if event == "UNIT_AURA" then
         UpdateConsumables()
@@ -1758,32 +1578,22 @@ ConsumablesFrame:SetScript("OnHide", function(self)
     end
 end)
 
----------------------------------------------------------------------------
--- POSITIONING (frameAnchoring handles position via layout mode)
----------------------------------------------------------------------------
-
 local function PositionConsumablesFrame()
     if not InCombatLockdown() then
         ConsumablesFrame:SetScale(GetConsumableScale())
     end
     ConsumablesFrame:SetParent(UIParent)
     ConsumablesFrame:SetFrameStrata("DIALOG")
-    -- Skip repositioning when layout mode owns the frame (avoids fighting the handle system)
     local anchoring = ns.QUI_Anchoring
     if anchoring and anchoring.layoutOwnedFrames and anchoring.layoutOwnedFrames[ConsumablesFrame] then
         return
     end
-    -- Default position; frameAnchoring overrides if the user has positioned in layout mode
     ConsumablesFrame:ClearAllPoints()
     ConsumablesFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 100)
     if _G.QUI_ApplyAllFrameAnchors then
         _G.QUI_ApplyAllFrameAnchors()
     end
 end
-
----------------------------------------------------------------------------
--- INSTANCE HELPERS
----------------------------------------------------------------------------
 
 local function IsInDungeonInstance()
     local _, instanceType = IsInInstance()
@@ -1794,10 +1604,6 @@ local function IsInRaidInstance()
     local _, instanceType = IsInInstance()
     return instanceType == "raid"
 end
-
----------------------------------------------------------------------------
--- SHOW / TRIGGER LOGIC
----------------------------------------------------------------------------
 
 local function ShowConsumablesStandalone()
     HideConsumablePicker()
@@ -1856,10 +1662,6 @@ local function OnResurrect()
     ShowConsumablesStandalone()
 end
 
----------------------------------------------------------------------------
--- EXPIRATION WARNING
----------------------------------------------------------------------------
-
 local expirationTicker = nil
 local lastExpirationWarning = 0
 local WARNING_COOLDOWN = 60
@@ -1903,11 +1705,9 @@ local function CheckExpiringBuffs()
             end
         end
     end
-    -- Weapon enhancement expiration (class-aware)
     if settings.consumableOilMH ~= false then
         local mhConfig = GetEnhancementConfig("MH")
         if mhConfig and mhConfig.checkType == "playerAura" then
-            -- Aura-based (rogues): check aura expiration
             if buffs.hasWeaponMH and buffs.weaponMHData then
                 local expires = buffs.weaponMHData.expirationTime
                 if expires and expires > 0 then
@@ -1976,19 +1776,6 @@ local function StopExpirationMonitoring()
     if expirationTicker then expirationTicker:Cancel(); expirationTicker = nil end
 end
 
----------------------------------------------------------------------------
--- EVENT HANDLING
----------------------------------------------------------------------------
-
--- Inventory snapshot invalidation entry point. The storage collector is
--- always on (core/storage/collector.lua: "collection is a core service"),
--- so its coalesced "BagsChanged" / "EquippedChanged" publishes are the
--- batch boundaries for bag and equipment churn. The raw-event fallback
--- below exists for the headless unit harness, which loads this file with a
--- bare ns (no ns.Storage). None of these handlers read an event payload
--- (BAG_UPDATE_DELAYED and GROUP_ROSTER_UPDATE carry none; the bus charKey
--- and PLAYER_EQUIPMENT_CHANGED slot args are simply unused), so no secret
--- probes are needed here.
 local function OnInventoryPossiblyChanged()
     InvalidateInventorySnapshot()
     if ConsumablesFrame:IsShown() then
@@ -2045,17 +1832,6 @@ else
 end
 eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
 
--- LOD catch-up: first PEW already fired before this module loads.
--- ns.WhenLoggedIn is nil only in the headless test harness, where the old
--- never-firing PEW registration was equally inert.
---
--- This is ALSO the real init path: QUI_QoL is eager-LoadAddOn'd by the core
--- from OnEnable, so the ADDON_LOADED self-event above is never delivered to its
--- just-registered handler and InitializeButtons() never runs that way. Build the
--- buttons here (WhenLoggedIn fires immediately for a post-login LOD load), before
--- any READY_CHECK / PLAYER_REGEN_ENABLED handler can call UpdateConsumables on an
--- empty buttons table. InitializeButtons is idempotent, so the dead ADDON_LOADED
--- fallback re-running it (non-eager contexts) is harmless.
 if ns.WhenLoggedIn then
     ns.WhenLoggedIn(function()
         InitializeButtons()
@@ -2076,7 +1852,6 @@ if ns.WhenLoggedIn then
     end)
 end
 
--- Combat lockdown: hide clickable buttons, restore after combat
 local combatFrame = CreateFrame("Frame")
 combatFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
 combatFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
@@ -2088,9 +1863,6 @@ combatFrame:SetScript("OnEvent", function(self, event)
                 button.click:Hide()
             end
         end
-        -- Clicks just got hidden outside the paint pipeline; drop the diff
-        -- bookkeeping so both the first in-combat update and the
-        -- PLAYER_REGEN_ENABLED update repaint (and re-arm actions) fully.
         snapshotCache.lastStates = nil
     elseif event == "PLAYER_REGEN_ENABLED" then
         if hideConsumablesAfterCombat then
@@ -2100,7 +1872,6 @@ combatFrame:SetScript("OnEvent", function(self, event)
     end
 end)
 
--- Zone change: restart expiration monitoring
 local zoneFrame = CreateFrame("Frame")
 zoneFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 zoneFrame:SetScript("OnEvent", function()
@@ -2113,10 +1884,6 @@ zoneFrame:SetScript("OnEvent", function()
     end)
 end)
 
----------------------------------------------------------------------------
--- GLOBAL API
----------------------------------------------------------------------------
-
 _G.QUI_RefreshConsumables = function()
     InvalidateInventorySnapshot()
     if ConsumablesFrame:IsShown() then
@@ -2127,7 +1894,6 @@ _G.QUI_RefreshConsumables = function()
         ConsumablesFrame:ClearAllPoints()
         ConsumablesFrame:SetPoint(point, relativeTo, relativePoint, x, y)
     end
-    -- Re-apply picker frame skin colors on theme change.
     if pickerFrame then
         local bgr, bgg, bgb = 0.05, 0.05, 0.05
         if Helpers and Helpers.GetSkinBgColor then
@@ -2146,7 +1912,6 @@ _G.QUI_RefreshConsumables = function()
     end
 end
 
-
 _G.QUI_ShowConsumables = function() ShowConsumablesStandalone() end
 _G.QUI_HideConsumables = function() RequestHideConsumablesFrame() end
 
@@ -2157,9 +1922,6 @@ if ns.Registry then
         group = "qol",
         importCategories = { "qol" },
     })
-    -- Companion skinning registration: the picker frame bg/border track the
-    -- global skin, but the "qol" group isn't refreshed on a skin-color change
-    -- (which fires only RefreshAll("skinning")). Re-skin on that too.
     ns.Registry:Register("consumablesSkin", {
         refresh = _G.QUI_RefreshConsumables,
         priority = 30,

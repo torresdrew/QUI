@@ -1,24 +1,5 @@
----------------------------------------------------------------------------
--- WEEKLY REWARDS FRAME SKINNING (Great Vault)
---
--- WeeklyRewardsFrame uses bespoke evergreen-atlas chrome
--- (Blizzard_WeeklyRewards/Blizzard_WeeklyRewards.xml:496-) instead of
--- the standard NineSlice/Bg/TopTileStreaks template family:
---   - .Background           (evergreen-weeklyrewards-frame-back)
---   - .BorderShadow         (evergreen-weeklyrewards-frame-back-shadow)
---   - .Divider1 / .Divider2 (evergreen-weeklyrewards-divider)
---   - .BorderContainer.Border    (evergreen-weeklyrewards-frame)
---   - .BorderContainer.TopDecor  (evergreen-weeklyrewards-frame-topdecor)
---   - .HeaderFrame.HeaderDivider (evergreen-weeklyrewards-header)
---   - .SelectRewardButton.Background (evergreen-weeklyrewards-frame-selectbutton)
---   - .Blackout.Texture     (semi-transparent dim during transitions)
--- Close button lives at WeeklyRewardsFrame.CloseButton.
----------------------------------------------------------------------------
-
 local addonName, ns = ...
 
--- Master skinning gate (skinning.enabled): disabled + /reload installs no QUI
--- skin hooks for this file. Default ON; reload-required. See core/uikit.lua.
 if ns.IsSkinningEnabled and not ns.IsSkinningEnabled() then return end
 local SkinBase = ns.SkinBase
 local GetCore = ns.Helpers.GetCore
@@ -46,8 +27,6 @@ local function HideWeeklyRewardsChrome(frame)
         frame.SelectRewardButton.Background:Hide()
     end
 
-    -- The .Blackout child is a transient dim overlay during reward selection;
-    -- leave it functional (it has its own mouse capture).
 end
 
 local function ApplyWeeklyRewardsSkin(frame)
@@ -64,20 +43,11 @@ local function ApplyWeeklyRewardsSkin(frame)
     end
 
     SkinBase.ApplyButtonFontObjectsDeep(frame, 4)
-    -- The "Select Reward" CTA is a UIPanelButton. Give it the QUI backdrop +
-    -- hover/pushed/disabled border (it otherwise renders as bare text over the
-    -- parent backdrop). The engine also swaps its Highlight/Disabled font OBJECT
-    -- on hover/disable WITHOUT calling a setter, so LockFontObject (setter hook)
-    -- can't catch it — drive the button's font objects directly (SkinButton's
-    -- own font is opt-in/off).
     if frame.SelectRewardButton then
         SkinBase.SkinButton(frame.SelectRewardButton)
         SkinBase.ApplyButtonFontObjects(frame.SelectRewardButton)
     end
 
-    -- Reward item icons: crop + quality border. Hook the item mixin's
-    -- SetDisplayedItem (self = the reward ItemFrame) so dynamically-populated
-    -- rewards are skinned as they appear. Idempotent per mixin + per icon.
     if SkinBase.SkinIcon and _G.WeeklyRewardActivityItemMixin
         and not SkinBase.GetFrameData(_G.WeeklyRewardActivityItemMixin, "qRewardIconHooked") then
         hooksecurefunc(_G.WeeklyRewardActivityItemMixin, "SetDisplayedItem", function(self)

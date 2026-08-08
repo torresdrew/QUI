@@ -1,15 +1,6 @@
--- cdm_resolvers.lua
--- Pure resolution layer for the QUI CDM owned engine.
--- Functions in this file MUST NOT write to frames; they compute and return values.
--- Runtime query/cache wrappers live in cdm_runtime_queries.lua so resolvers
--- consume source facts through a narrow shared seam.
-
 local _, ns = ...
 local Shared = ns.CDMShared
 
--- WoW provides `wipe`; the standalone test harness does not. Mirror the
--- fallback used by cdm_icon_runtime_refresh.lua so the scratch-reuse helpers
--- below work in both environments.
 local wipe = wipe or function(tbl)
     for key in pairs(tbl) do
         tbl[key] = nil
@@ -21,25 +12,14 @@ ns.CDMResolvers = CDMResolvers
 local Scheduler = ns.CDMScheduler
 local Sources = ns.CDMSources
 
-local resolverStats -- debug counters; nil until QUI_Debug activates instrumentation
-local currentResolveCallerTag -- string or nil; set by SetResolveCallerTag before each resolve
-local markFn -- profiler hook; bound at debug activation (nil otherwise)
+local resolverStats
+local currentResolveCallerTag
+local markFn
 local function MemAuditProfilerMark(name)
     if markFn then markFn(name) end
 end
 
----------------------------------------------------------------------------
--- Event bus
---
--- Synchronous dispatch with a per-call snapshot of the subscriber list. The
--- snapshot is intentional: it freezes which handlers fire for the current
--- publish so that subscribing during dispatch doesn't include the new
--- handler in the in-flight event (verified by tests/unit/cdm_bus_test.lua).
--- Subscribers run in the resolver's tick. Events carry IDs only; subscribers
--- pull fresh state through the runtime query wrappers. See spec:
--- docs/superpowers/specs/2026-05-05-cdm-blizzard-child-decoupling-design.md
----------------------------------------------------------------------------
-local _subscribers = {} -- [eventName] = { handler1, handler2, ... }
+local _subscribers = {}
 
 local _fallbackSnapshotPool = {}
 local _fallbackSnapshotPoolN = 0
@@ -67,6 +47,7 @@ local function publish(eventName, ...)
 
     for i = 1, n do snapshot[i] = list[i] end
     for i = 1, n do
+        ---@diagnostic disable-next-line: redundant-parameter
         xpcall(snapshot[i], geterrorhandler(), eventName, ...)
     end
 
@@ -106,15 +87,6 @@ function CDMResolvers.Unsubscribe(eventName, handler)
     end
 end
 
----------------------------------------------------------------------------
--- Catalog rebuild
---
--- Bumps CDMResolvers._catalogVersion when the cdID<->spell catalog actually
--- reshapes (spec / talent / spell-list changes). Combat-deferred: these can
--- fire inside combat, so the rebuild waits for PLAYER_REGEN_ENABLED. Encounter
--- / Mythic+ / rated-PvP starts only re-randomize aura instance IDs (not the
--- catalog), so no catalog rebuild is needed for those boundaries.
----------------------------------------------------------------------------
 local _busEventFrame = CreateFrame("Frame")
 local _rebuildPending = false
 
@@ -132,10 +104,6 @@ CDMResolvers._RebuildCatalog = RebuildCatalog
 _busEventFrame:RegisterEvent("PLAYER_LOGIN")
 _busEventFrame:RegisterEvent("TRAIT_TREE_CHANGED")
 _busEventFrame:RegisterEvent("SPELLS_CHANGED")
--- ENCOUNTER_START / CHALLENGE_MODE_START / PVP_MATCH_ACTIVE are NOT catalog
--- triggers: those boundaries only re-randomize aura instance IDs, not the
--- cdID<->spell catalog, so no full catalog rebuild is deferred to
--- PLAYER_REGEN_ENABLED for them.
 _busEventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 _busEventFrame:SetScript("OnEvent", function(_, evt)
     if evt == "PLAYER_REGEN_ENABLED" then
@@ -145,20 +113,6 @@ _busEventFrame:SetScript("OnEvent", function(_, evt)
     RebuildCatalog()
 end)
 
----------------------------------------------------------------------------
--- Runtime delta publication
---
--- The resolver owns cooldown/charge runtime event registration and publishes
--- CDM:* events when state changes. Consumers subscribe to the bus and pull
--- fresh state via the runtime query wrappers. UNIT_AURA is handled by
--- cdm_spelldata.lua because its batched payload is the source of truth.
----------------------------------------------------------------------------
-
--- Hoisted from its original position later in this file (kept as a single
--- definition, not duplicated there) so _runtimeFrame's OnEvent handler below
--- can call it: a function literal only resolves a name to an enclosing
--- local if that local was declared textually before the literal, and the
--- OnEvent handler needs it for the UNIT_SPELLCAST_SUCCEEDED branch.
 local WoW_IsSecretValue = issecretvalue
 local ResolverIsSecretValue = function(value)
     if WoW_IsSecretValue then
@@ -174,59 +128,27 @@ _runtimeFrame:RegisterEvent("SPELL_UPDATE_USES")
 _runtimeFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
 _runtimeFrame:RegisterUnitEvent("UNIT_SPELLCAST_START", "player")
 
--- _runtimeFrame's two unit events (UNIT_SPELLCAST_SUCCEEDED / _START,
--- registered above) are RegisterUnitEvent("player")-bound, so the C-side
--- filter already guarantees the unit. The token itself is documented
--- SecretWhenUnitSpellCastRestricted — a secret token here is
--- still the player; comparing it would throw, so neither branch inspects it.
-
--- Debug trace hook slot. The debug addon populates this at load time
--- so /cdmdebug spell <id> events can see SUC / SPELL_UPDATE_CHARGES /
--- SPELL_UPDATE_USES / UNIT_SPELLCAST_* fires — those events only route
--- through _runtimeFrame (registered above), never the icon-renderer
--- frame. Kept as a generic hook slot so this consolidated chunk does
--- not import the renderer module, per the architectural contract in
--- cdm_fast_visual_refresh_contract_test.lua. Stays nil when QUI_Debug
--- isn't loaded; the OnEvent body skips the call.
 ns.CDMRuntimeEventTraceHook = nil
 
 _runtimeFrame:SetScript("OnEvent", function(_, evt, arg1, arg2, arg3, arg4, arg5)
-    -- Per SpellBookDocumentation.lua:859 the SPELL_UPDATE_COOLDOWN
-    -- payload is (spellID, baseSpellID, category, startRecoveryCategory,
-    -- itemID) — capture all five for the trace. The publish() calls below
-    -- intentionally still forward only the fields existing subscribers
-    -- consume; arg3/arg4/arg5 propagate to the trace only.
     local traceHook = ns.CDMRuntimeEventTraceHook
     if traceHook then
-        traceHook("runtime-pre", evt, arg1, arg2, arg3, arg4, arg5)
+        if securecallfunction then
+            securecallfunction(traceHook, "runtime-pre", evt, arg1, arg2, arg3, arg4, arg5)
+        else
+            traceHook("runtime-pre", evt, arg1, arg2, arg3, arg4, arg5)
+        end
     end
 
     if evt == "SPELL_UPDATE_COOLDOWN" then
-        -- arg1 is Blizzard's spellID hint (may be nil for "update all").
-        -- Subscriber chooses per-spell fast-path vs global walk.
         publish("CDM:COOLDOWN_CHANGED", arg1, arg2, "refresh")
     elseif evt == "SPELL_UPDATE_CHARGES" or evt == "SPELL_UPDATE_USES" then
         publish("CDM:CHARGES_CHANGED", arg1, arg2)
     elseif evt == "UNIT_SPELLCAST_START" then
-        -- RegisterUnitEvent("player")-bound (see registration above): the
-        -- C-side filter guarantees identity, so arg1 is not inspected —
-        -- registered-token discipline, matching the SUCCEEDED branch below.
-        -- arg3 is independently secretizable (SecretWhenUnitSpellCastRestricted)
-        -- and lands in table keys downstream; skip publishing a secret one.
         if not ResolverIsSecretValue(arg3) then
             publish("CDM:COOLDOWN_CHANGED", arg3, nil, "cast_start")
         end
     elseif evt == "UNIT_SPELLCAST_SUCCEEDED" then
-        -- This frame is RegisterUnitEvent-bound to UNIT_SPELLCAST_SUCCEEDED("player")
-        -- only — the C-side unit filter already guarantees identity even
-        -- when the delivered unit token itself arrives opaque under
-        -- restriction, so arg1 is not inspected here (registered-token
-        -- discipline, same as the START branch above). Per UnitDocumentation.lua:4663-4674
-        -- (SecretWhenUnitSpellCastRestricted) spellID (arg3) is
-        -- independently secretizable; this dispatch is the single choke
-        -- point before CDM:COOLDOWN_CHANGED fans out to every subscriber,
-        -- so probe once here rather than in each consumer. A secret spellID
-        -- throws as a table key or in == downstream, so skip publishing it.
         if not ResolverIsSecretValue(arg3) then
             publish("CDM:COOLDOWN_CHANGED", arg3, nil, "cast_succeeded")
         end
@@ -271,9 +193,6 @@ local function CleanOpaqueValue(value)
 end
 
 function CDMResolvers.GetCooldownInfoField(info, key)
-    -- Returns (value, isSecret). Combat-restricted fields may be secret when
-    -- the Blizzard CDM feed is active; callers may pass the raw value to safe
-    -- C-side sinks but must not compare it in Lua when isSecret is true.
     if not info then return nil, false end
     local value = info[key]
     if ResolverIsSecretValue(value) then
@@ -299,9 +218,6 @@ local QueryDuration       = RuntimeQueries.QueryDuration
 local QueryGCDDuration    = RuntimeQueries.QueryGCDDuration
 local QueryChargeDuration = RuntimeQueries.QueryChargeDuration
 local QueryOverrideSpell  = RuntimeQueries.QueryOverrideSpell
-
-
--- IDENTITY RESOLVERS
 
 local function IsItemLikeEntry(entry)
     return entry and (entry.type == "item" or entry.type == "trinket" or entry.type == "slot")
@@ -362,11 +278,6 @@ local function ResolveItemCooldownIdentity(entry)
     return itemID, slotID, itemSpellID, keySource
 end
 
--- TEXTURE & MACRO RESOLVERS
-
--- Persistent texture cache: spellID→iconID rarely changes (only on talent
--- swap / spec change), so we keep it across ticks.  Wiped on SPELLS_CHANGED
--- and PLAYER_SPECIALIZATION_CHANGED to pick up new icons.
 local _textureCycleCache = {}
 CDMResolvers._textureCycleCache = _textureCycleCache
 
@@ -414,17 +325,16 @@ local function SetupDebugInstrumentation()
     mp[#mp + 1] = { name = "CDM_auraProbeExpensiveMiss",  counter = true, fn = function() return resolverStats.auraProbeExpensiveMiss end }
     ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
     ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "CDM_RuntimeEvents", frame = _runtimeFrame }
-    markFn = ns.MemAuditProfilerMark
-    -- Expose the setter only while debug is active; call sites guard with
-    -- `if Resolvers.SetResolveCallerTag then` and skip the call entirely when nil.
+    markFn = ns.DebugIsolate and ns.DebugIsolate(ns.MemAuditProfilerMark)
+        or ns.MemAuditProfilerMark
     CDMResolvers.SetResolveCallerTag = function(tag)
         currentResolveCallerTag = tag
     end
 end
-if ns.DebugRegister then -- gate contract: core/debug_gate.lua
+if ns.DebugRegister then
     ns.DebugRegister(SetupDebugInstrumentation)
 else
-    SetupDebugInstrumentation() -- standalone test harness: no gate, run eagerly
+    SetupDebugInstrumentation()
 end
 
 function CDMResolvers.GetSpellTexture(spellID)
@@ -442,25 +352,17 @@ function CDMResolvers.GetSpellTexture(spellID)
     return texID
 end
 
----------------------------------------------------------------------------
--- MACRO RESOLUTION
--- Resolve a macro custom entry to its current spell or item via
--- #showtooltip / GetMacroSpell / GetMacroItem.  Re-evaluated every tick
--- so the icon tracks conditional changes (target, modifiers, stance).
----------------------------------------------------------------------------
 function CDMResolvers.ResolveMacro(entry)
     local macroName = entry.macroName
     if not macroName then return nil, nil, nil end
     local macroIndex = GetMacroIndexByName(macroName)
     if not macroIndex or macroIndex == 0 then return nil, nil, nil end
 
-    -- GetMacroSpell returns the spellID that #showtooltip resolves to
     local spellID = GetMacroSpell(macroIndex)
     if spellID then
         return spellID, "spell", nil
     end
 
-    -- GetMacroItem returns itemName, itemLink for /use macros
     local itemName, itemLink = GetMacroItem(macroIndex)
     if itemLink then
         local itemID
@@ -472,7 +374,6 @@ function CDMResolvers.ResolveMacro(entry)
         end
     end
 
-    -- Fallback: macro's own icon (no resolvable cooldown)
     local _, _, macroIcon = GetMacroInfo(macroIndex)
     return nil, nil, macroIcon
 end
@@ -495,8 +396,6 @@ function CDMResolvers.GetEntryTexture(entry)
         return fallbackTex
     end
     if entry.type == "trinket" or entry.type == "slot" then
-        -- Trinket/slot entries store the equipment slot number (13/14), not the item ID.
-        -- Resolve to the actual equipped item ID before looking up the icon.
         local itemID = entry.itemID
         if not itemID and Sources and Sources.QueryInventoryItemID then
             itemID = Sources.QueryInventoryItemID("player", entry.id)
@@ -520,11 +419,6 @@ function CDMResolvers.GetEntryTexture(entry)
         return icon
     end
     if entry.type == "consumable" then
-        -- Categorized consumable (potion/healthstone): entry.id is a spell
-        -- CATEGORY id, never a spellID — falling through to GetSpellTexture
-        -- would return nil and leave the icon blank. The category icon always
-        -- wins on the native frame (CooldownViewerItemData GetSpellTexture),
-        -- so mirror it from the catalog meta.
         local Catalog = ns.CDMCatalog
         local meta = Catalog and Catalog.GetConsumableCategoryMeta
             and Catalog.GetConsumableCategoryMeta(entry.id)
@@ -532,13 +426,6 @@ function CDMResolvers.GetEntryTexture(entry)
     end
     return CDMResolvers.GetSpellTexture(entry.overrideSpellID or entry.id)
 end
-
----------------------------------------------------------------------------
--- CLASSIFICATION
--- (IsSafeNumeric/SafeBoolean local helpers and GCD_MAX_DURATION are
---  declared at the top of this file so runtime query
---  functions earlier in the file can also use them.)
----------------------------------------------------------------------------
 
 local function GetCooldownInfoBoolean(info, key)
     if not info then
@@ -549,8 +436,6 @@ local function GetCooldownInfoBoolean(info, key)
 end
 
 local function GetCurrentIsOnGCD(info)
-    -- isOnGCD is NeverSecret (per SpellCooldownInfo docs + .taintrc), so read it
-    -- straight off the cdInfo the resolver already fetched.
     return GetCooldownInfoBoolean(info, "isOnGCD")
 end
 
@@ -577,7 +462,6 @@ local function SpellMayHaveCharges(entry, spellID)
     return svCharges and svCharges[spellID] ~= nil or false
 end
 
-
 local function IsSupportedMirrorMode(mode)
     return mode == "aura"
         or mode == "cooldown"
@@ -593,9 +477,6 @@ end
 function CDMResolvers.GetSpellCastInfo(spellID)
     if not spellID or not UnitCastingInfo then return false end
     local _, _, _, startMS, endMS, _, _, _, castSpellID = UnitCastingInfo("player")
-    -- Per UnitDocumentation.lua SecretWhenUnitSpellCastRestricted, each return
-    -- can arrive secret while the player's cast is restricted; == and
-    -- arithmetic on a secret throw. nil = indeterminate, caller falls through.
     if ResolverIsSecretValue(castSpellID)
         or ResolverIsSecretValue(startMS)
         or ResolverIsSecretValue(endMS) then
@@ -689,8 +570,6 @@ local function NewCooldownActivityState(entry)
         isOnCooldown = false,
         rechargeActive = false,
         hasChargesRemaining = false,
-        -- Internal QUI metadata only; do not populate this from secret API
-        -- charge predicates.
         hasCharges = entry and entry.hasCharges or false,
         gcdOnly = false,
     }
@@ -833,12 +712,6 @@ local function ApplyChargeRuntimeFallback(state, entry, spellID, isItemLike)
     local ci = QueryCharges(spellID)
     if ci then
         local maxC = ci.maxCharges
-        -- Any spell that the charge API reports for (maxCharges >= 1) is a
-        -- charge-system spell. Single-charge cases include the shared brez
-        -- pool in raids/M+ (Rebirth/Raise Ally/Intercession), where the
-        -- displayed cooldown is the recharge timer, not a "spell blocked"
-        -- cooldown — so the icon must stay saturated while a charge is
-        -- available. Downstream `cdInfo.isActive` still gates actual usability.
         if IsSafeNumeric(maxC) and maxC >= 1 then
             state.hasCharges = true
         end
@@ -855,10 +728,6 @@ local function ApplyChargeRuntimeFallback(state, entry, spellID, isItemLike)
         state.isOnCooldown = true
         return
     elseif cooldownActive == false then
-        -- Do not use SpellChargeInfo.currentCharges here. The charge info
-        -- payload can be restricted in combat; a readable "spell cooldown is
-        -- inactive" signal is enough to know the charged spell is not fully
-        -- locked out.
         state.hasChargesRemaining = true
         state.isOnCooldown = false
     end
@@ -910,29 +779,18 @@ function CDMResolvers.ResolveCooldownActivityState(icon, entry, containerDB, now
     return ResolveCooldownActivityStateCore(icon, entry, containerDB, now, runtimeOptions)
 end
 
-
--- DURATION OBJECT RESOLVERS
-
 function CDMResolvers.IsAuraEntry(entry)
     if not entry then return false end
     local CDMSpellData = ns.CDMSpellData
     if CDMSpellData and CDMSpellData.IsAuraEntry then
         return CDMSpellData.IsAuraEntry(entry, entry.viewerType)
     end
-    -- Bootstrap fallback (CDMSpellData not yet loaded)
     if entry.kind == "aura" then return true end
     if entry.kind == "cooldown" then return false end
     local vt = entry.viewerType
     return vt == "buff" or vt == "trackedBar"
 end
 
--- Reused scratch + hoisted helpers for ResolveAuraActiveState. The old inline
--- versions allocated two tables AND up to four closures per call on the aura
--- probe path; module-level scratch (wiped per call) plus module-level helpers
--- removes all of that GC churn. The capture block (lookup/seen) is fully
--- consumed before the query block runs, and GetCapturedAuraForLookup iterates
--- the array synchronously without retaining it, so reuse is safe. Not
--- re-entrant: no callee re-enters ResolveAuraActiveState.
 local _auraActiveLookupIDs = {}
 local _auraActiveSeenLookup = {}
 local _auraActiveQuerySeen = {}
@@ -987,8 +845,6 @@ function CDMResolvers.ResolveAuraActiveState(entry)
         return false, nil, nil
     end
 
-    -- Captured UNIT_AURA payloads are combat-safe and include aura IDs that
-    -- differ from the configured cast/ability ID.
     local CDMSpellData = ns.CDMSpellData
     if CDMSpellData and CDMSpellData.GetCapturedAuraForLookup then
         wipe(_auraActiveLookupIDs)
@@ -1006,9 +862,6 @@ function CDMResolvers.ResolveAuraActiveState(entry)
         end
     end
 
-    -- Direct aura query fallback. If the query returns AuraData, existence is
-    -- enough to classify the aura as active; auraInstanceID is forwarded to
-    -- downstream C-side consumers.
     if Sources and (Sources.QueryUnitAuraBySpellID or Sources.QueryPlayerAuraBySpellID) then
         wipe(_auraActiveQuerySeen)
 
@@ -1029,8 +882,6 @@ function CDMResolvers.ResolveAuraActiveState(entry)
         end
     end
 
-    -- Name fallback for cast-id vs aura-id mismatches that share names and
-    -- are not in the CDM catalog.
     if entry.name and entry.name ~= ""
         and Sources and Sources.QueryAuraDataBySpellName then
         local auraData = Sources.QueryAuraDataBySpellName("player", entry.name, "HELPFUL")
@@ -1044,10 +895,6 @@ end
 
 local PLAYER_AURA_CAPTURE_LOOKUP_UNITS = { "player", "pet" }
 
--- Reused scratch + hoisted helpers for QueryCapturedPlayerAuraDuration; same
--- rationale as the ResolveAuraActiveState scratch above (kills two tables +
--- two closures per call). Distinct tables from the ResolveAuraActiveState
--- scratch, so the two are safe even if both run within one resolve sequence.
 local _capturedDurLookupIDs = {}
 local _capturedDurSeen = {}
 
@@ -1183,7 +1030,6 @@ local function QueryPlayerAuraDurationByName(name)
     return Sources.QueryAuraDuration("player", auraInstanceID), auraInstanceID, "player"
 end
 
-
 local function ClearCooldownStateContext(context)
     context.owner = nil
     context.entry = nil
@@ -1237,22 +1083,8 @@ function CDMResolvers.BuildCooldownStateContext(owner, entry, runtimeSpellID, op
     return context
 end
 
--- True when C_Spell.GetSpellCharges reports an active recharge cycle for a
--- multi-charge spell. Some charge spells (DK Death Charge is the reference
--- case) leave C_Spell.GetSpellCooldown.isActive=false while one charge is
--- regenerating, because the spell is castable from another charge and the
--- recharge timing lives only on the charges API. Matches Blizzard's
--- CooldownViewer CheckCacheCooldownValuesFromCharges precedence.
---
--- mayHaveCharges is a hint from the caller (entry.hasCharges / m.charges).
--- In combat we only probe the charges API when this hint is true or the
--- saved chargeSpells metadata already records the spell, to avoid
--- tainted API calls on bare cooldowns.
 local function HasActiveChargeRecharge(spellID, mayHaveCharges)
     if not spellID then return false end
-    -- A secret spellID (aura-phase GetSpellID in combat) cannot key the
-    -- saved cdmChargeSpells table -- indexing a table with a secret key
-    -- hard-errors. No charge determination is possible, so treat as none.
     if ResolverIsSecretValue(spellID) then return false end -- @secret-policy: reject-secret-value
     if InCombatLockdown and InCombatLockdown() and not mayHaveCharges then
         local gdb = QUI and QUI.db and QUI.db.global
@@ -1267,7 +1099,6 @@ local function HasActiveChargeRecharge(spellID, mayHaveCharges)
     if not (IsSafeNumeric(maxCharges) and maxCharges > 1) then return false end
     return DecodePotentialSecretBoolean(chargeInfo.isActive) == true
 end
-
 
 local QueryItemCooldown
 local QuerySlotCooldown
@@ -1289,10 +1120,6 @@ local function BuildDurationObjectFromStart(startTime, duration)
     return nil
 end
 
--- keySource is stable per entry (item/slot identity), so the derived
--- "item-duration:<key>" string is invariant across ticks. Rebuilding it every
--- resolve was pure GC churn on the hot item path; cache it on the icon and
--- only re-concat when the key actually changes.
 local function BuildItemDurationSourceID(icon, keySource)
     if not icon then
         return "item-duration:" .. tostring(keySource)
@@ -1451,7 +1278,7 @@ local function ResolveItemDurationObjectForIcon(icon, entry)
     if itemSpellID then
         local cdInfo = QueryCooldown(itemSpellID)
         local cdInfoActive = cdInfo and IsCooldownInfoActive(cdInfo)
-        if cdInfoActive == true and GetCurrentIsOnGCD(cdInfo) ~= true then
+        if cdInfoActive ~= false and GetCurrentIsOnGCD(cdInfo) ~= true then
             local durObj = QueryDuration(itemSpellID)
             if durObj then
                 return durObj, "item-cooldown",
@@ -1481,12 +1308,6 @@ QuerySlotCooldown = function(slotID)
     return _GetInventoryItemCooldown("player", slotID)
 end
 
--- Re-anchor engine surface: real item-cooldown duration object for a curated
--- item/trinket/slot entry WITHOUT icon context (native Blizzard frames own the
--- rendering; the aura-phase-off restyle in cdm_reanchor_boot only needs the
--- durObj). Reuses the full owned-icon resolution -- slot -> item -> use-spell
--- fallback, secret-safe numeric gating -- with the icon-cache reuse skipped
--- (nil icon). Returns nil when no item cooldown is rolling.
 function CDMResolvers.BuildEntryItemDurationObject(entry)
     local durObj, mode, _, startTime, duration = ResolveItemDurationObjectForIcon(nil, entry)
     if mode ~= "item-cooldown" then return nil end
@@ -1703,7 +1524,6 @@ local function ApplyAuraStateToCooldownState(state, aura, fallbackSpellID)
     end
     return true
 end
-
 
 local function ApplyCleanItemAuraTiming(state, itemID, spellID, resolvedAuraSpellID, auraUnit, auraInstanceID,
                                         expiration, duration, sourceSuffix)
@@ -1977,12 +1797,6 @@ local function FinalizeCooldownStateActivity(state, context, entry, sid, entryIs
         return CDMResolvers.NormalizeResolvedCooldownStateContract(state)
     end
 
-    -- mode == "cooldown": API said cdInfo.isActive == true and isOnGCD ~= true
-    -- at derivation. Trust that classification — no IsSpellUsable re-check,
-    -- no live cdInfo re-query.
-    --
-    -- Aura/item/macro entries can land here when no sid resolved; fall back
-    -- to state.active.
     if entryIsAura or itemBackedEntry or not sid then
         state.isOnCooldown = state.active == true
     else
@@ -2024,7 +1838,6 @@ local function ResolveCooldownStateCore(context)
         end
     end
     MemAuditProfilerMark("CDM_rsItemIdentity")
-
 
     local aura = ResolveAuraRuntimeStateForContext(context, entry, sid, entryIsAura)
     MemAuditProfilerMark("CDM_rsAuraRuntime")
@@ -2089,14 +1902,6 @@ local function ResolveCooldownStateCore(context)
 
     local entryMayHaveCharges = entry
         and (entry.hasCharges == true or entry.charges == true)
-    -- An active multi-charge recharge outranks the GCD swipe, mirroring
-    -- Blizzard's CooldownViewer (the recharge shows, not the incidental GCD
-    -- from casting other spells). Gated on currentOnGCD so it intercepts only
-    -- the on-GCD window: ShouldRenderLiveGCD(currentOnGCD) already gates the
-    -- real-cooldown branch below off whenever currentOnGCD is true, so a real
-    -- non-GCD cooldown still wins there, and an off-GCD recharge is handled by
-    -- the charge block at the end. Unholy DK Putrefy is the reference case
-    -- (flickered to a GCD swipe every global cooldown while a charge recharged).
     if currentOnGCD == true and HasActiveChargeRecharge(sid, entryMayHaveCharges) then
         local chargeDur = QueryChargeDuration(sid)
         if chargeDur then
@@ -2113,19 +1918,10 @@ local function ResolveCooldownStateCore(context)
     do
         local cdInfo = gcdCdInfo or QueryCooldown(sid)
         local cdInfoActive = cdInfo and IsCooldownInfoActive(cdInfo)
-        if cdInfoActive == true then
-            -- isOnGCD only selects the swipe lane (real-CD vs GCD); the icon's
-            -- saturation is driven lag-free by the real-CD-only DurationObject
-            -- curve in cdm_icon_renderer.lua, so a cosmetic-moment isOnGCD read
-            -- here can at most pick the wrong swipe for a frame, never strand
-            -- the dark/bright state the user sees.
+        if cdInfoActive ~= false then
             local cdInfoOnGCD = GetCurrentIsOnGCD(cdInfo)
             local durObj = QueryDuration(sid)
             local renderLiveGCD = ShouldRenderLiveGCD(cdInfoOnGCD)
-            -- Real CD classification needs only: isActive=true (already checked)
-            -- AND isOnGCD~=true. Both are NeverSecret. IsSpellUsable was
-            -- previously layered on top and flipped misclassification on
-            -- every resource tick.
             if durObj and not renderLiveGCD then
                 state.mode = "cooldown"
                 SetCooldownStateActivity(state, true)
@@ -2174,13 +1970,6 @@ local function ResolveCooldownStateCore(context)
         return FinalizeCooldownStateActivity(state, context, entry, sid, entryIsAura, itemBackedEntry)
     end
 
-    -- Charge recharge on a multi-charge spell that the cooldown API reports
-    -- as castable (cdInfo.isActive=false because a charge is still
-    -- available). Blizzard's CooldownViewer surfaces the recharge timing
-    -- from C_Spell.GetSpellCharges in this state — see
-    -- CheckCacheCooldownValuesFromCharges. Mirror it here so the recharge
-    -- swipe binds instead of falling through to inactive. (entryMayHaveCharges
-    -- is computed once above for the on-GCD recharge interception.)
     if HasActiveChargeRecharge(sid, entryMayHaveCharges) then
         local chargeDur = QueryChargeDuration(sid)
         if chargeDur then
@@ -2199,10 +1988,6 @@ local function ResolveCooldownStateCore(context)
     MemAuditProfilerMark("CDM_rsReturnInactive")
     return FinalizeCooldownStateActivity(state, context, entry, sid, entryIsAura, itemBackedEntry)
 end
-
--- SetResolveCallerTag is nil until QUI_Debug activates instrumentation; the
--- if-guards in cdm_icon_renderer.lua and cdm_icon_runtime_refresh.lua
--- short-circuit to a single nil-check when debug is off (mirrors measureFn/markFn).
 
 function CDMResolvers.ResolveCooldownState(context)
     if resolverStats then

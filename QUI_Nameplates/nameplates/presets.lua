@@ -1,25 +1,3 @@
---[[
-    QUI Nameplates — spec- and role-linked plate presets (v1.1 stretch).
-
-    A preset is a deep snapshot of the nameplates settings subtree. Two
-    storage tiers:
-
-    * SPEC presets — per specialization index, stored in the PROFILE
-      (settings.specPresets[specIndex]); auto-switch via
-      settings.specAutoSwitch.
-    * ROLE presets — per TANK/HEALER/DAMAGER, stored ACCOUNT-WIDE in
-      db.global.nameplateRolePresets so every character shares them;
-      auto-switch via the same global table's autoSwitch flag.
-
-    Auto-switch fires on PLAYER_SPECIALIZATION_CHANGED and (role tier only)
-    on initial login — a tank alt logs in with the tank setup. /reload never
-    re-applies (it would stomp unsaved tweaks mid-session). When both tiers
-    are armed and have a preset, the SPEC preset wins (more specific).
-
-    Excluded from snapshots: `enabled` (reload semantics — a preset must
-    never silently disable the module), and the preset storage itself.
-]]
-
 local ADDON_NAME, ns = ...
 local NP = ns.QUI_Nameplates
 if not NP then return end
@@ -33,7 +11,6 @@ local CreateFrame = CreateFrame
 local NPPresets = {}
 NP.Presets = NPPresets
 
--- Keys that never enter (or leave) a snapshot.
 local EXCLUDED_KEYS = {
     enabled = true,
     specPresets = true,
@@ -41,9 +18,6 @@ local EXCLUDED_KEYS = {
 }
 NPPresets.EXCLUDED_KEYS = EXCLUDED_KEYS
 
----------------------------------------------------------------------------
--- DEEP COPY (plain profile tables only — no frames, no secrets)
----------------------------------------------------------------------------
 local function CopyDeep(src)
     if type(src) ~= "table" then return src end
     local dst = {}
@@ -58,9 +32,6 @@ local function CopyDeep(src)
 end
 NPPresets.CopyDeep = CopyDeep
 
----------------------------------------------------------------------------
--- SNAPSHOT / APPLY (pure over the settings table — unit-tested offline)
----------------------------------------------------------------------------
 function NPPresets.Snapshot(settings)
     settings = settings or NP.GetSettings()
     local snap = {}
@@ -72,9 +43,6 @@ function NPPresets.Snapshot(settings)
     return snap
 end
 
--- Deep-copy a snapshot back over the live settings. Top-level tables are
--- wiped first so keys removed since the snapshot don't survive as ghosts;
--- excluded keys are left untouched.
 function NPPresets.ApplySnapshot(settings, snap)
     if type(settings) ~= "table" or type(snap) ~= "table" then return false end
     for k, v in pairs(snap) do
@@ -96,9 +64,76 @@ function NPPresets.ApplySnapshot(settings, snap)
     return true
 end
 
----------------------------------------------------------------------------
--- PER-SPEC STORAGE
----------------------------------------------------------------------------
+local STARTER_STYLES = {
+    compact = {
+        health = { width = 160, height = 14 },
+        castbar = { height = 12 },
+        name = { size = 10 },
+        healthText = { style = "none" },
+    },
+    chunky = {
+        health = { width = 240, height = 32 },
+        castbar = { height = 20 },
+        name = { size = 13 },
+        healthText = { style = "both" },
+    },
+}
+NPPresets.STARTER_STYLES = STARTER_STYLES
+
+function NPPresets.GetStarterStyleKeys()
+    return { "default", "compact", "chunky" }
+end
+
+local function IsArrayLike(t)
+    return type(t) == "table" and t[1] ~= nil
+end
+
+local function MergeDeep(target, patch)
+    for k, v in pairs(patch) do
+        if type(v) == "table" and not IsArrayLike(v) then
+            if type(target[k]) ~= "table" then target[k] = {} end
+            MergeDeep(target[k], v)
+        else
+            target[k] = CopyDeep(v)
+        end
+    end
+end
+
+function NPPresets.ApplyStyleTable(styleKey)
+    local settings = NP.GetSettings()
+    if type(settings) ~= "table" then return false end
+
+    NP.NormalizeTypes(settings)
+
+    if styleKey == "default" then
+        local shipped = ns.defaults and ns.defaults.profile and ns.defaults.profile.nameplates
+        if type(shipped) ~= "table" then return false end
+        return NPPresets.ApplySnapshot(settings, shipped)
+    end
+
+    local patch = STARTER_STYLES[styleKey]
+    if type(patch) ~= "table" then return false end
+
+    if type(settings.types) ~= "table" then return false end
+
+    for _, typeKey in ipairs(NP.PlateType.ORDER) do
+        local target = settings.types[typeKey]
+        if type(target) == "table" then
+            for k, v in pairs(patch) do
+                if not EXCLUDED_KEYS[k] then
+                    if type(v) == "table" then
+                        if type(target[k]) ~= "table" then target[k] = {} end
+                        MergeDeep(target[k], v)
+                    else
+                        target[k] = v
+                    end
+                end
+            end
+        end
+    end
+    return true
+end
+
 local function PresetStore()
     local settings = NP.GetSettings()
     settings.specPresets = settings.specPresets or {}
@@ -135,14 +170,9 @@ function NPPresets.ApplyForSpec(specIndex)
     return ok
 end
 
----------------------------------------------------------------------------
--- ROLE PRESETS (account-wide: db.global)
----------------------------------------------------------------------------
 NPPresets.ROLES = { "TANK", "HEALER", "DAMAGER" }
 local VALID_ROLES = { TANK = true, HEALER = true, DAMAGER = true }
 
--- Read-only peek: never materializes the store (auto-switch and existence
--- checks run on every spec change and must not write saved variables).
 local function PeekRoleStore()
     local db = _G.QUI and _G.QUI.db
     local g = db and db.global
@@ -150,8 +180,6 @@ local function PeekRoleStore()
 end
 NPPresets.PeekRoleStore = PeekRoleStore
 
--- Lazy-initialized global store for write paths (save/toggle UI); nothing
--- is written until the feature is used, so exports stay untouched.
 function NPPresets.GetRoleStore()
     local db = _G.QUI and _G.QUI.db
     local g = db and db.global
@@ -192,9 +220,6 @@ function NPPresets.ApplyForRole(role)
     return ok
 end
 
----------------------------------------------------------------------------
--- CURRENT SPEC / ROLE + AUTO-SWITCH
----------------------------------------------------------------------------
 function NPPresets.GetCurrentSpec()
     if not GetSpecialization then return nil end
     local ok, spec = pcall(GetSpecialization)
@@ -212,7 +237,6 @@ function NPPresets.GetCurrentRole()
     return nil
 end
 
--- Precedence: spec preset (profile, most specific) → role preset (global).
 local function AutoSwitch()
     if not NP.IsEnabled() then return end
 
@@ -244,15 +268,11 @@ end
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:SetScript("OnEvent", function(_, event, arg1)
     if event == "PLAYER_ENTERING_WORLD" then
-        -- arg1 = isInitialLogin. Fresh login applies the role/spec setup
-        -- (a tank alt gets tank plates); /reload deliberately does not —
-        -- it would stomp unsaved tweaks mid-session.
         if arg1 == true then
             AutoSwitch()
         end
         return
     end
-    -- PLAYER_SPECIALIZATION_CHANGED
     if arg1 ~= nil and arg1 ~= "player" then return end
     AutoSwitch()
 end)

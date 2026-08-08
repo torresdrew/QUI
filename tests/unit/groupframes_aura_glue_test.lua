@@ -2,6 +2,7 @@
 -- Run: lua tests/unit/groupframes_aura_glue_test.lua
 local function read(p) local h = assert(io.open(p, "rb")); local s = h:read("*a"); h:close(); return s end
 local src = read("QUI_GroupFrames/groupframes/groupframes_auras.lua")
+local coreSrc = read("core/aura_surface.lua")
 local fails = 0
 local function check(n, ok) if ok then print("  ok  " .. n) else fails = fails + 1; print("FAIL  " .. n) end end
 
@@ -17,9 +18,11 @@ check("defines BuildElementRenderList", src:find("BuildElementRenderList", 1, tr
 check("consumes ns.AuraGlue", src:find("ns.AuraGlue", 1, true) ~= nil)
 check("consumes ns.AuraSlots", src:find("ns.AuraSlots", 1, true) ~= nil)
 check("configures containers via AuraGlue.RunConfigPass", src:find("AuraGlue.RunConfigPass", 1, true) ~= nil)
-check("builds group descriptors via AuraGlue.ElementGroups", src:find("AuraGlue.ElementGroups", 1, true) ~= nil)
+check("builds group descriptors via AuraGlue.ElementGroups (now in core/aura_surface.lua)",
+    coreSrc:find("AuraGlue.ElementGroups", 1, true) ~= nil)
 check("derives layout profiles via AuraGlue.ElementProfile", src:find("AuraGlue.ElementProfile", 1, true) ~= nil)
-check("reconciles tracked slots via AuraSlots.Sync", src:find("AuraSlots.Sync", 1, true) ~= nil)
+check("reconciles tracked slots via AuraSlots.Sync (now in core/aura_surface.lua)",
+    coreSrc:find("AuraSlots.Sync", 1, true) ~= nil)
 check("live group-aura settings feed one shared profile override",
     src:find("function QUI_GFA.ProfileOverrides", 1, true) ~= nil
     and src:find("showDispelBorder", 1, true) ~= nil
@@ -28,7 +31,8 @@ check("live group-aura settings feed one shared profile override",
     and src:find("iconSkin", 1, true) ~= nil)
 check("profile override reaches both strip groups and tracked slots",
     src:find("AuraGlue.ElementProfile(element, profileOverrides)", 1, true) ~= nil
-    and src:find("AuraSlots.Sync(container, element, allowCreate, profileOverrides)", 1, true) ~= nil)
+    and src:find("profileOverrides = profileOverrides,", 1, true) ~= nil
+    and coreSrc:find("AuraSlots.Sync(container, element, allowCreate, opts.profileOverrides)", 1, true) ~= nil)
 check("parks unused slots via AuraSlots.Park", src:find("AuraSlots.Park", 1, true) ~= nil)
 -- Seed bucket must come from the ALWAYS-LOADED model shim, never Options-side:
 -- the seed latches elementsSeeded, so an Options-only bucket would latch an

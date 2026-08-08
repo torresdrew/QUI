@@ -64,6 +64,35 @@ do
         "HELPFUL|CANCELABLE|!RAID|!RAID_IN_COMBAT,HELPFUL|RAID,HELPFUL|RAID_IN_COMBAT|!RAID",
         table.concat(fs, ","))
 
+    -- `important` (68675 re-add) is the LAST-ranked HELPFUL category. Two
+    -- things must hold, and they are the reason the rank is pinned here: it
+    -- inherits the negation of every enabled category above it, and adding it
+    -- leaves those categories' own strings byte-identical to what shipped.
+    local imp = E.NewFilterStripElement("HELPFUL")
+    imp.filterMode = "classify"
+    imp.classifications = { bigDefensive = true, important = true }
+    local ifs = E.CompileFilters(imp)
+    table.sort(ifs)
+    check("compile: important ranks last and inherits higher-priority negations",
+        table.concat(ifs, ",") ==
+        "HELPFUL|BIG_DEFENSIVE,HELPFUL|IMPORTANT|!BIG_DEFENSIVE",
+        table.concat(ifs, ","))
+    imp.classifications = { important = true }
+    local ifsSolo = E.CompileFilters(imp)
+    check("compile: important alone → HELPFUL|IMPORTANT",
+        #ifsSolo == 1 and ifsSolo[1] == "HELPFUL|IMPORTANT", table.concat(ifsSolo, ","))
+
+    -- Same category on HARMFUL, also ranked last there.
+    local impH = E.NewFilterStripElement("HARMFUL")
+    impH.filterMode = "classify"
+    impH.classifications = { crowdControl = true, important = true }
+    local ihfs = E.CompileFilters(impH)
+    table.sort(ihfs)
+    check("compile: important on HARMFUL ranks below crowdControl",
+        table.concat(ihfs, ",") ==
+        "HARMFUL|CROWD_CONTROL,HARMFUL|IMPORTANT|!CROWD_CONTROL",
+        table.concat(ihfs, ","))
+
     local d = E.NewFilterStripElement("HARMFUL")
     d.filterMode = "classify"
     d.classifications = { raid = true, dispellable = true, crowdControl = true }
@@ -543,6 +572,43 @@ do
     local cfs = E.CompileFilters(classify)
     check("heal: classify notCancelable compiles to HELPFUL|!CANCELABLE",
         #cfs == 1 and cfs[1] == "HELPFUL|!CANCELABLE", table.concat(cfs, ","))
+end
+
+do
+    local legacy = { mode = "filterStrip", auraType = "HARMFUL",
+        filterFlags = { INCLUDE_NAME_PLATE_ONLY = true } }
+    E.NormalizeElement(legacy)
+    check("heal: INCLUDE_NAME_PLATE_ONLY require -> nameplateOnly true",
+        legacy.nameplateOnly == true, tostring(legacy.nameplateOnly))
+    check("heal: INCLUDE_NAME_PLATE_ONLY removed",
+        legacy.filterFlags.INCLUDE_NAME_PLATE_ONLY == nil)
+    check("heal: nameplateOnly no longer forces Custom…",
+        E.DeriveWhatToShow(legacy) == "all", tostring(E.DeriveWhatToShow(legacy)))
+
+    local cfs2 = E.CompileFilters(legacy)
+    local tokenCount = 0
+    for _, fs in ipairs(cfs2) do
+        for component in fs:gmatch("[^| ]+") do
+            if component == "INCLUDE_NAME_PLATE_ONLY" then tokenCount = tokenCount + 1 end
+        end
+    end
+    check("heal: compiled filter carries the token exactly once",
+        tokenCount == 1, tostring(tokenCount))
+
+    local preset = { mode = "filterStrip", auraType = "HARMFUL", nameplateOnly = false,
+        filterFlags = { INCLUDE_NAME_PLATE_ONLY = true } }
+    E.NormalizeElement(preset)
+    check("heal: existing nameplateOnly value not clobbered",
+        preset.nameplateOnly == false, tostring(preset.nameplateOnly))
+    check("heal: INCLUDE_NAME_PLATE_ONLY removed even when nameplateOnly already set",
+        preset.filterFlags.INCLUDE_NAME_PLATE_ONLY == nil)
+
+    local excluded = { mode = "filterStrip", auraType = "HARMFUL",
+        filterFlags = { INCLUDE_NAME_PLATE_ONLY = "exclude" } }
+    E.NormalizeElement(excluded)
+    check("heal: INCLUDE_NAME_PLATE_ONLY exclude drops inert, does not force nameplateOnly",
+        excluded.filterFlags.INCLUDE_NAME_PLATE_ONLY == nil and excluded.nameplateOnly == nil,
+        tostring(excluded.nameplateOnly))
 end
 
 print("aura_elements_model_test " .. (failures == 0 and "OK" or "FAILED"))

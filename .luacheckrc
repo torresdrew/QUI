@@ -20,11 +20,29 @@ max_line_length = false   -- WoW addons commonly run wider than 120 cols
 
 -- Exclude code that is not part of QUI's lint ownership:
 --   meta/  — generated LuaLS definition stubs (never loaded in-game)
---   tests/ — vendored Blizzard FrameXML/API fixtures and test harnesses
+--   tests/ — the vendored Blizzard source (framexml), the generated data
+--     tables (api-docs, fixtures, taint fixtures) and the four vendored
+--     LuaMinify parser files. The hand-written test tree — tests/unit,
+--     tests/helpers, tests/replay and the taint analyzer itself — IS linted,
+--     under the files["tests/"] block near the end.
 --   libs/  — vendored third-party libraries maintained upstream
+--   core/locale/<xxYY>.lua — generated locale data (enUS.lua from
+--     tools/i18n/extract_strings.lua, the ten overlays from
+--     tools/i18n/translate_delta.py). ~5.8 MB of key/value pairs with no
+--     hand-written logic, and the overlays wrap their table in a long-bracket
+--     string, so luacheck cannot see inside one anyway — pure cost, zero
+--     signal. The pattern is deliberately the four-letter locale shape so
+--     core/locale/locale.lua, which IS hand-written, keeps being linted.
 -- This keeps `luacheck .` aligned with the warning-clean addon scope enforced
 -- by CI without hiding findings in QUI-owned addon directories.
-exclude_files = { "meta", "tests", "libs" }
+exclude_files = {
+    "meta", "libs",
+    "tests/framexml", "tests/api-docs", "tests/fixtures",
+    "tests/taint/fixtures", "tests/taint/cli-fixture",
+    "tests/taint/parser/ParseLua.lua", "tests/taint/parser/Scope.lua",
+    "tests/taint/parser/Util.lua", "tests/taint/parser/strict.lua",
+    "core/locale/[a-z][a-z][A-Z][A-Z].lua",
+}
 
 -- Suppress noise from common WoW idioms:
 --   212/self   — frames pass `self` to OnEvent/OnUpdate scripts; often unused
@@ -92,7 +110,7 @@ read_globals = {
     "UnitExists", "UnitCanAttack", "GetBindingKey",
     "UnitAffectingCombat", "UnitCastingInfo", "UnitChannelInfo",
     "UnitClass", "UnitHealthPercent", "UnitIsDead", "UnitName", "UnitRace",
-    "UnitPowerMax",
+    "UnitPowerMax", "UnitIsMinion", "UnitIsOtherPlayersPet", "UnitTreatAsPlayerForDisplay",
     "IsMouseButtonDown",
 
     -- Spells, actions, macros
@@ -146,9 +164,9 @@ BonusRollFrame BonusRollFrame_StartBonusRoll CLASS_ICON_TCOORDS LootWonAlertFram
 ADVENTURE_JOURNAL ARMOR ATTACK_POWER_MAGIC_NUMBER ATTACK_SPEED AbbreviateLargeNumbers AbbreviateNumbers AcceptGroup AcceptQuest CancelDuel CancelTrade CloseAllBags DeclineGroup RepopMe FRIENDS_BUTTON_TYPE_WOW FRIENDS_BUTTON_TYPE_BNET Sound_GameSystem_GetNumOutputDrivers Sound_GameSystem_GetOutputDriverNameByIndex MuteSoundFile UnmuteSoundFile
 MainMenuMicroButton_HideAlert CollectionsMicroButton_SetAlertShown LE_MOUNT_JOURNAL_FILTER_COLLECTED LE_MOUNT_JOURNAL_FILTER_UNUSABLE C_PetJournal C_ToyBoxInfo COLLECTION_UNOPENED_PLURAL COLLECTION_UNOPENED_SINGULAR
 C_AutoComplete FACTION_ALLIANCE FACTION_HORDE FACTION_NEUTRAL PVP_ENABLED PVP UnitIsInMyGuild
-GetSpecializationInfoForClassID GetNumClasses EJ_GetDifficulty EJ_SetLootFilter EJ_GetLootFilter EJ_GetNumLoot C_EncounterJournal ScrollBoxListMixin CommunitiesFrameMixin
+GetSpecializationInfoForClassID GetNumClasses EJ_GetDifficulty EJ_SetLootFilter EJ_GetLootFilter EJ_GetNumLoot EJ_GetEncounterInfo EJ_GetEncounterInfoByIndex EJ_SelectInstance EJ_GetInstanceInfo EJ_SelectTier EJ_GetCurrentTier EJ_GetInstanceByIndex EJ_GetNumTiers EncounterJournal_GetIconIndexFromFlag GetEJTierDataTableID GetExpansionLevel GetServerExpansionLevel C_EncounterJournal ScrollBoxListMixin CommunitiesFrameMixin
 MAX_TRADE_ITEMS TRADE_ENCHANT_SLOT GetTradePlayerItemInfo GetTradeTargetItemInfo GetTradePlayerItemLink GetTradeTargetItemLink GetPlayerTradeMoney GetTargetTradeMoney GetRealZoneText
-GetSendMailMoney GetSendMailCOD HasSendMailItem GetSendMailItem GetSendMailItemLink GetInboxHeaderInfo GetInboxItem GetInboxItemLink ATTACHMENTS_MAX_SEND ATTACHMENTS_MAX_RECEIVE MAX_ACCOUNT_MACROS UnitIsFeignDeath
+GetSendMailMoney GetSendMailCOD HasSendMailItem GetSendMailItem GetSendMailItemLink GetInboxHeaderInfo GetInboxItem GetInboxItemLink ATTACHMENTS_MAX_SEND ATTACHMENTS_MAX_RECEIVE UnitIsFeignDeath
 AchievementAlertSystem ActionBarController_UpdateAll ActionButtonSpellAlertManager ActionButton_ShowOverlayGlow ActionButton_StartFlash ActionButton_StopFlash ActionButton_Update ActionButton_UpdateCooldown
 AddonCompartmentFrame AlertFrame AuctionFrame AuctionHouseFrame BASE_MOVEMENT_SPEED BATTLEFIELD_MINIMAP BLOCK_CHANCE BNConnected
 BNET_CLIENT_WOW BNGetNumFriends BNInviteFriend BNToastFrame BOOKTYPE_SPELL BackpackTokenFrame BagsBar BonusRollLootWonFrame
@@ -165,7 +183,7 @@ CharacterFrameInset CharacterFrameInsetRight CharacterFramePortrait CharacterFra
 CharacterHeadSlot CharacterLegsSlot CharacterLevelText CharacterMainHandSlot CharacterModelScene CharacterNeckSlot CharacterReagentBag0Slot CharacterSecondaryHandSlot
 CharacterShirtSlot CharacterShoulderSlot CharacterStatsPane CharacterTabardSlot CharacterTrinket0Slot CharacterTrinket1Slot CharacterWaistSlot CharacterWristSlot
 ChatFontNormal ChatFrame1 ChatFrame1EditBox ChatFrameUtil ChatFrame_AddChannel ChatFrame_AddMessageGroup ChatFrame_RemoveChannel ChatFrame_RemoveMessageGroup
-ChatFrame_SendTell CheckInteractDistance ClearCursor ClearInspectPlayer ClearOverrideBindings CloseLoot ColorPickerFrame CombatLogGetCurrentEventInfo
+ChatFrame_SendTell CheckInteractDistance ClearCursor ClearInspectPlayer ClearNewActionHighlight ClearOverrideBindings CloseLoot ColorPickerFrame CombatLogGetCurrentEventInfo
 CommunitiesUtil CompactPartyFrame CompactRaidFrameContainer CompactRaidFrameManager CompactUnitFrame_UpdateReadyCheck CompactUnitFrame_UpdateSelectionHighlight CompactUnitFrame_UpdateUnitEvents CompleteLFGRoleCheck
 Constants CooldownFrame_Set CreateColor CreateMacro CreateUnitHealPredictionCalculator CriteriaAlertSystem CurveConstants DEFAULT_BAR_COLOR
 DEFAULT_CHAT_FRAME DELETE_ITEM_CONFIRM_STRING DODGE_CHANCE DebuffFrame DeleteMacro DigsiteCompleteAlertSystem DungeonCompletionAlertSystem EJMicroButton
@@ -178,7 +196,7 @@ GameTooltipStatusBar GameTooltipText GameTooltipTextSmall GameTooltipTextLeft1 G
 GarrisonFollowerAlertSystem GarrisonMissionAlertSystem GarrisonRandomMissionAlertSystem GarrisonShipFollowerAlertSystem GarrisonShipMissionAlertSystem GarrisonTalentAlertSystem GearManagerPopupFrame GetActionCount
 GetActionText GetActionTexture GetAddOnCPUUsage GetAttackPowerForStat GetAvailableBandwidth GetAverageItemLevel GetAvoidance GetBindingAction
 GetBindingText GetBlockChance GetBuildInfo GetCallPetSpellInfo GetChannelList GetChannelName GetChatWindowInfo GetCombatRating
-GetCombatRatingBonus GetCombatRatingBonusForCombatRatingValue GetCritChanceProvidesParryEffect GetCurrentBindingSet GetCurrentKeyBoardFocus GetCursorInfo GetDisplayedInviteType GetDodgeChance
+GetCombatRatingBonus GetCombatRatingBonusForCombatRatingValue GetCreatureDifficultyColor GetCritChanceProvidesParryEffect GetCurrentBindingSet GetCurrentKeyBoardFocus GetCursorInfo GetDisplayedInviteType GetDodgeChance
 GetDodgeChanceFromAttribute GetDownloadedPercentage GetEffectivePlayerMaxLevel GetFlyoutInfo GetFlyoutSlotInfo GetFramerate GetGameTime GetGuildInfo
 GetGuildRosterInfo GetGuildRosterMOTD GetGuildRosterShowOffline GetInspectSpecialization GetInventoryItemDurability GetInventoryItemQuality GetItemGem GetItemInfo
 GetItemInfoInstant GetItemQualityColor GetLatestThreeSenders GetLifesteal GetLootRollItemInfo GetLootSlotInfo GetLootSlotLink GetLootSpecialization
@@ -201,14 +219,13 @@ InspectFrameBg InspectFrameCloseButton InspectFramePortrait InspectFrameTab1 Ins
 InspectHandsSlot InspectHeadSlot InspectLegsSlot InspectLevelText InspectMainHandSlot InspectModelFrame InspectModelFrameBorderBottom InspectModelFrameBorderBottom2
 InspectModelFrameBorderBottomLeft InspectModelFrameBorderBottomRight InspectModelFrameBorderLeft InspectModelFrameBorderRight InspectModelFrameBorderTop InspectModelFrameBorderTopLeft InspectModelFrameBorderTopRight InspectNeckSlot
 InspectPaperDollItemsFrame InspectSecondaryHandSlot InspectShirtSlot InspectShoulderSlot InspectTabardSlot InspectTrinket0Slot InspectTrinket1Slot InspectWaistSlot
-InspectWristSlot InvasionAlertSystem IsActionInRange IsAltKeyDown IsAttackAction IsAutoRepeatAction IsControlKeyDown IsCurrentAction
+InitiateRolePoll InspectWristSlot InvasionAlertSystem IsActionInRange IsAltKeyDown IsAttackAction IsAutoRepeatAction IsControlKeyDown IsCurrentAction
 IsCurrentSpell IsEquippedAction IsFlying IsFrameHandle IsInGuild IsInInstance IsMounted IsPetAttackAction
 IsPlayerAtEffectiveLevelCap IsResting IsShiftKeyDown IsSpellInRange IsSpellKnownByPlayer IsSpellKnownOrOverridesKnown IsUsableAction IsXPUserDisabled
 Item ItemLocation LE_ITEM_CLASS_CONSUMABLE LFDParentFrame LOCALIZED_CLASS_NAMES_FEMALE LOCALIZED_CLASS_NAMES_MALE LegendaryItemAlertSystem LoggingCombat
-LootAlertSystem LootFrame LootSlot LootSlotHasItem LootUpgradeAlertSystem MAX_CHARACTER_MACROS MAX_PLAYER_LEVEL MELEE_ATTACK_POWER
+LootAlertSystem LootFrame LootSlot LootSlotHasItem LootUpgradeAlertSystem MAX_PLAYER_LEVEL MELEE_ATTACK_POWER
 MELEE_ATTACK_POWER_TOOLTIP MILLING MINIMAP_TRACKING_TRAINER_CLASS MainMenuBarBackpackButton MainMenuMicroButton_ShowAlert MenuUtil MicroButtonPulse MicroButtonPulseStop
 MicroMenuContainer Minimap MinimapBackdrop MinimapBorder MinimapBorderTop MinimapCluster MinimapMailFrameUpdate MinimapNorthTag
-InitiateRolePoll
 MinimapZoneText MoneyWonAlertSystem MonthlyActivityAlertSystem NORMAL_FONT_COLOR NUM_BAG_FRAMES NUM_BAG_SLOTS NUM_GROUP_LOOT_FRAMES NewCosmeticAlertFrameSystem
 NewMountAlertSystem NewPetAlertSystem NewRecipeLearnedAlertSystem NewRuneforgePowerAlertSystem NewToyAlertSystem NewWarbandSceneAlertSystem NotifyInspect ObjectiveTrackerBlockMixin
 ObjectiveTrackerFrame ObjectiveTracker_Update OpacitySliderFrame PAPERDOLLFRAME_TOOLTIP_FORMAT PARRY_CHANCE PROSPECTING PVEFrame PVEFrame_ToggleFrame
@@ -235,7 +252,7 @@ UnitFullName UnitGUID UnitGetDetailedHealPrediction UnitGetIncomingHeals UnitGet
 UnitHasIncomingResurrection UnitHasVehicleUI UnitHealth UnitHealthMax UnitHealthMissing UnitInParty UnitInRaid UnitInRange
 UnitInVehicle UnitIsAFK UnitIsConnected UnitIsDeadOrGhost UnitIsFriend UnitIsGhost UnitIsGroupAssistant UnitIsGroupLeader UnitIsPlayer
 UnitIsTapDenied UnitIsUnit UnitIsVisible UnitLevel UnitPhaseReason UnitPower UnitPowerPercent UnitPowerType UnitReaction UnitSex
-UnitShouldDisplaySpellTargetName UnitSpellHaste UnitStagger UnitStat UnitThreatSituation UnitXP UnitXPMax UnregisterStateDriver UpdateAddOnCPUUsage
+UnitPvpClassification UnitShouldDisplaySpellTargetName UnitSpellHaste UnitSpellTargetName UnitStagger UnitStat UnitThreatSituation UnitXP UnitXPMax UnregisterStateDriver UpdateAddOnCPUUsage
 UpdateMicroButtons UpdateMicroButtonsParent WOW_PROJECT_ID WOW_PROJECT_MAINLINE WardrobeFrame WardrobeTransmogFrame WeeklyRewardsFrame WeeklyRewards_ShowUI WorldMapFrame
 WorldQuestCompleteAlertSystem ZoneAbilityFrame debugprofilestart gsub strupper tremove table.unpack table.wipe
 TradeFrame SendMailFrame BankFrame GuildBankFrame StackSplitFrame ItemRefTooltip BattlePetTooltip BattlePetToolTip_ShowLink
@@ -428,5 +445,9 @@ files["tests/"] = {
         "__QUI_SECRET_EQ",
         "__QUI_SECRET_NEQ",
         "__QUI_SECRET_LEN",
+    },
+    read_globals = {
+        "MicroMenuPositionEnum",
+        "NamePlateDriverFrame",
     },
 }

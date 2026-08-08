@@ -1,14 +1,3 @@
----------------------------------------------------------------------------
--- Alts professions tab. One row per character — class-coloured name
--- (160 px) followed by up to five profession cells (110 px each), rendered
--- as "%s %d/%d" (name, rank, maxRank), primaries first (stored list order).
--- Empty slots show "—". Sort: character name ascending only (no sortable
--- headers). Footer: "%d characters". Wheel scroll + row pool exactly like
--- the roster tab.
---
--- Pure helpers are exported on Alts.ProfessionsView for headless tests.
--- Frame parts are NOT tested (no WoW frame API headless).
----------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 
 local Shared = ns.AltsViewShared
@@ -30,14 +19,6 @@ local NAME_W  = 160
 local PROF_W  = 110
 local MAX_PROFS = 5
 
----------------------------------------------------------------------------
--- Pure helpers (tested headless).
----------------------------------------------------------------------------
-
---- Returns a dense array of up to MAX_PROFS display strings for the
---- professions on a record, in stored list order (primaries first by
---- convention of the collector). Each string is "%s %d/%d".
---- Missing name falls back to "?"; missing rank/maxRank to 0.
 function ProfessionsView.CellTexts(record)
     local profs = record and record.professions
     if not profs or #profs == 0 then return {} end
@@ -52,15 +33,6 @@ function ProfessionsView.CellTexts(record)
     return out
 end
 
----------------------------------------------------------------------------
--- Frame parts (no headless test).
----------------------------------------------------------------------------
-
-
-
-
-
--- Total number of columns: name + MAX_PROFS profession slots.
 local TOTAL_COLS = 1 + MAX_PROFS
 
 local function Builder(parent)
@@ -71,8 +43,8 @@ local function Builder(parent)
 
     local view     = { frame = frame }
     local offset   = 0
-    local scrollbar         -- vertical scroll bar (created below)
-    local data     = {}   -- sorted array of { key, name, class, record }
+    local scrollbar
+    local data     = {}
     local rowPool  = {}
 
     local function VisibleRows()
@@ -82,12 +54,10 @@ local function Builder(parent)
         return math.max(1, math.floor(usable / ROW_H))
     end
 
-    -- footer
     local footer = MakeFS(frame, 11)
     footer:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", CELL_PAD, 4)
     footer:SetTextColor(0.8, 0.8, 0.8)
 
-    ---- static header row -------------------------------------------------
     local hdrName = MakeFS(frame, 11)
     hdrName:SetPoint("TOPLEFT", frame, "TOPLEFT", CELL_PAD, 0)
     hdrName:SetWidth(NAME_W - CELL_PAD * 2)
@@ -99,7 +69,6 @@ local function Builder(parent)
     hdrProf:SetText("Professions")
     hdrProf:SetTextColor(1, 0.82, 0)
 
-    ---- row pool ----------------------------------------------------------
     local function GetRow(i)
         local r = rowPool[i]
         if r then return r end
@@ -112,7 +81,6 @@ local function Builder(parent)
         return r
     end
 
-    ---- render ------------------------------------------------------------
     local function RenderRows()
         local visible  = VisibleRows()
         local maxOff   = math.max(0, #data - visible)
@@ -132,7 +100,6 @@ local function Builder(parent)
             else
                 r._row = row
 
-                -- cell 1: character name (class-coloured)
                 local nameCell = r._cells[1]
                 nameCell:ClearAllPoints()
                 nameCell:SetPoint("LEFT", r, "LEFT", CELL_PAD, 0)
@@ -141,7 +108,6 @@ local function Builder(parent)
                 nameCell:SetTextColor(ClassColor(row.class))
                 nameCell:Show()
 
-                -- cells 2…TOTAL_COLS: profession slots
                 local texts = ProfessionsView.CellTexts(row.record)
                 for slot = 1, MAX_PROFS do
                     local cell = r._cells[1 + slot]
@@ -156,7 +122,6 @@ local function Builder(parent)
                 r:Show()
             end
         end
-        -- hide surplus rows
         for i = visible + 1, #rowPool do
             rowPool[i]._row = nil
             rowPool[i]:Hide()
@@ -182,7 +147,6 @@ local function Builder(parent)
             end
         end
 
-        -- sort by character name ascending
         table.sort(data, function(a, b)
             return (a.name or "") < (b.name or "")
         end)
@@ -191,7 +155,6 @@ local function Builder(parent)
         footer:SetText(string.format("%d characters", #data))
     end
 
-    -- vertical scroll bar: rows sit below the header row, above the footer line.
     scrollbar = Shared.CreateScrollBar(frame, {
         orientation = "vertical",
         onScroll = function(n) offset = n; RenderRows() end,
@@ -199,7 +162,6 @@ local function Builder(parent)
     scrollbar.track:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -2, -HDR_H)
     scrollbar.track:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -2, FOOTER_H)
 
-    -- mouse-wheel scroll
     frame:EnableMouseWheel(true)
     frame:SetScript("OnMouseWheel", function(_, delta)
         local maxOff = math.max(0, #data - VisibleRows())
@@ -209,7 +171,6 @@ local function Builder(parent)
         RenderRows()
     end)
 
-    -- Bus subscriptions: refresh only when visible
     if Bus and Bus.Subscribe then
         local function OnBus()
             if frame:IsVisible() then view.Refresh() end

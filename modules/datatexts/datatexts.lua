@@ -1,20 +1,15 @@
---- QUI Datatext Registry
---- Central system for managing and displaying datatexts
-
 local ADDON_NAME, ns = ...
 local QUICore = ns.Addon
 local Helpers = ns.Helpers
 local LSM = ns.LSM
-local issecretvalue = issecretvalue -- bare self-cache: analyzer-credited guard name
+local issecretvalue = issecretvalue
 
--- Cache frequently used globals
 local format = string.format
 local floor = math.floor
 local max = math.max
 local min = math.min
 local wipe = wipe
 
--- Upvalue caching for hot-path performance
 local type = type
 local pairs = pairs
 local ipairs = ipairs
@@ -23,21 +18,17 @@ local tostring = tostring
 local tonumber = tonumber
 local CreateFrame = CreateFrame
 
--- Constants
 local MAX_GUILD_TOOLTIP_DISPLAY = 20
 local DAY_SECONDS = 86400
 local HOUR_SECONDS = 3600
 local MINUTE_SECONDS = 60
 
--- Module reference
 local Datatexts = {}
 QUICore.Datatexts = Datatexts
 
--- Registry storage
 Datatexts.registry = {}
-Datatexts.activeInstances = {}  -- Track active datatext instances for cleanup
+Datatexts.activeInstances = {}
 
--- Shared: ensure a slot has a centered OVERLAY fontstring (slotFrame.text).
 function Datatexts.EnsureText(slotFrame)
     local text = slotFrame.text
     if not text then
@@ -48,7 +39,6 @@ function Datatexts.EnsureText(slotFrame)
     return text
 end
 
--- Shared: format a copper amount as a grouped gold string ("1,234,567g").
 function Datatexts.FormatGold(copper)
     local gold = floor((copper or 0) / 10000)
     local goldStr = tostring(gold)
@@ -63,10 +53,7 @@ function Datatexts.FormatGold(copper)
     return goldStr .. "g"
 end
 
----------------------------------------------------------------------------
--- SHARED TICKER: One timer drives all 1s datatext updates
----------------------------------------------------------------------------
-local sharedTickerFns = {}   -- frame -> Update function
+local sharedTickerFns = {}
 local sharedTicker = nil
 
 local function SharedTickerUpdate()
@@ -90,12 +77,10 @@ function Datatexts:UnregisterSharedTicker(frame)
     end
 end
 
--- Get user's configured value color for datatexts (returns 0-255 integers for hex formatting)
 local function GetValueColor()
-    -- Access db through ns.Addon which is always available
     local addon = ns and ns.Addon
     local db = addon and addon.db and addon.db.profile
-    if not db then return 26, 255, 26 end  -- Default green in 0-255
+    if not db then return 26, 255, 26 end
 
     local dt = db.datatext
     if not dt then return 26, 255, 26 end
@@ -103,7 +88,6 @@ local function GetValueColor()
     if dt.useClassColor then
         local _, class = UnitClass("player")
         -- @secret-policy: collapse-only — UnitClass can return SECRET on 12.1 PTR7
-        -- (SecretWhenUnitIdentityRestricted); collapse so the valueColor fallback applies.
         if issecretvalue and issecretvalue(class) then class = nil end
         if class then
             local color = RAID_CLASS_COLORS[class]
@@ -117,12 +101,6 @@ local function GetValueColor()
     return floor(c[1] * 255), floor(c[2] * 255), floor(c[3] * 255)
 end
 
--- Get label based on per-slot shortLabel/noLabel settings
--- @param fullLabel string The full label (e.g., "FPS: ")
--- @param shortLabel string The abbreviated label (e.g., "F: ")
--- @param useShortLabel boolean Per-slot shortLabel setting from slotFrame.shortLabel
--- @param useNoLabel boolean Per-slot noLabel setting from slotFrame.noLabel
--- @return string The appropriate label based on slot settings
 local function GetLabel(fullLabel, shortLabel, useShortLabel, useNoLabel)
     if useNoLabel then
         return ""
@@ -133,7 +111,6 @@ local function GetLabel(fullLabel, shortLabel, useShortLabel, useNoLabel)
     return fullLabel
 end
 
--- Lockout cache for throttling RequestRaidInfo
 local lockoutCache = {
     lastUpdate = 0,
     instances = {},
@@ -143,19 +120,18 @@ local lockoutCache = {
 local function GetLockoutCacheTTL()
     local db = QUICore.db and QUICore.db.profile and QUICore.db.profile.datatext
     local minutes = db and db.lockoutCacheMinutes or 5
-    return max(1, minutes) * 60  -- Convert to seconds, minimum 1 minute
+    return max(1, minutes) * 60
 end
 
 local function RefreshLockoutCache()
     local now = GetTime()
     if now - lockoutCache.lastUpdate < GetLockoutCacheTTL() then
-        return  -- Cache still valid
+        return
     end
 
     RequestRaidInfo()
     lockoutCache.lastUpdate = now
 
-    -- Cache saved instances
     wipe(lockoutCache.instances)
     local numSaved = GetNumSavedInstances() or 0
     for i = 1, numSaved do
@@ -170,7 +146,6 @@ local function RefreshLockoutCache()
         end
     end
 
-    -- Cache world bosses
     wipe(lockoutCache.worldBosses)
     if GetNumSavedWorldBosses then
         local numWorldBosses = GetNumSavedWorldBosses() or 0
@@ -186,7 +161,6 @@ local function RefreshLockoutCache()
     end
 end
 
--- Format seconds into human-readable time
 local function FormatTimeRemaining(seconds)
     if not seconds or seconds <= 0 then return "0m" end
 
@@ -203,9 +177,6 @@ local function FormatTimeRemaining(seconds)
     end
 end
 
--- Get all tracked currencies from the backpack
--- @return table Array of {id (currency id string), currencyID, name, quantity, iconFileID, maxQuantity, displayOrder}
--- Returns currencies in default order (as returned by C_CurrencyInfo.GetBackpackCurrencyInfo)
 local function GetTrackedCurrencies()
     if not C_CurrencyInfo or not C_CurrencyInfo.GetBackpackCurrencyInfo then
         return {}
@@ -233,13 +204,6 @@ local function GetTrackedCurrencies()
     return currencies
 end
 
----=================================================================================
---- REGISTRATION API
----=================================================================================
-
---- Register a new datatext
--- @param id string Unique identifier
--- @param datatextDef table Datatext definition with OnEnable, OnDisable, etc.
 function Datatexts:Register(id, datatextDef)
     if self.registry[id] then
         print("|cffff0000QUI:|r Datatext '" .. id .. "' is already registered!")
@@ -263,7 +227,6 @@ function Datatexts:Register(id, datatextDef)
     return true
 end
 
---- Get a sorted list of all registered datatexts
 function Datatexts:GetAll()
     local list = {}
     for id, def in pairs(self.registry) do
@@ -278,34 +241,22 @@ function Datatexts:GetAll()
     return list
 end
 
---- Get datatext definition by ID
 function Datatexts:Get(id)
     return self.registry[id]
 end
 
----=================================================================================
---- SLOT ATTACHMENT API
----=================================================================================
-
---- Attach a datatext to a slot frame
--- @param slotFrame Frame The slot container
--- @param datatextID string The datatext to attach
--- @param settings table Optional settings for this instance
--- @return boolean success
 function Datatexts:AttachToSlot(slotFrame, datatextID, settings)
     if not slotFrame then
         print("|cffff0000QUI:|r Invalid slot frame provided")
         return false
     end
 
-    -- Clean up existing datatext on this slot
     if slotFrame.datatextInstance then
         self:DetachFromSlot(slotFrame)
     end
 
     local datatextDef = self.registry[datatextID]
     if not datatextDef then
-        -- Empty slot - show placeholder (hidden when "No Label" is enabled for the slot)
         if not slotFrame.text then
             slotFrame.text = slotFrame:CreateFontString(nil, "OVERLAY")
             slotFrame.text:SetPoint("CENTER")
@@ -318,7 +269,6 @@ function Datatexts:AttachToSlot(slotFrame, datatextID, settings)
         return true
     end
 
-    -- Create datatext instance
     local success, instance = ns.SafeCall("best-effort-style", datatextDef.OnEnable, slotFrame, settings or {})
 
     if not success then
@@ -326,11 +276,6 @@ function Datatexts:AttachToSlot(slotFrame, datatextID, settings)
         return false
     end
 
-    -- Providers anchor both their hover tooltip and their click-opened
-    -- context menus to the slot, so a tooltip that survives the click
-    -- renders on top of the menu. Wrap the provider's
-    -- OnClick — insecure, slot-owned, re-set by OnEnable on every attach
-    -- after DetachFromSlot cleared it — to drop the slot's tooltip first.
     if slotFrame.RegisterForClicks then
         local providerOnClick = slotFrame:GetScript("OnClick")
         if providerOnClick then
@@ -343,14 +288,12 @@ function Datatexts:AttachToSlot(slotFrame, datatextID, settings)
         end
     end
 
-    -- Store instance for cleanup
     slotFrame.datatextInstance = {
         id = datatextID,
         frame = instance,
         def = datatextDef,
     }
 
-    -- Track globally for mass updates
     table.insert(self.activeInstances, {
         slot = slotFrame,
         instance = instance,
@@ -360,8 +303,6 @@ function Datatexts:AttachToSlot(slotFrame, datatextID, settings)
     return true
 end
 
--- Protected instance subtrees (e.g. travel's secure buttons) can't be
--- hidden/reparented insecurely in combat; queue them and finish at regen.
 local combatDeferredTeardown
 local combatTeardownWatcher
 local function QueueCombatTeardown(frame)
@@ -382,27 +323,20 @@ local function QueueCombatTeardown(frame)
     end
 end
 
---- Detach datatext from a slot
 function Datatexts:DetachFromSlot(slotFrame)
     if not slotFrame or not slotFrame.datatextInstance then return end
 
     local instance = slotFrame.datatextInstance
 
-    -- Call OnDisable if provided
     if instance.def.OnDisable then
         ns.SafeCall("bulkhead", instance.def.OnDisable, instance.frame)
     end
 
-    -- Providers install these in OnEnable; clearing prevents handler bleed-through across reassignment.
-    -- (Hosts own OnDragStart/OnDragStop, set at slot creation — those must survive detach.)
     slotFrame:SetScript("OnClick", nil)
     slotFrame:SetScript("OnDoubleClick", nil)
     slotFrame:SetScript("OnEnter", nil)
     slotFrame:SetScript("OnLeave", nil)
 
-    -- Clean up instance frame. Hide/SetParent on a protected subtree is
-    -- combat-blocked — defer just that to regen; everything else above and
-    -- below is insecure-safe and stays immediate.
     if instance.frame then
         if InCombatLockdown() and instance.frame:IsProtected() then
             QueueCombatTeardown(instance.frame)
@@ -412,7 +346,6 @@ function Datatexts:DetachFromSlot(slotFrame)
         end
     end
 
-    -- Remove from global tracking
     for i = #self.activeInstances, 1, -1 do
         if self.activeInstances[i].slot == slotFrame then
             table.remove(self.activeInstances, i)
@@ -422,7 +355,6 @@ function Datatexts:DetachFromSlot(slotFrame)
     slotFrame.datatextInstance = nil
 end
 
---- Update all active datatexts (useful for settings changes)
 function Datatexts:UpdateAll()
     for _, active in ipairs(self.activeInstances) do
         if active.instance and active.instance.Update then
@@ -431,11 +363,6 @@ function Datatexts:UpdateAll()
     end
 end
 
----=================================================================================
---- BUILT-IN DATATEXTS
----=================================================================================
-
--- Time datatext
 Datatexts:Register("time", {
     displayName = ns.L["Time"],
     category = ns.L["System"],
@@ -448,7 +375,6 @@ Datatexts:Register("time", {
         local text = Datatexts.EnsureText(slotFrame)
 
         local function Update()
-            -- Read time settings from global config (not panel config)
             local dtSettings = QUICore.db and QUICore.db.profile and QUICore.db.profile.datatext
             local useLocalTime = (not dtSettings) or (dtSettings.timeFormat == "local")
             local use24Hour = (not dtSettings) or (dtSettings.use24Hour ~= false)
@@ -474,10 +400,8 @@ Datatexts:Register("time", {
 
         frame.Update = Update
 
-        -- Update every second
         Datatexts:RegisterSharedTicker(frame, Update)
 
-        -- Tooltip with lockouts and reset timers
         slotFrame:EnableMouse(true)
         slotFrame:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
@@ -488,10 +412,8 @@ Datatexts:Register("time", {
             local ar, ag, ab = GetValueColor()
             ar, ag, ab = ar/255, ag/255, ab/255
 
-            -- Refresh lockout cache (throttled to every 30s)
             RefreshLockoutCache()
 
-            -- Raid lockouts (from cache)
             if #lockoutCache.instances > 0 then
                 GameTooltip:AddLine(ns.L["Saved Raid(s)"], 1, 0.82, 0)
 
@@ -504,7 +426,6 @@ Datatexts:Register("time", {
                 GameTooltip:AddLine(" ")
             end
 
-            -- World bosses (from cache)
             if #lockoutCache.worldBosses > 0 then
                 GameTooltip:AddLine(ns.L["World Bosses"], 1, 0.82, 0)
                 for _, boss in ipairs(lockoutCache.worldBosses) do
@@ -513,7 +434,6 @@ Datatexts:Register("time", {
                 GameTooltip:AddLine(" ")
             end
 
-            -- Reset timers (using modern C_DateAndTime API)
             local dailyReset = C_DateAndTime.GetSecondsUntilDailyReset and C_DateAndTime.GetSecondsUntilDailyReset()
             if dailyReset and dailyReset > 0 then
                 GameTooltip:AddDoubleLine(ns.L["Daily Reset"], FormatTimeRemaining(dailyReset), 0.8, 0.8, 0.8, ar, ag, ab)
@@ -524,7 +444,6 @@ Datatexts:Register("time", {
                 GameTooltip:AddDoubleLine(ns.L["Weekly Reset"], FormatTimeRemaining(weeklyReset), 0.8, 0.8, 0.8, ar, ag, ab)
             end
 
-            -- Realm time (server time)
             GameTooltip:AddDoubleLine(ns.L["Realm time:"], GameTime_GetGameTime(true), 0.8, 0.8, 0.8, 1, 1, 1)
 
             GameTooltip:AddLine(" ")
@@ -534,7 +453,6 @@ Datatexts:Register("time", {
         end)
         slotFrame:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-        -- Click handlers: Left = Calendar, Right = Clock
         slotFrame:RegisterForClicks("AnyUp")
         slotFrame:SetScript("OnClick", function(self, button)
             if InCombatLockdown() then return end
@@ -560,7 +478,6 @@ Datatexts:Register("time", {
     end,
 })
 
--- FPS datatext
 Datatexts:Register("fps", {
     displayName = ns.L["FPS"],
     category = ns.L["System"],
@@ -576,7 +493,7 @@ Datatexts:Register("fps", {
             local fps = floor(GetFramerate() + 0.5)
             local r, g, b
             if fps < 30 then
-                r, g, b = 255, 51, 51  -- Red warning (0-255)
+                r, g, b = 255, 51, 51
             else
                 r, g, b = GetValueColor()
             end
@@ -596,7 +513,6 @@ Datatexts:Register("fps", {
     end,
 })
 
--- Latency datatext
 Datatexts:Register("latency", {
     displayName = ns.L["Latency"],
     category = ns.L["System"],
@@ -613,7 +529,7 @@ Datatexts:Register("latency", {
             local ms = floor(home or 0)
             local r, g, b
             if ms > 100 then
-                r, g, b = 255, 51, 51  -- Red warning (0-255)
+                r, g, b = 255, 51, 51
             else
                 r, g, b = GetValueColor()
             end
@@ -633,7 +549,6 @@ Datatexts:Register("latency", {
     end,
 })
 
--- System datatext (combined FPS + MS with latency tooltip)
 Datatexts:Register("system", {
     displayName = ns.L["System"],
     category = ns.L["System"],
@@ -653,32 +568,26 @@ Datatexts:Register("system", {
             local fpsR, fpsG, fpsB
             local msR, msG, msB
 
-            -- FPS color: red if < 30
             if fps < 30 then
                 fpsR, fpsG, fpsB = 255, 51, 51
             else
                 fpsR, fpsG, fpsB = GetValueColor()
             end
 
-            -- MS color: red if > 100
             if ms > 100 then
                 msR, msG, msB = 255, 51, 51
             else
                 msR, msG, msB = GetValueColor()
             end
 
-            -- Format based on label settings
             local displayText
             if slotFrame.noLabel then
-                -- No labels: "474 | 33"
                 displayText = format("|cff%02x%02x%02x%d|r | |cff%02x%02x%02x%d|r",
                     fpsR, fpsG, fpsB, fps, msR, msG, msB, ms)
             elseif slotFrame.shortLabel then
-                -- Short labels: "F: 474 M: 33"
                 displayText = format(ns.L["F: "] .. "|cff%02x%02x%02x%d|r " .. ns.L["M: "] .. "|cff%02x%02x%02x%d|r",
                     fpsR, fpsG, fpsB, fps, msR, msG, msB, ms)
             else
-                -- Full labels: "FPS: 474 MS: 33"
                 displayText = format(ns.L["FPS: "] .. "|cff%02x%02x%02x%d|r " .. ns.L["MS: "] .. "|cff%02x%02x%02x%d|r",
                     fpsR, fpsG, fpsB, fps, msR, msG, msB, ms)
             end
@@ -689,7 +598,6 @@ Datatexts:Register("system", {
         frame.Update = Update
         Datatexts:RegisterSharedTicker(frame, Update)
 
-        -- Tooltip with latency details and addon memory usage
         slotFrame:EnableMouse(true)
         slotFrame:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
@@ -700,7 +608,6 @@ Datatexts:Register("system", {
             local ar, ag, ab = GetValueColor()
             ar, ag, ab = ar/255, ag/255, ab/255
 
-            -- Performance stats
             local currentFps = floor(GetFramerate() + 0.5)
             local _, _, homePing, worldPing = GetNetStats()
 
@@ -708,7 +615,6 @@ Datatexts:Register("system", {
             GameTooltip:AddDoubleLine(ns.L["Home Latency:"], format("%d ms", floor(homePing or 0)), 0.8, 0.8, 0.8, ar, ag, ab)
             GameTooltip:AddDoubleLine(ns.L["World Latency:"], format("%d ms", floor(worldPing or 0)), 0.8, 0.8, 0.8, ar, ag, ab)
 
-            -- Bandwidth (only shown when actively downloading)
             if GetAvailableBandwidth then
                 local avail = GetAvailableBandwidth()
                 if avail and avail > 0 then
@@ -722,7 +628,6 @@ Datatexts:Register("system", {
                 end
             end
 
-            -- Protocol info
             if GetNetIpTypes then
                 local homeType, worldType = GetNetIpTypes()
                 if homeType or worldType then
@@ -732,7 +637,6 @@ Datatexts:Register("system", {
                 end
             end
 
-            -- Addon memory usage
             GameTooltip:AddLine(" ")
             GameTooltip:AddLine(ns.L["AddOn Memory"], 1, 1, 1)
 
@@ -749,10 +653,8 @@ Datatexts:Register("system", {
                 end
             end
 
-            -- Sort by memory usage (highest first)
             table.sort(addons, function(a, b) return a.mem > b.mem end)
 
-            -- Show top addons (limit to avoid massive tooltip)
             local maxDisplay = 20
             for i = 1, min(#addons, maxDisplay) do
                 local a = addons[i]
@@ -762,7 +664,6 @@ Datatexts:Register("system", {
                 else
                     memStr = format("%.0f KB", a.mem)
                 end
-                -- Color: red for heavy (>10MB), yellow for moderate (>1MB), green for light
                 local mr, mg, mb
                 if a.mem >= 10240 then
                     mr, mg, mb = 1, 0.3, 0.3
@@ -777,7 +678,6 @@ Datatexts:Register("system", {
                 GameTooltip:AddLine(format(ns.L["  ... and %d more"], #addons - maxDisplay), 0.5, 0.5, 0.5)
             end
 
-            -- Total
             GameTooltip:AddLine(" ")
             local totalStr = totalMem >= 1024 and format("%.1f MB", totalMem / 1024) or format("%.0f KB", totalMem)
             GameTooltip:AddDoubleLine(ns.L["Total:"], totalStr, 1, 1, 1, ar, ag, ab)
@@ -795,11 +695,6 @@ Datatexts:Register("system", {
     end,
 })
 
----------------------------------------------------------------------------
--- VOLUME: shared CVar helpers + slider popup
--- Module scope so the single shared popup and every volume datatext
--- instance use the same accessors.
----------------------------------------------------------------------------
 local volumeCVars = {
     master = "Sound_MasterVolume",
     music = "Sound_MusicVolume",
@@ -808,26 +703,22 @@ local volumeCVars = {
     dialog = "Sound_DialogVolume",
 }
 
--- Get current volume (0-100)
 local function GetVolume(volumeType)
     local cvar = volumeCVars[volumeType] or volumeCVars.master
     local value = tonumber(C_CVar.GetCVar(cvar)) or 1
     return floor(value * 100 + 0.5)
 end
 
--- Set volume (0-100)
 local function SetVolume(volumeType, percent)
     local cvar = volumeCVars[volumeType] or volumeCVars.master
     percent = max(0, min(100, percent))
-    C_CVar.SetCVar(cvar, percent / 100)
+    C_CVar.SetCVar(cvar, tostring(percent / 100))
 end
 
--- Check if sound is muted
 local function IsMuted()
     return C_CVar.GetCVar("Sound_EnableAllSound") == "0"
 end
 
--- Toggle mute
 local function ToggleMute()
     local muted = IsMuted()
     C_CVar.SetCVar("Sound_EnableAllSound", muted and "1" or "0")
@@ -857,12 +748,10 @@ local function GetVolumePopup()
     popup:SetFrameStrata("FULLSCREEN_DIALOG")
     popup:SetClampedToScreen(true)
     popup:EnableMouse(true)
-    -- title + 5 slider rows + mute row
     popup:SetSize(250, PAD + TITLE_H + (#VOLUME_POPUP_ROWS + 1) * ROW_H + PAD)
     popup:Hide()
     SkinBase.CreateBackdrop(popup)
 
-    -- Fonts follow the profile's general font (same source datapanels use)
     local general = QUICore.db and QUICore.db.profile and QUICore.db.profile.general
     local fontPath = LSM:Fetch("font", general and general.font or "Quazii") or "Fonts\\FRIZQT__.TTF"
     local fontOutline = general and general.fontOutline or "OUTLINE"
@@ -894,8 +783,6 @@ local function GetVolumePopup()
         value:SetJustifyH("RIGHT")
         value:SetWidth(VALUE_W)
 
-        -- Slider frame doubles as the track (options-framework slider language:
-        -- faint track + accent fill to the thumb + round white thumb)
         local slider = CreateFrame("Slider", nil, popup)
         slider:SetOrientation("HORIZONTAL")
         slider:SetMinMaxValues(0, 100)
@@ -927,8 +814,6 @@ local function GetVolumePopup()
         thumbMask:SetAllPoints(thumb)
         thumb:AddMaskTexture(thumbMask)
 
-        -- Native thumb kept invisible: it provides the drag mechanics while the
-        -- masked texture above renders the visual.
         slider:SetThumbTexture("Interface\\Buttons\\WHITE8x8")
         local nativeThumb = slider:GetThumbTexture()
         nativeThumb:SetSize(10, 10)
@@ -956,7 +841,6 @@ local function GetVolumePopup()
         popup.rows[i] = { key = info.key, slider = slider, value = value, fill = fill, UpdateVisual = UpdateVisual }
     end
 
-    -- Mute row
     local muteY = -(PAD + TITLE_H + #VOLUME_POPUP_ROWS * ROW_H)
     local mute = CreateFrame("Button", nil, popup)
     mute:SetSize(14, 14)
@@ -980,7 +864,6 @@ local function GetVolumePopup()
     end)
 
     function popup:Refresh()
-        -- QUI theme accent (theme preset / class color aware)
         local ar, ag, ab = Helpers.GetSkinAccentColor()
         self.title:SetTextColor(ar, ag, ab)
         self.syncing = true
@@ -998,8 +881,6 @@ local function GetVolumePopup()
         self.muteCheck:SetShown(IsMuted())
     end
 
-    -- Grace-period auto-hide: hide ~0.5s after the cursor leaves both the
-    -- popup and the datatext slot that opened it.
     popup:SetScript("OnUpdate", function(self, elapsed)
         if self:IsMouseOver() or (self.owner and self.owner:IsMouseOver()) then
             self.hideTimer = 0
@@ -1027,7 +908,6 @@ local function ToggleVolumePopup(anchorFrame)
     popup.owner = anchorFrame
     popup.hideTimer = 0
     popup:ClearAllPoints()
-    -- Open away from the screen edge the bar sits on
     local _, y = anchorFrame:GetCenter()
     if y and y > UIParent:GetHeight() / 2 then
         popup:SetPoint("TOP", anchorFrame, "BOTTOM", 0, -4)
@@ -1039,7 +919,6 @@ local function ToggleVolumePopup(anchorFrame)
     GameTooltip:Hide()
 end
 
--- Volume datatext
 Datatexts:Register("volume", {
     displayName = ns.L["Volume"],
     category = ns.L["System"],
@@ -1053,13 +932,11 @@ Datatexts:Register("volume", {
 
         local text = Datatexts.EnsureText(slotFrame)
 
-        -- Default volume settings (reused to avoid table creation)
         local defaultVolumeSettings = {
             volumeStep = 5,
             controlType = "master",
         }
 
-        -- Get volume datatext settings from db
         local function GetVolumeSettings()
             local addon = ns and ns.Addon
             local db = addon and addon.db and addon.db.profile
@@ -1072,17 +949,15 @@ Datatexts:Register("volume", {
             local vol = GetVolume(volSettings.controlType)
             local muted = IsMuted()
 
-            -- Get color
             local r, g, b
             if muted then
-                r, g, b = 255, 51, 51  -- Red when muted
+                r, g, b = 255, 51, 51
             elseif vol < 25 then
-                r, g, b = 255, 200, 51  -- Yellow when low
+                r, g, b = 255, 200, 51
             else
                 r, g, b = GetValueColor()
             end
 
-            -- Format display
             local label = GetLabel(ns.L["Vol: "], ns.L["V: "], slotFrame.shortLabel, slotFrame.noLabel)
 
             if muted then
@@ -1092,7 +967,6 @@ Datatexts:Register("volume", {
             end
         end
 
-        -- Tooltip on hover
         frame:SetScript("OnEnter", function(self)
             if volumePopup and volumePopup:IsShown() then return end
             GameTooltip:SetOwner(self, "ANCHOR_TOP")
@@ -1100,7 +974,6 @@ Datatexts:Register("volume", {
             GameTooltip:AddLine(ns.L["Volume"], 1, 1, 1)
             GameTooltip:AddLine(" ")
 
-            -- Show all volume levels
             local muted = IsMuted()
             if muted then
                 GameTooltip:AddLine(ns.L["Sound is MUTED"], 1, 0.2, 0.2)
@@ -1113,7 +986,6 @@ Datatexts:Register("volume", {
             GameTooltip:AddDoubleLine(ns.L["Ambience Volume:"], GetVolume("ambience") .. "%", 0.7, 0.7, 0.7, 1, 1, 1)
             GameTooltip:AddDoubleLine(ns.L["Dialog Volume:"], GetVolume("dialog") .. "%", 0.7, 0.7, 0.7, 1, 1, 1)
 
-            -- Footer hints
             GameTooltip:AddLine(" ")
             GameTooltip:AddLine(ns.L["Scroll to adjust volume"], 0.5, 0.5, 0.5)
             GameTooltip:AddLine(ns.L["Left-Click for volume sliders"], 0.5, 0.5, 0.5)
@@ -1127,7 +999,6 @@ Datatexts:Register("volume", {
             GameTooltip:Hide()
         end)
 
-        -- Scroll wheel to adjust volume
         frame:SetScript("OnMouseWheel", function(self, delta)
             local volSettings = GetVolumeSettings()
             local step = volSettings.volumeStep or 5
@@ -1138,13 +1009,11 @@ Datatexts:Register("volume", {
             if volumePopup and volumePopup:IsShown() then
                 volumePopup:Refresh()
             end
-            -- Update tooltip if shown
             if GameTooltip:IsShown() then
                 frame:GetScript("OnEnter")(frame)
             end
         end)
 
-        -- Click handler: Left = volume popup, Middle = audio settings, Right = mute toggle
         frame:RegisterForClicks("AnyUp")
         frame:SetScript("OnClick", function(self, button)
             if button == "LeftButton" then
@@ -1159,18 +1028,12 @@ Datatexts:Register("volume", {
                 if volumePopup and volumePopup:IsShown() then
                     volumePopup:Refresh()
                 end
-                -- Update tooltip if shown
                 if GameTooltip:IsShown() then
                     frame:GetScript("OnEnter")(frame)
                 end
             end
         end)
 
-        -- This datatext covers the slot with its own mouse-enabled button, which
-        -- would otherwise swallow the slot's Shift-drag reorder (Info Bar layout
-        -- mode wires RegisterForDrag/OnDragStart on the SLOT). Forward drag to
-        -- whatever handler the host/layout system currently has on the slot so
-        -- reorder + detached-panel move keep working.
         frame:RegisterForDrag("LeftButton")
         frame:SetScript("OnDragStart", function()
             local h = slotFrame:GetScript("OnDragStart")
@@ -1182,16 +1045,12 @@ Datatexts:Register("volume", {
         end)
 
         frame.Update = Update
-        -- No ticker needed - volume only changes on user interaction
-        -- Update is called on scroll/click, and tooltip shows fresh values on hover
 
         Update()
         return frame
     end,
 
     OnDisable = function(frame)
-        -- Slot frames are pooled: drop the popup's owner reference so a
-        -- reused slot can't be written to through a stale Update closure.
         if volumePopup and volumePopup.owner == frame then
             volumePopup.owner = nil
             volumePopup:Hide()
@@ -1199,10 +1058,6 @@ Datatexts:Register("volume", {
     end,
 })
 
--- Legacy goldData hygiene: deleting a character from the storage cache
--- must also drop its read-only legacy twin, or the merge layer would
--- resurrect the deleted character in the gold tooltip. Module-scope (not
--- per-widget): the purge must run even when no gold widget is enabled.
 do
     local Bus = ns.Storage and ns.Storage.Bus
     if Bus and Bus.Subscribe then
@@ -1216,7 +1071,6 @@ do
     end
 end
 
--- Gold datatext
 Datatexts:Register("gold", {
     displayName = ns.L["Gold"],
     category = ns.L["Character"],
@@ -1232,9 +1086,6 @@ Datatexts:Register("gold", {
 
         local AltsData = ns.DatatextAltsData
 
-        -- Build the { key → record } map from the storage cache (same guard
-        -- idiom as the alts widget). Money/class are tracked by the storage
-        -- collector now; this widget only READS.
         local function BuildCharacters()
             local Store = ns.Storage and ns.Storage.Store
             if not (Store and Store.IsInitialized and Store.IsInitialized()) then
@@ -1263,16 +1114,13 @@ Datatexts:Register("gold", {
 
         Update()
 
-        -- Request WoW Token price from server and set up refresh ticker
         if C_WowTokenPublic and C_WowTokenPublic.UpdateMarketPrice then
             C_WowTokenPublic.UpdateMarketPrice()
-            -- Refresh token price every 60 seconds
             frame.tokenTicker = C_Timer.NewTicker(60, function()
                 C_WowTokenPublic.UpdateMarketPrice()
             end)
         end
 
-        -- Tooltip
         slotFrame:EnableMouse(true)
         slotFrame:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
@@ -1285,8 +1133,6 @@ Datatexts:Register("gold", {
             local copper = money % 100
             GameTooltip:AddDoubleLine(ns.L["Current:"], string.format("%s %ds %dc", FormatGold(money), silver, copper), 0.8, 0.8, 0.8, 1, 1, 1)
 
-            -- All Characters: storage cache rows, with legacy goldData folded
-            -- in read-only as a fallback for characters the cache hasn't seen.
             local characters = BuildCharacters()
             if characters then
                 local db = QUICore and QUICore.db
@@ -1295,7 +1141,6 @@ Datatexts:Register("gold", {
                 rows = AltsData.MergeLegacyGold(rows, goldData)
 
                 if #rows > 1 then
-                    -- Get configured accent color for section headers
                     local vr, vg, vb = GetValueColor()
                     local ar, ag, ab = vr/255, vg/255, vb/255
 
@@ -1305,11 +1150,7 @@ Datatexts:Register("gold", {
                     GameTooltip:AddLine(" ")
                     GameTooltip:AddLine(ns.L["All Characters"], 1, 1, 1)
                     for _, row in ipairs(rows) do
-                        -- Use class color for character name
                         local cr, cg, cb = Helpers.GetClassColor(row.class)
-                        -- Always show the storage key ("Name-Realm") so same-named
-                        -- alts on different realms stay unambiguous. Bullet the
-                        -- current character.
                         local displayName = (row.key == currentKey) and ("• " .. row.key) or row.key
                         GameTooltip:AddDoubleLine(displayName, FormatGold(row.money), cr, cg, cb, 1, 1, 1)
                     end
@@ -1318,11 +1159,9 @@ Datatexts:Register("gold", {
                 end
             end
 
-            -- Get accent color for section headers
             local vr, vg, vb = GetValueColor()
             local ar, ag, ab = vr/255, vg/255, vb/255
 
-            -- Warbound Bank Gold
             if C_Bank and C_Bank.FetchDepositedMoney then
                 local warboundMoney = C_Bank.FetchDepositedMoney(Enum.BankType.Account)
                 if warboundMoney and warboundMoney > 0 then
@@ -1332,7 +1171,6 @@ Datatexts:Register("gold", {
                 end
             end
 
-            -- WoW Token Price (always show section, display "Updating..." if not available yet)
             if C_WowTokenPublic and C_WowTokenPublic.GetCurrentMarketPrice then
                 local tokenPrice = C_WowTokenPublic.GetCurrentMarketPrice()
                 GameTooltip:AddLine(" ")
@@ -1352,7 +1190,6 @@ Datatexts:Register("gold", {
         end)
         slotFrame:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-        -- Click handler: Left = Currency, Right = Bags, Middle = Alts window.
         slotFrame:RegisterForClicks("AnyUp")
         slotFrame:SetScript("OnClick", function(self, button)
             if button == "LeftButton" then
@@ -1361,7 +1198,6 @@ Datatexts:Register("gold", {
                 ToggleAllBags()
             elseif button == "MiddleButton" then
                 if ns.Alts and ns.Alts.IsEnabled and ns.Alts.IsEnabled() then
-                    -- Roster UI is lazy; the trigger loads it on first open.
                     if _G.QUI_OpenAltsRoster then _G.QUI_OpenAltsRoster() end
                 else
                     print("|cff00ff00QUI:|r " .. ns.L["enable the Alts module (Options → Modules) to use the Alts window."])
@@ -1382,10 +1218,6 @@ Datatexts:Register("gold", {
     end,
 })
 
--- Alts datatext: roster summary from the account-wide storage cache.
--- Pure data shaping lives in alts_data.lua (headless-tested); this block is
--- the frame/tooltip/click shell. ns.Alts (the Alts window) is an OPTIONAL
--- runtime dependency — every read is guarded.
 Datatexts:Register("alts", {
     displayName = ns.L["Alts"],
     category = ns.L["Character"],
@@ -1401,7 +1233,6 @@ Datatexts:Register("alts", {
 
         local FormatGold = Datatexts.FormatGold
 
-        -- Build the { key → record } map from the storage cache.
         local function BuildCharacters()
             local Store = ns.Storage and ns.Storage.Store
             if not (Store and Store.IsInitialized and Store.IsInitialized()) then
@@ -1423,9 +1254,6 @@ Datatexts:Register("alts", {
                 return
             end
             local rows = AltsData.BuildRows(characters)
-            -- Bar-text mode is panel-wide like the Spec/Time datatexts: read
-            -- it from profile.datatext.altsMode, but let a per-slot surface
-            -- override win if one is ever supplied via `settings`.
             local dtSettings = QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.datatext
             local mode = (settings and settings.altsMode)
                 or (dtSettings and dtSettings.altsMode)
@@ -1441,9 +1269,6 @@ Datatexts:Register("alts", {
 
         frame.Update = Update
 
-        -- Storage bus drives content updates. Bus.Subscribe has a matching
-        -- Unsubscribe, so we hold the handler refs on the frame and tear them
-        -- down in OnDisable; re-enabling makes fresh closures, never doubling.
         local Bus = ns.Storage and ns.Storage.Bus
         if Bus and Bus.Subscribe then
             local function onBus() Update() end
@@ -1459,7 +1284,6 @@ Datatexts:Register("alts", {
 
         Update()
 
-        -- Tooltip
         slotFrame:EnableMouse(true)
         slotFrame:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
@@ -1493,7 +1317,6 @@ Datatexts:Register("alts", {
                 GameTooltip:AddLine(ns.L["Roster cache not ready."], 0.7, 0.7, 0.7)
             end
 
-            -- Warbound Bank Gold (verbatim from the gold widget).
             if C_Bank and C_Bank.FetchDepositedMoney then
                 local warboundMoney = C_Bank.FetchDepositedMoney(Enum.BankType.Account)
                 if warboundMoney and warboundMoney > 0 then
@@ -1510,9 +1333,6 @@ Datatexts:Register("alts", {
         end)
         slotFrame:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-        -- Right-click → Alts settings page. Mirrors the Info Bar context-menu
-        -- idiom: QUI:OpenOptions() then deep-link next frame (the shell builds
-        -- over the first frame). Route 20/1 matches QUI_Options/tiles/alts.lua.
         local function OpenAltsSettings()
             local QUI = _G.QUI
             if QUI and type(QUI.OpenOptions) == "function" then
@@ -1526,12 +1346,10 @@ Datatexts:Register("alts", {
             end)
         end
 
-        -- Click handler: Left = Alts window, Right = Alts settings.
         slotFrame:RegisterForClicks("AnyUp")
         slotFrame:SetScript("OnClick", function(_, button)
             if button == "LeftButton" then
                 if ns.Alts and ns.Alts.IsEnabled and ns.Alts.IsEnabled() then
-                    -- Roster UI is lazy; the trigger loads it on first open.
                     if _G.QUI_OpenAltsRoster then _G.QUI_OpenAltsRoster() end
                 else
                     print("|cff00ff00QUI:|r " .. ns.L["enable the Alts module (Options → Modules) to use the Alts window."])
@@ -1558,7 +1376,6 @@ Datatexts:Register("alts", {
     end,
 })
 
--- Durability datatext
 Datatexts:Register("durability", {
     displayName = ns.L["Durability"],
     category = ns.L["Character"],
@@ -1597,9 +1414,9 @@ Datatexts:Register("durability", {
 
             local r, g, b
             if minVal <= 25 then
-                r, g, b = 255, 51, 51  -- Red warning (0-255)
+                r, g, b = 255, 51, 51
             elseif minVal <= 50 then
-                r, g, b = 255, 255, 0  -- Yellow warning (0-255)
+                r, g, b = 255, 255, 0
             else
                 r, g, b = GetValueColor()
             end
@@ -1613,7 +1430,6 @@ Datatexts:Register("durability", {
         frame:RegisterEvent("PLAYER_ENTERING_WORLD")
         frame:SetScript("OnEvent", Update)
 
-        -- Tooltip
         slotFrame:EnableMouse(true)
         slotFrame:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
@@ -1621,7 +1437,6 @@ Datatexts:Register("durability", {
             GameTooltip:AddLine(ns.L["Durability"], 1, 1, 1)
             GameTooltip:AddLine(" ")
 
-            -- Show durability for each slot
             for _, slot in ipairs(DURABLE_SLOTS) do
                 local cur, maxVal = GetInventoryItemDurability(slot)
                 if cur and maxVal and maxVal > 0 then
@@ -1629,11 +1444,10 @@ Datatexts:Register("durability", {
                     local slotName = SLOT_NAMES[slot] or (ns.L["Slot "] .. slot)
                     local r, g, b
                     if pct <= 25 then
-                        r, g, b = 1, 0.2, 0.2  -- Red warning
+                        r, g, b = 1, 0.2, 0.2
                     elseif pct <= 50 then
-                        r, g, b = 1, 1, 0  -- Yellow caution
+                        r, g, b = 1, 1, 0
                     else
-                        -- Good condition - use configured accent color
                         local vr, vg, vb = GetValueColor()
                         r, g, b = vr/255, vg/255, vb/255
                     end
@@ -1648,7 +1462,6 @@ Datatexts:Register("durability", {
         end)
         slotFrame:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-        -- Click handler: Left = Character panel
         slotFrame:RegisterForClicks("AnyUp")
         slotFrame:SetScript("OnClick", function(self, button)
             if button == "LeftButton" then
@@ -1665,11 +1478,6 @@ Datatexts:Register("durability", {
     end,
 })
 
----=================================================================================
---- SOCIAL DATATEXT HELPERS (Friends & Guild)
----=================================================================================
-
--- Constants for social datatexts
 local TIMERUNNING_ICON = "|A:timerunning-glues-icon-small:12:10:0:0|a"
 local MOBILE_ICON = "|TInterface\\ChatFrame\\UI-ChatIcon-ArmoryChat:14:14:0:0:16:16:0:16:0:16:73:177:73|t"
 local WOW_PROJECT_ID = WOW_PROJECT_ID or 1
@@ -1681,24 +1489,18 @@ local PROJECT_NAMES = {
     [14] = ns.L["Cata Classic"],
 }
 
--- Check if player is in current group
 local function IsPlayerInGroup(name, realmName)
     if not name or name == "" then return false end
 
     local fullName = name
     local shortName = name
 
-    -- Handle "Player-Realm" format from guild roster
     if name:find("-") then
         shortName = name:gsub("%-[^%-]+$", "")
     elseif realmName and realmName ~= "" and realmName ~= GetRealmName() then
         fullName = name .. "-" .. realmName
     end
 
-    -- Try both formats for consistency. Group-membership probes for an
-    -- arbitrary name can be SECRET on 12.1 PTR7 (UnitInRaid is
-    -- SecretWhenUnitIdentityRestricted) — collapse each result before the
-    -- truth-test; unknown membership counts as "not in group".
     -- @secret-policy: collapse-only
     local inParty = UnitInParty(fullName)
     if issecretvalue and issecretvalue(inParty) then inParty = nil end
@@ -1714,7 +1516,6 @@ local function IsPlayerInGroup(name, realmName)
     return inRaidShort and true or false
 end
 
--- Send whisper to player (regular or BNet)
 local function SendWhisperTo(name, isBNet)
     if not name or name == "" then return end
     if isBNet then
@@ -1724,7 +1525,6 @@ local function SendWhisperTo(name, isBNet)
     end
 end
 
--- Invite player to group (regular or BNet)
 local function InvitePlayerToGroup(nameOrGameID, guid, isBNet)
     if not nameOrGameID then return end
 
@@ -1742,7 +1542,6 @@ local function InvitePlayerToGroup(nameOrGameID, guid, isBNet)
             end
         end
     else
-        -- Fallback when GUID unavailable
         if isBNet then
             BNInviteFriend(nameOrGameID)
         else
@@ -1751,26 +1550,20 @@ local function InvitePlayerToGroup(nameOrGameID, guid, isBNet)
     end
 end
 
--- Get level color (difficulty-based)
 local function GetLevelColor(level)
     if not level or level <= 0 then return 1, 1, 1 end
     local color = GetQuestDifficultyColor(level)
     return color.r, color.g, color.b
 end
 
----=================================================================================
---- FRIENDS CACHE SYSTEM
----=================================================================================
-
 local friendsCache = {
-    wowFriends = {},    -- Regular WoW friends
-    bnetRetail = {},    -- BNet friends on Retail
-    bnetClassic = {},   -- BNet friends on Classic versions
-    bnetOther = {},     -- BNet friends on other games
+    wowFriends = {},
+    bnetRetail = {},
+    bnetClassic = {},
+    bnetOther = {},
     lastUpdate = 0
 }
 
--- Build reverse lookup: localized class name -> class token (e.g., "Warrior" -> "WARRIOR")
 local unlocalizedClasses = {}
 do
     local classMale = LOCALIZED_CLASS_NAMES_MALE
@@ -1785,31 +1578,26 @@ end
 
 local function GetClassColor(className)
     if not className then return nil end
-    -- First check if it's already a token (e.g., "WARRIOR")
     local direct = Helpers.GetClassColorTable(className)
     if direct then return direct end
-    -- Otherwise try localized lookup (e.g., "Warrior" -> "WARRIOR")
     local classToken = unlocalizedClasses[className]
     return classToken and Helpers.GetClassColorTable(classToken)
 end
 
--- Client priority: higher = better (games beat App/Mobile)
 local CLIENT_PRIORITY = {
-    -- WoW is handled separately with wowProjectID
-    App = 1,    -- Desktop App
-    BSAp = 1,   -- Mobile App
+    App = 1,
+    BSAp = 1,
 }
 
 local function GetClientPriority(client, wowProjectID)
     if client == BNET_CLIENT_WOW then
-        -- WoW Retail is highest priority, then Classic
         if wowProjectID == WOW_PROJECT_ID then
-            return 100  -- Current retail
+            return 100
         else
-            return 50   -- Classic versions
+            return 50
         end
     end
-    return CLIENT_PRIORITY[client] or 10  -- Other games
+    return CLIENT_PRIORITY[client] or 10
 end
 
 local function BuildFriendsCache()
@@ -1818,7 +1606,6 @@ local function BuildFriendsCache()
     wipe(friendsCache.bnetClassic)
     wipe(friendsCache.bnetOther)
 
-    -- Regular WoW friends (non-BNet)
     for i = 1, C_FriendList.GetNumFriends() do
         local info = C_FriendList.GetFriendInfoByIndex(i)
         if info and info.connected then
@@ -1835,10 +1622,8 @@ local function BuildFriendsCache()
         end
     end
 
-    -- Battle.net friends - deduplicate by picking best game account per friend
-    -- Each friend appears only ONCE, prioritizing games over App/Mobile
     if BNConnected() then
-        local seenAccounts = {}  -- Track best entry per bnetAccountID
+        local seenAccounts = {}
 
         for i = 1, BNGetNumFriends() do
             local accountInfo = C_BattleNet.GetFriendAccountInfo(i)
@@ -1847,7 +1632,6 @@ local function BuildFriendsCache()
                 local numGameAccounts = C_BattleNet.GetFriendNumGameAccounts(i) or 0
                 local foundGameAccount = false
 
-                -- Find the best game account for this friend
                 for y = 1, numGameAccounts do
                     local gameInfo = C_BattleNet.GetFriendGameAccountInfo(i, y)
                     if gameInfo and gameInfo.isOnline then
@@ -1855,7 +1639,6 @@ local function BuildFriendsCache()
                         local priority = GetClientPriority(gameInfo.clientProgram, gameInfo.wowProjectID)
                         local existing = seenAccounts[bnetID]
 
-                        -- Only keep if this is higher priority than existing
                         if not existing or priority > existing.priority then
                             seenAccounts[bnetID] = {
                                 priority = priority,
@@ -1883,14 +1666,11 @@ local function BuildFriendsCache()
                     end
                 end
 
-                -- If no game accounts found but friend is online, they're App/Mobile only
-                -- Add them so they can still be whispered
                 if not foundGameAccount and not seenAccounts[bnetID] then
-                    -- Check if account is actually online via gameAccountInfo
                     local gameAccountInfo = accountInfo.gameAccountInfo
                     if gameAccountInfo and gameAccountInfo.isOnline then
                         seenAccounts[bnetID] = {
-                            priority = 1,  -- Lowest priority (App/Mobile)
+                            priority = 1,
                             entry = {
                                 accountName = accountInfo.accountName,
                                 bnetID = bnetID,
@@ -1907,7 +1687,6 @@ local function BuildFriendsCache()
             end
         end
 
-        -- Now add each friend's best entry to the appropriate category
         for _, data in pairs(seenAccounts) do
             local entry = data.entry
             if entry.client == BNET_CLIENT_WOW then
@@ -1925,7 +1704,6 @@ local function BuildFriendsCache()
     friendsCache.lastUpdate = GetTime()
 end
 
--- Friends datatext
 Datatexts:Register("friends", {
     displayName = ns.L["Friends"],
     category = ns.L["Social"],
@@ -1938,17 +1716,14 @@ Datatexts:Register("friends", {
         local text = Datatexts.EnsureText(slotFrame)
 
         local function Update()
-            -- WoW friends
             local wowOnline = C_FriendList.GetNumOnlineFriends() or 0
             local wowTotal = C_FriendList.GetNumFriends() or 0
 
-            -- Battle.net friends
             local bnetTotal, bnetOnline = 0, 0
             if BNConnected() then
                 bnetTotal, bnetOnline = BNGetNumFriends()
             end
 
-            -- Combined
             local online = wowOnline + (bnetOnline or 0)
             local total = wowTotal + (bnetTotal or 0)
 
@@ -1963,7 +1738,6 @@ Datatexts:Register("friends", {
 
         frame.Update = Update
 
-        -- Events
         frame:RegisterEvent("FRIENDLIST_UPDATE")
         frame:RegisterEvent("CHAT_MSG_SYSTEM")
         frame:RegisterEvent("BN_FRIEND_ACCOUNT_ONLINE")
@@ -1972,13 +1746,11 @@ Datatexts:Register("friends", {
         frame:RegisterEvent("BN_CONNECTED")
         frame:RegisterEvent("BN_DISCONNECTED")
         frame:SetScript("OnEvent", function()
-            friendsCache.lastUpdate = 0  -- Invalidate cache
+            friendsCache.lastUpdate = 0
             Update()
         end)
 
-        -- Tooltip helper function (supports Shift-notes view)
         local function BuildFriendsTooltip(self)
-            -- Rebuild cache if stale (> 1 second old)
             if GetTime() - friendsCache.lastUpdate > 1 then
                 BuildFriendsCache()
             end
@@ -1989,13 +1761,11 @@ Datatexts:Register("friends", {
             GameTooltip:ClearLines()
             GameTooltip:AddLine(showNotes and ns.L["Friends (Notes)"] or ns.L["Friends"], 1, 1, 1)
 
-            -- Get configured accent color for section headers
             local vr, vg, vb = GetValueColor()
             local ar, ag, ab = vr/255, vg/255, vb/255
 
             local hasAnyFriends = false
 
-            -- Helper to get right-side text based on view mode
             local function GetRightText(info, isWowFriend)
                 if showNotes then
                     local note = isWowFriend and info.notes or info.note
@@ -2009,7 +1779,6 @@ Datatexts:Register("friends", {
                 end
             end
 
-            -- WoW Friends section
             if #friendsCache.wowFriends > 0 then
                 hasAnyFriends = true
                 GameTooltip:AddLine(" ")
@@ -2032,7 +1801,6 @@ Datatexts:Register("friends", {
                 end
             end
 
-            -- Battle.net (Retail) section
             if #friendsCache.bnetRetail > 0 then
                 if hasAnyFriends then GameTooltip:AddLine(" ") end
                 hasAnyFriends = true
@@ -2063,7 +1831,6 @@ Datatexts:Register("friends", {
                 end
             end
 
-            -- Battle.net (Classic) section
             if #friendsCache.bnetClassic > 0 then
                 if hasAnyFriends then GameTooltip:AddLine(" ") end
                 hasAnyFriends = true
@@ -2091,7 +1858,6 @@ Datatexts:Register("friends", {
                 end
             end
 
-            -- Other Games section
             if #friendsCache.bnetOther > 0 then
                 if hasAnyFriends then GameTooltip:AddLine(" ") end
                 hasAnyFriends = true
@@ -2138,27 +1904,19 @@ Datatexts:Register("friends", {
             GameTooltip:Show()
         end
 
-        -- Tooltip
         slotFrame:EnableMouse(true)
         slotFrame:SetScript("OnEnter", function(self)
             BuildFriendsTooltip(self)
         end)
         slotFrame:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-        -- Register for modifier key changes to update tooltip dynamically
         frame:RegisterEvent("MODIFIER_STATE_CHANGED")
-        frame.friendsDatatextEnabled = true  -- Flag for cleanup
+        frame.friendsDatatextEnabled = true
         if not frame.friendsModifierHooked then
             frame:HookScript("OnEvent", function(self, event, key)
-                if not self.friendsDatatextEnabled then return end  -- Guard against stale hooks
-                -- Nested (not compound) event test: the host frame also
-                -- registers CHAT_MSG events whose pos-4 payload secretizes,
-                -- and the analyzer only narrows event identity on a pure
-                -- event-compare condition — inside this branch `key` is a
-                -- plain modifier string.
+                if not self.friendsDatatextEnabled then return end
                 if event == "MODIFIER_STATE_CHANGED" then
                     if key == "LSHIFT" or key == "RSHIFT" then
-                        -- Only refresh if tooltip is owned by this datatext (avoids clobbering other tooltips)
                         if GameTooltip:IsShown() and GameTooltip:GetOwner() == slotFrame then
                             BuildFriendsTooltip(slotFrame)
                         end
@@ -2168,13 +1926,11 @@ Datatexts:Register("friends", {
             frame.friendsModifierHooked = true
         end
 
-        -- Click
         slotFrame:RegisterForClicks("AnyUp")
         slotFrame:SetScript("OnClick", function(self, button)
             if button == "LeftButton" then
                 ToggleFriendsFrame(1)
             elseif button == "RightButton" then
-                -- Rebuild cache if needed
                 if GetTime() - friendsCache.lastUpdate > 1 then
                     BuildFriendsCache()
                 end
@@ -2182,55 +1938,46 @@ Datatexts:Register("friends", {
                 MenuUtil.CreateContextMenu(self, function(_, root)
                     root:CreateTitle(ns.L["Friends Menu"])
 
-                    -- Whisper submenu
                     local whisperMenu = root:CreateButton(ns.L["Whisper"])
                     local hasWhisperTargets = false
 
-                    -- Add WoW friends to whisper
                     for _, info in ipairs(friendsCache.wowFriends) do
                         hasWhisperTargets = true
                         local classColor = GetClassColor(info.class)
                         local colorCode = classColor and format("|cff%02x%02x%02x", classColor.r*255, classColor.g*255, classColor.b*255) or "|cffffffff"
-                        -- Capture name in local to ensure closure works correctly
                         local whisperName = info.name
                         whisperMenu:CreateButton(colorCode .. info.name .. "|r", function()
                             SendWhisperTo(whisperName, false)
                         end)
                     end
 
-                    -- Add BNet Retail friends to whisper
                     for _, info in ipairs(friendsCache.bnetRetail) do
                         hasWhisperTargets = true
                         local classColor = GetClassColor(info.className)
                         local colorCode = classColor and format("|cff%02x%02x%02x", classColor.r*255, classColor.g*255, classColor.b*255) or "|cffffffff"
                         local displayName = info.characterName and info.characterName ~= "" and (colorCode .. info.characterName .. "|r (" .. info.accountName .. ")") or info.accountName
-                        -- Capture accountName in local to ensure closure works correctly
                         local whisperName = info.accountName
                         whisperMenu:CreateButton(displayName, function()
                             SendWhisperTo(whisperName, true)
                         end)
                     end
 
-                    -- Add BNet Classic friends to whisper
                     for _, info in ipairs(friendsCache.bnetClassic) do
                         hasWhisperTargets = true
                         local classColor = GetClassColor(info.className)
                         local colorCode = classColor and format("|cff%02x%02x%02x", classColor.r*255, classColor.g*255, classColor.b*255) or "|cffffffff"
                         local versionName = PROJECT_NAMES[info.wowProjectID] or ns.L["Classic"]
                         local displayName = info.characterName and info.characterName ~= "" and (colorCode .. info.characterName .. "|r (" .. info.accountName .. ")") or info.accountName
-                        -- Capture accountName in local to ensure closure works correctly
                         local whisperName = info.accountName
                         whisperMenu:CreateButton(displayName .. " - " .. versionName, function()
                             SendWhisperTo(whisperName, true)
                         end)
                     end
 
-                    -- Add BNet Other Games / App-only friends to whisper
                     for _, info in ipairs(friendsCache.bnetOther) do
                         hasWhisperTargets = true
                         local gameName = info.richPresence or info.client or ns.L["Online"]
                         local displayName = info.accountName .. " |cff808080(" .. gameName .. ")|r"
-                        -- Capture accountName in local to ensure closure works correctly
                         local whisperName = info.accountName
                         whisperMenu:CreateButton(displayName, function()
                             SendWhisperTo(whisperName, true)
@@ -2242,17 +1989,14 @@ Datatexts:Register("friends", {
                         noFriends:SetEnabled(false)
                     end
 
-                    -- Invite submenu (only invitable friends)
                     local inviteMenu = root:CreateButton(ns.L["Invite"])
                     local hasInviteTargets = false
 
-                    -- WoW friends
                     for _, info in ipairs(friendsCache.wowFriends) do
                         if not IsPlayerInGroup(info.name) then
                             hasInviteTargets = true
                             local classColor = GetClassColor(info.class)
                             local colorCode = classColor and format("|cff%02x%02x%02x", classColor.r*255, classColor.g*255, classColor.b*255) or "|cffffffff"
-                            -- Capture values in locals for closure
                             local inviteName, inviteGuid = info.name, info.guid
                             inviteMenu:CreateButton(colorCode .. info.name .. "|r", function()
                                 InvitePlayerToGroup(inviteName, inviteGuid, false)
@@ -2260,13 +2004,11 @@ Datatexts:Register("friends", {
                         end
                     end
 
-                    -- BNet Retail friends (same project = invitable)
                     for _, info in ipairs(friendsCache.bnetRetail) do
                         if info.characterName and info.characterName ~= "" and not IsPlayerInGroup(info.characterName, info.realmName) then
                             hasInviteTargets = true
                             local classColor = GetClassColor(info.className)
                             local colorCode = classColor and format("|cff%02x%02x%02x", classColor.r*255, classColor.g*255, classColor.b*255) or "|cffffffff"
-                            -- Capture values in locals for closure
                             local inviteGameID, inviteGuid = info.gameID, info.guid
                             inviteMenu:CreateButton(colorCode .. info.characterName .. "|r", function()
                                 InvitePlayerToGroup(inviteGameID, inviteGuid, true)
@@ -2287,7 +2029,6 @@ Datatexts:Register("friends", {
             end
         end)
 
-        -- Initial update
         C_FriendList.ShowFriends()
         Update()
 
@@ -2296,22 +2037,16 @@ Datatexts:Register("friends", {
 
     OnDisable = function(frame)
         frame:UnregisterAllEvents()
-        frame.friendsDatatextEnabled = false  -- Disable modifier hook
+        frame.friendsDatatextEnabled = false
     end,
 })
 
----=================================================================================
---- GUILD CACHE SYSTEM
----=================================================================================
-
 local guildCache = {
-    members = {},       -- Guild roster data
-    clubMembers = {},   -- Club API data (for timerunning detection)
+    members = {},
+    clubMembers = {},
     lastUpdate = 0
 }
 
--- Strip only the player's realm suffix from names
--- "Player-MyRealm" -> "Player", "Player-OtherRealm" -> "Player-OtherRealm"
 local myRealmPattern
 local function StripMyRealm(name)
     if not myRealmPattern then
@@ -2319,7 +2054,7 @@ local function StripMyRealm(name)
         if realm then
             myRealmPattern = "%-" .. realm
         else
-            return name  -- Can't strip without realm info
+            return name
         end
     end
     return (string.gsub(name, myRealmPattern, ""))
@@ -2331,7 +2066,6 @@ local function BuildGuildCache()
 
     if not IsInGuild() then return end
 
-    -- Get club data for timerunning detection (uses C_Club API)
     local clubs = C_Club and C_Club.GetSubscribedClubs()
     if clubs then
         local guildClubID
@@ -2357,7 +2091,6 @@ local function BuildGuildCache()
         end
     end
 
-    -- Get roster data
     local total, online = GetNumGuildMembers()
     local showOffline = GetGuildRosterShowOffline()
     local scanTotal = showOffline and total or online
@@ -2368,7 +2101,7 @@ local function BuildGuildCache()
             local clubData = guildCache.clubMembers[guid]
 
             table.insert(guildCache.members, {
-                name = name,  -- Full name with realm, use Ambiguate() for display
+                name = name,
                 rank = rank,
                 rankIndex = rankIndex,
                 level = level,
@@ -2377,7 +2110,7 @@ local function BuildGuildCache()
                 note = note,
                 officerNote = offNote,
                 online = connected,
-                status = status,  -- 0=online, 1=AFK, 2=DND
+                status = status,
                 isMobile = isMobile,
                 guid = guid,
                 timerunningID = clubData and clubData.timerunningID,
@@ -2389,7 +2122,6 @@ local function BuildGuildCache()
     guildCache.lastUpdate = GetTime()
 end
 
--- Guild datatext
 Datatexts:Register("guild", {
     displayName = ns.L["Guild"],
     category = ns.L["Social"],
@@ -2427,22 +2159,19 @@ Datatexts:Register("guild", {
 
         frame.Update = Update
 
-        -- Events
         frame:RegisterEvent("GUILD_ROSTER_UPDATE")
         frame:RegisterEvent("PLAYER_GUILD_UPDATE")
         frame:SetScript("OnEvent", function(self, event, unit)
             if event == "PLAYER_GUILD_UPDATE" and unit and unit ~= "player" then
                 return
             end
-            guildCache.lastUpdate = 0  -- Invalidate cache
+            guildCache.lastUpdate = 0
             Update()
         end)
 
-        -- Tooltip helper function (supports Shift-notes view)
         local function BuildGuildTooltip(self)
             if not IsInGuild() then return end
 
-            -- Rebuild cache if stale
             if GetTime() - guildCache.lastUpdate > 1 then
                 BuildGuildCache()
             end
@@ -2453,7 +2182,6 @@ Datatexts:Register("guild", {
             GameTooltip:ClearLines()
 
             local guildName = GetGuildInfo("player")
-            -- Get configured accent color for section headers
             local vr, vg, vb = GetValueColor()
             local ar, ag, ab = vr/255, vg/255, vb/255
 
@@ -2496,13 +2224,10 @@ Datatexts:Register("guild", {
                 local inGroupMark = IsPlayerInGroup(info.name) and " |cffaaaaaa*|r" or ""
                 local mobileIcon = (info.isMobile and not info.online) and (" " .. MOBILE_ICON) or ""
 
-                -- StripMyRealm: removes only YOUR realm suffix, keeps cross-realm names intact
                 local displayName = StripMyRealm(info.name)
 
-                -- Right side: zone/rank (normal) or notes (Shift held)
                 local rightText, rr, rg, rb
                 if showNotes then
-                    -- Show personal note and officer note
                     local noteText = ""
                     if info.note and info.note ~= "" then
                         noteText = info.note
@@ -2524,8 +2249,6 @@ Datatexts:Register("guild", {
                     rr, rg, rb = 0.7, 0.7, 0.7
                 end
 
-                -- Format: "Level Name[-Realm] - Rank" on left
-                -- Gray dash separator, white rank text
                 GameTooltip:AddDoubleLine(
                     levelStr .. displayName .. inGroupMark .. statusText .. timerunning .. mobileIcon .. " |cff999999-|cffffffff " .. info.rank .. "|r",
                     rightText,
@@ -2550,21 +2273,18 @@ Datatexts:Register("guild", {
             GameTooltip:Show()
         end
 
-        -- Tooltip
         slotFrame:EnableMouse(true)
         slotFrame:SetScript("OnEnter", function(self)
             BuildGuildTooltip(self)
         end)
         slotFrame:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-        -- Register for modifier key changes to update tooltip dynamically
         frame:RegisterEvent("MODIFIER_STATE_CHANGED")
-        frame.guildDatatextEnabled = true  -- Flag for cleanup
+        frame.guildDatatextEnabled = true
         if not frame.guildModifierHooked then
             frame:HookScript("OnEvent", function(self, event, key)
-                if not self.guildDatatextEnabled then return end  -- Guard against stale hooks
+                if not self.guildDatatextEnabled then return end
                 if event == "MODIFIER_STATE_CHANGED" and (key == "LSHIFT" or key == "RSHIFT") then
-                    -- Only refresh if tooltip is owned by this datatext (avoids clobbering other tooltips)
                     if GameTooltip:IsShown() and GameTooltip:GetOwner() == slotFrame then
                         BuildGuildTooltip(slotFrame)
                     end
@@ -2573,21 +2293,15 @@ Datatexts:Register("guild", {
             frame.guildModifierHooked = true
         end
 
-        -- Click
         slotFrame:RegisterForClicks("AnyUp")
         slotFrame:SetScript("OnClick", function(self, button)
             if button == "LeftButton" then
                 ToggleGuildFrame()
             elseif button == "RightButton" and IsInGuild() then
-                -- Rebuild cache if needed
                 if GetTime() - guildCache.lastUpdate > 1 then
                     BuildGuildCache()
                 end
 
-                -- UnitName/GetNormalizedRealmName are secret-capable under
-                -- identity restriction — probe each before the concat
-                -- (statement-split: the analyzer-provable guard shape).
-                -- Unknown self-name only skips the self-exclusion below.
                 local shortName = UnitName("player")
                 local realmName = GetNormalizedRealmName()
                 if issecretvalue and issecretvalue(shortName) then
@@ -2604,7 +2318,6 @@ Datatexts:Register("guild", {
                 MenuUtil.CreateContextMenu(self, function(_, root)
                     root:CreateTitle(ns.L["Guild Menu"])
 
-                    -- Whisper submenu
                     local whisperMenu = root:CreateButton(ns.L["Whisper"])
                     local hasWhisperTargets = false
 
@@ -2614,7 +2327,6 @@ Datatexts:Register("guild", {
                             local classColor = GetClassColor(info.class)
                             local colorCode = classColor and format("|cff%02x%02x%02x", classColor.r*255, classColor.g*255, classColor.b*255) or "|cffffffff"
                             local levelStr = format("|cffffffff%d|r ", info.level or 0)
-                            -- Capture fullName in local for closure
                             local whisperName = info.name
                             whisperMenu:CreateButton(levelStr .. colorCode .. info.name .. "|r", function()
                                 SendWhisperTo(whisperName, false)
@@ -2627,7 +2339,6 @@ Datatexts:Register("guild", {
                         noMembers:SetEnabled(false)
                     end
 
-                    -- Invite submenu (exclude mobile-only and already grouped)
                     local inviteMenu = root:CreateButton(ns.L["Invite"])
                     local hasInviteTargets = false
 
@@ -2638,7 +2349,6 @@ Datatexts:Register("guild", {
                             local classColor = GetClassColor(info.class)
                             local colorCode = classColor and format("|cff%02x%02x%02x", classColor.r*255, classColor.g*255, classColor.b*255) or "|cffffffff"
                             local levelStr = format("|cffffffff%d|r ", info.level or 0)
-                            -- Capture values in locals for closure
                             local inviteName, inviteGuid = info.name, info.guid
                             inviteMenu:CreateButton(levelStr .. colorCode .. info.name .. "|r", function()
                                 InvitePlayerToGroup(inviteName, inviteGuid, false)
@@ -2659,7 +2369,6 @@ Datatexts:Register("guild", {
             end
         end)
 
-        -- Initial update
         if IsInGuild() then
             C_GuildInfo.GuildRoster()
         end
@@ -2670,11 +2379,10 @@ Datatexts:Register("guild", {
 
     OnDisable = function(frame)
         frame:UnregisterAllEvents()
-        frame.guildDatatextEnabled = false  -- Disable modifier hook
+        frame.guildDatatextEnabled = false
     end,
 })
 
--- Loot Spec datatext
 Datatexts:Register("lootspec", {
     displayName = ns.L["Loot Specialization"],
     category = ns.L["Character"],
@@ -2696,7 +2404,6 @@ Datatexts:Register("lootspec", {
             end
 
             local specID, specName, _, icon = GetSpecializationInfo(specIndex)
-            -- Guard against specID being nil or 0 during zone transitions
             if not specID or specID == 0 then
                 local r, g, b = GetValueColor()
                 text:SetFormattedText(label .. "|cff%02x%02x%02x%s|r", r, g, b, "?")
@@ -2706,10 +2413,8 @@ Datatexts:Register("lootspec", {
             local lootSpec = GetLootSpecialization()
             local r, g, b = GetValueColor()
 
-            -- Determine which spec name to display
             local displayName = specName
             if lootSpec ~= 0 and lootSpec ~= specID then
-                -- Loot spec differs from current spec, show loot spec name
                 for i = 1, GetNumSpecializations() or 0 do
                     local id, name = GetSpecializationInfo(i)
                     if id == lootSpec then
@@ -2724,13 +2429,11 @@ Datatexts:Register("lootspec", {
 
         frame.Update = Update
 
-        -- Events
         frame:RegisterEvent("PLAYER_ENTERING_WORLD")
         frame:RegisterEvent("PLAYER_LOOT_SPEC_UPDATED")
         frame:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
         frame:RegisterEvent("PLAYER_TALENT_UPDATE")
         frame:SetScript("OnEvent", function(self, event)
-            -- Delay update for spec changes to allow API to update
             if event == "ACTIVE_TALENT_GROUP_CHANGED" or event == "PLAYER_TALENT_UPDATE" then
                 C_Timer.After(0.1, Update)
             else
@@ -2738,7 +2441,6 @@ Datatexts:Register("lootspec", {
             end
         end)
 
-        -- Tooltip
         slotFrame:EnableMouse(true)
         slotFrame:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
@@ -2749,9 +2451,6 @@ Datatexts:Register("lootspec", {
             local specIndex = GetSpecialization()
             if specIndex then
                 local lootSpec = GetLootSpecialization()
-                -- lootSpec is a specID (0 = auto), NOT a specialization index;
-                -- resolve its name the same way Update() does, never feed it to
-                -- GetSpecializationInfo (which expects a 1-based index).
                 local specName
                 if lootSpec == 0 then
                     specName = select(2, GetSpecializationInfo(specIndex))
@@ -2782,7 +2481,6 @@ Datatexts:Register("lootspec", {
         end)
         slotFrame:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-        -- Click
         slotFrame:RegisterForClicks("AnyUp")
         slotFrame:SetScript("OnClick", function(self, button)
             if button == "LeftButton" then
@@ -2791,19 +2489,16 @@ Datatexts:Register("lootspec", {
                         TogglePlayerSpellsFrame()
                     end
                 else
-                    -- Simple toggle through loot specs
                     local currentSpec = GetSpecialization()
                     local currentLoot = GetLootSpecialization()
                     local numSpecs = GetNumSpecializations() or 0
 
                     if currentLoot == 0 then
-                        -- Currently auto, switch to spec 1
                         local specID = select(1, GetSpecializationInfo(1))
                         if specID then
                             SetLootSpecialization(specID)
                         end
                     else
-                        -- Find current loot spec index
                         local lootIndex = 0
                         for i = 1, numSpecs do
                             local id = select(1, GetSpecializationInfo(i))
@@ -2813,9 +2508,8 @@ Datatexts:Register("lootspec", {
                             end
                         end
 
-                        -- Cycle to next
                         if lootIndex >= numSpecs then
-                            SetLootSpecialization(0)  -- Back to auto
+                            SetLootSpecialization(0)
                         else
                             local nextID = select(1, GetSpecializationInfo(lootIndex + 1))
                             if nextID then
@@ -2836,7 +2530,6 @@ Datatexts:Register("lootspec", {
     end,
 })
 
--- Bags datatext
 Datatexts:Register("bags", {
     displayName = ns.L["Bags"],
     category = ns.L["Character"],
@@ -2848,11 +2541,9 @@ Datatexts:Register("bags", {
 
         local text = Datatexts.EnsureText(slotFrame)
 
-        -- Number of bag slots (add 1 for reagent bag on retail)
         local NUM_BAGS = NUM_BAG_SLOTS + 1
         local REAGENT_BAG = Enum.BagIndex and Enum.BagIndex.ReagentBag or 5
 
-        -- Color gradient for bag fullness (green=empty, red=full)
         local function ColorGradient(percent)
             if percent <= 0 then return 0.1, 1, 0.1 end
             if percent >= 1 then return 1, 0.1, 0.1 end
@@ -2863,7 +2554,6 @@ Datatexts:Register("bags", {
             end
         end
 
-        -- Store bag data for tooltip
         local bagData = {}
 
         local function Update()
@@ -2874,7 +2564,6 @@ Datatexts:Register("bags", {
                 local numSlots = C_Container.GetContainerNumSlots(i)
                 if numSlots and numSlots > 0 then
                     local freeSlots, bagType = C_Container.GetContainerNumFreeSlots(i)
-                    -- Only count normal bags (bagType 0 or nil) and reagent bags
                     if not bagType or bagType == 0 then
                         totalSlots = totalSlots + numSlots
                         usedSlots = usedSlots + (numSlots - freeSlots)
@@ -2894,12 +2583,10 @@ Datatexts:Register("bags", {
 
         frame.Update = Update
 
-        -- Events
         frame:RegisterEvent("BAG_UPDATE")
         frame:RegisterEvent("PLAYER_ENTERING_WORLD")
         frame:SetScript("OnEvent", Update)
 
-        -- Tooltip
         slotFrame:EnableMouse(true)
         slotFrame:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
@@ -2917,7 +2604,6 @@ Datatexts:Register("bags", {
                     local r2, g2, b2 = ColorGradient(percent)
 
                     if i > 0 then
-                        -- Get bag icon and quality
                         local invID = C_Container.ContainerIDToInventoryID(i)
                         local icon = GetInventoryItemTexture("player", invID)
                         local quality = GetInventoryItemQuality("player", invID) or 1
@@ -2929,7 +2615,6 @@ Datatexts:Register("bags", {
                             r1, g1, b1, r2, g2, b2
                         )
                     else
-                        -- Backpack (bag 0)
                         GameTooltip:AddDoubleLine(
                             bagName,
                             string.format("%d / %d", data.used, data.total),
@@ -2946,7 +2631,6 @@ Datatexts:Register("bags", {
         end)
         slotFrame:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-        -- Click handler
         slotFrame:RegisterForClicks("AnyUp")
         slotFrame:SetScript("OnClick", function(self, button)
             if button == "LeftButton" then
@@ -2963,7 +2647,6 @@ Datatexts:Register("bags", {
     end,
 })
 
--- Coordinates datatext
 Datatexts:Register("coords", {
     displayName = ns.L["Coordinates"],
     category = ns.L["Character"],
@@ -2990,14 +2673,12 @@ Datatexts:Register("coords", {
                     end
                 end
             end
-            -- Fallback if no coords available (instanced content, etc)
             text:SetFormattedText(label .. "|cff%02x%02x%02x--|r", r, g, b)
         end
 
         frame.Update = Update
         frame.ticker = C_Timer.NewTicker(0.5, Update)
 
-        -- Tooltip shows zone name
         slotFrame:EnableMouse(true)
         slotFrame:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
@@ -3015,7 +2696,6 @@ Datatexts:Register("coords", {
         end)
         slotFrame:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-        -- Click to open world map
         slotFrame:RegisterForClicks("AnyUp")
         slotFrame:SetScript("OnClick", function(self, button)
             if button == "LeftButton" then
@@ -3035,12 +2715,8 @@ Datatexts:Register("coords", {
     end,
 })
 
----=================================================================================
---- CURRENCIES DATATEXT
----=================================================================================
-
 local currenciesHookApplied = false
-local activeCurrenciesFrame = nil  -- Track the active currencies frame for hook callback
+local activeCurrenciesFrame = nil
 
 Datatexts:Register("currencies", {
     displayName = ns.L["Currencies"],
@@ -3056,9 +2732,8 @@ Datatexts:Register("currencies", {
         local iconString = "|T%s:14:14:0:0:64:64:4:60:4:60|t"
         local goldIcon = "|TInterface\\MoneyFrame\\UI-GoldIcon:14:14:0:0|t"
 
-        -- Helper function to get currencies in the configured order
         local function GetOrderedCurrencies()
-            local allCurrencies = GetTrackedCurrencies()  -- Get all tracked currencies
+            local allCurrencies = GetTrackedCurrencies()
             local ordered = {}
             local seen = {}
             local currenciesById = {}
@@ -3068,12 +2743,10 @@ Datatexts:Register("currencies", {
                 idByName[curr.name] = curr.id
             end
 
-            -- Get the configured order from settings
             local db = QUICore.db and QUICore.db.profile and QUICore.db.profile.datatext
             local currencyOrder = db and db.currencyOrder or {}
             local currencyEnabled = db and db.currencyEnabled or nil
 
-            -- Resolve configured order to tracked IDs, supporting legacy name-based entries.
             local resolvedIds = {}
             if type(currencyOrder) == "table" then
                 for _, rawValue in ipairs(currencyOrder) do
@@ -3099,7 +2772,6 @@ Datatexts:Register("currencies", {
                 end
             end
 
-            -- Append newly tracked currencies not yet in order.
             for _, curr in ipairs(allCurrencies) do
                 if not seen[curr.id] then
                     seen[curr.id] = true
@@ -3107,7 +2779,6 @@ Datatexts:Register("currencies", {
                 end
             end
 
-            -- Return first six checked currencies in configured order.
             for _, currencyId in ipairs(resolvedIds) do
                 local isEnabled = true
                 if type(currencyEnabled) == "table" and currencyEnabled[currencyId] == false then
@@ -3128,21 +2799,15 @@ Datatexts:Register("currencies", {
         end
 
         local function Update()
-            -- How many currencies to show. On a content-sized host (Info
-            -- Bar slots grow to fit their text; marked by _quiOnWidthDirty,
-            -- which fixed-width datapanel slots explicitly nil) the width
-            -- ladder would read our own current width and lock at 1 —
-            -- show every enabled currency there instead (the configured
-            -- cap is 6). Fixed-width panels keep the adaptive ladder.
             local maxToShow
             if slotFrame._quiOnWidthDirty then
                 maxToShow = 6
             else
                 local slotWidth = slotFrame:GetWidth() or 0
                 if slotWidth <= 0 or slotWidth < 80 then
-                    maxToShow = 1      -- Compact: 1 currency (also handles 0/nil)
+                    maxToShow = 1
                 elseif slotWidth < 120 then
-                    maxToShow = 2      -- Medium: 2 currencies
+                    maxToShow = 2
                 elseif slotWidth < 165 then
                     maxToShow = 3
                 elseif slotWidth < 210 then
@@ -3176,24 +2841,17 @@ Datatexts:Register("currencies", {
                 local r, g, b = GetValueColor()
                 text:SetFormattedText("|cff%02x%02x%02x%s|r", r, g, b, ns.L["No Currencies"])
             end
-            -- Content-sized host: tell the bar our width changed (the
-            -- provider pattern — ldb_bridge/providers_extra do the same).
             if slotFrame._quiOnWidthDirty then slotFrame._quiOnWidthDirty() end
         end
 
         frame.Update = Update
 
-        -- Track this as the active currencies frame for hook callback
         activeCurrenciesFrame = frame
 
-        -- Events
         frame:RegisterEvent("CURRENCY_DISPLAY_UPDATE")
         frame:RegisterEvent("PLAYER_ENTERING_WORLD")
         frame:SetScript("OnEvent", Update)
 
-        -- Hook BackpackTokenFrame.Update to catch when user changes tracked currencies
-        -- Only hook once; uses module-level activeCurrenciesFrame to avoid closure leak
-        -- TAINT SAFETY: Defer to break taint chain from secure Blizzard context.
         if BackpackTokenFrame and BackpackTokenFrame.Update and not currenciesHookApplied then
             hooksecurefunc(BackpackTokenFrame, "Update", function()
                 C_Timer.After(0, function()
@@ -3205,7 +2863,6 @@ Datatexts:Register("currencies", {
             currenciesHookApplied = true
         end
 
-        -- Tooltip: Shows gold + all currencies in configured order
         slotFrame:EnableMouse(true)
         slotFrame:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
@@ -3213,14 +2870,12 @@ Datatexts:Register("currencies", {
             GameTooltip:AddLine(ns.L["Currencies"], 1, 1, 1)
             GameTooltip:AddLine(" ")
 
-            -- Gold (always shown in tooltip)
             local money = GetMoney() or 0
             local gold = floor(money / 10000)
             local silver = floor((money % 10000) / 100)
             local copper = money % 100
             GameTooltip:AddDoubleLine(goldIcon .. " " .. ns.L["Gold"], format("%sg %ds %dc", BreakUpLargeNumbers and BreakUpLargeNumbers(gold) or gold, silver, copper), 1, 0.82, 0, 1, 1, 1)
 
-            -- All backpack currencies in configured order
             local orderedCurrencies = GetOrderedCurrencies()
             if #orderedCurrencies > 0 then
                 for _, currencyInfo in ipairs(orderedCurrencies) do
@@ -3244,7 +2899,6 @@ Datatexts:Register("currencies", {
         end)
         slotFrame:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-        -- Click
         slotFrame:RegisterForClicks("AnyUp")
         slotFrame:SetScript("OnClick", function(self, button)
             if button == "LeftButton" then
@@ -3258,27 +2912,16 @@ Datatexts:Register("currencies", {
 
     OnDisable = function(frame)
         frame:UnregisterAllEvents()
-        -- Clear the active frame reference if this was the active one
         if activeCurrenciesFrame == frame then
             activeCurrenciesFrame = nil
         end
     end,
 })
 
----=================================================================================
---- MYTHIC KEY DATATEXT
----=================================================================================
-
--- Short dungeon names for compact display (challengeMapID -> short name)
--- Full names shown in tooltip via C_ChallengeMode.GetMapUIInfo()
--- Data sourced from MDT and MDungeonTeleports
--- Ordered by expansion release (oldest first)
--- Use shared dungeon data from qui_dungeon_data.lua
 local function GetShortDungeonName(mapID)
     if _G.QUI_DungeonData then
         return _G.QUI_DungeonData.GetShortName(mapID)
     end
-    -- Fallback if shared data not loaded yet
     local name = C_ChallengeMode.GetMapUIInfo(mapID)
     if name then
         return name:match("^(%S+)") or name
@@ -3286,14 +2929,13 @@ local function GetShortDungeonName(mapID)
     return "?"
 end
 
--- Get color based on keystone level
 local function GetKeyColor(level)
     if not level or level == 0 then return 0.7, 0.7, 0.7 end
-    if level >= 20 then return 1, 0.5, 0 end      -- Orange for 20+
-    if level >= 15 then return 0.64, 0.21, 0.93 end -- Purple for 15-19
-    if level >= 10 then return 0, 0.44, 0.87 end  -- Blue for 10-14
-    if level >= 5 then return 0.12, 1, 0 end      -- Green for 5-9
-    return 1, 1, 1                                 -- White for 2-4
+    if level >= 20 then return 1, 0.5, 0 end
+    if level >= 15 then return 0.64, 0.21, 0.93 end
+    if level >= 10 then return 0, 0.44, 0.87 end
+    if level >= 5 then return 0.12, 1, 0 end
+    return 1, 1, 1
 end
 
 Datatexts:Register("mythickey", {
@@ -3324,13 +2966,11 @@ Datatexts:Register("mythickey", {
 
         frame.Update = Update
 
-        -- Events
         frame:RegisterEvent("PLAYER_ENTERING_WORLD")
         frame:RegisterEvent("CHALLENGE_MODE_MAPS_UPDATE")
         frame:RegisterEvent("BAG_UPDATE")
         frame:SetScript("OnEvent", Update)
 
-        -- Tooltip
         slotFrame:EnableMouse(true)
         slotFrame:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
@@ -3356,7 +2996,6 @@ Datatexts:Register("mythickey", {
         end)
         slotFrame:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-        -- Click
         slotFrame:RegisterForClicks("AnyUp")
         slotFrame:SetScript("OnClick", function(self, button)
             if InCombatLockdown() then return end
@@ -3374,10 +3013,6 @@ Datatexts:Register("mythickey", {
     end,
 })
 
----=================================================================================
---- PLAYER SPEC DATATEXT
----=================================================================================
-
 Datatexts:Register("playerspec", {
     displayName = ns.L["Player Spec"],
     category = ns.L["Character"],
@@ -3390,14 +3025,11 @@ Datatexts:Register("playerspec", {
         local text = Datatexts.EnsureText(slotFrame)
 
         local iconString = "|T%s:14:14:0:0:64:64:4:60:4:60|t"
-        -- Store activeLoadoutID on frame to avoid scope issues with multiple instances
         frame.activeLoadoutID = nil
 
-        -- TalentLoadoutManager integration
         local TLM = TalentLoadoutManagerAPI
         local hasTLM = TLM and TLM.GlobalAPI and TLM.CharacterAPI and TLM.Event
 
-        -- Get active loadout info (TLM-aware)
         local function GetActiveLoadoutInfo(specID)
             if hasTLM then
                 local info = TLM.CharacterAPI:GetActiveLoadoutInfo()
@@ -3409,12 +3041,10 @@ Datatexts:Register("playerspec", {
             return nil
         end
 
-        -- Get all loadouts for spec (TLM-aware)
         local function GetAllLoadouts(specID)
             if hasTLM then
                 return TLM.GlobalAPI:GetLoadouts(specID) or {}
             end
-            -- Fallback to Blizzard API
             local loadouts = {}
             local builds = C_ClassTalents.GetConfigIDsBySpecID(specID)
             if builds then
@@ -3433,13 +3063,11 @@ Datatexts:Register("playerspec", {
             return loadouts
         end
 
-        -- Load a loadout (TLM-aware)
         local function LoadLoadout(loadoutID)
             if hasTLM then
                 TLM.CharacterAPI:LoadLoadout(loadoutID, true)
                 return
             end
-            -- Fallback to Blizzard API
             if not _G.PlayerSpellsFrame then
                 if _G.PlayerSpellsFrame_LoadUI then
                     _G.PlayerSpellsFrame_LoadUI()
@@ -3458,19 +3086,16 @@ Datatexts:Register("playerspec", {
         local function GetLoadoutName(specID)
             if not PlayerUtil.CanUseClassTalents() then return nil end
 
-            -- Check for starter build
             if C_ClassTalents.GetHasStarterBuild() and C_ClassTalents.GetStarterBuildActive() then
-                frame.activeLoadoutID = nil  -- Clear when using starter
+                frame.activeLoadoutID = nil
                 return ns.L["Starter Build"]
             end
 
-            -- Try TLM first
             local activeInfo = GetActiveLoadoutInfo(specID)
             if activeInfo then
                 return activeInfo.displayName or activeInfo.name
             end
 
-            -- Fallback to Blizzard API
             local configID = C_ClassTalents.GetLastSelectedSavedConfigID(specID)
             if configID then
                 frame.activeLoadoutID = configID
@@ -3491,7 +3116,6 @@ Datatexts:Register("playerspec", {
             end
 
             local specID, specName, _, icon = GetSpecializationInfo(specIndex)
-            -- Guard against specID being nil or 0, or missing icon/name during zone transitions
             if not specID or specID == 0 or not icon or not specName then
                 text:SetText("?")
                 return
@@ -3501,22 +3125,19 @@ Datatexts:Register("playerspec", {
             local loadoutName = GetLoadoutName(specID)
             local r, g, b = GetValueColor()
 
-            -- Get display mode setting: "icon", "loadout", or "full" (default)
             local db = QUICore and QUICore.db
             local dtSettings = db and db.profile and db.profile.datatext
             local displayMode = dtSettings and dtSettings.specDisplayMode or "full"
 
             if displayMode == "icon" then
-                -- Icon only
                 text:SetText(iconText)
             elseif displayMode == "loadout" then
-                -- Icon + loadout name (or just icon if no loadout)
                 if loadoutName then
                     text:SetFormattedText("%s |cff%02x%02x%02x%s|r", iconText, r, g, b, loadoutName)
                 else
                     text:SetText(iconText)
                 end
-            else  -- "full" (default, current behavior)
+            else
                 if loadoutName then
                     text:SetFormattedText("%s |cff%02x%02x%02x%s / %s|r", iconText, r, g, b, specName, loadoutName)
                 else
@@ -3527,7 +3148,6 @@ Datatexts:Register("playerspec", {
 
         frame.Update = Update
 
-        -- Events
         frame:RegisterEvent("PLAYER_ENTERING_WORLD")
         frame:RegisterEvent("PLAYER_TALENT_UPDATE")
         frame:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
@@ -3536,7 +3156,6 @@ Datatexts:Register("playerspec", {
         frame:RegisterEvent("TRAIT_CONFIG_DELETED")
         frame:RegisterEvent("TRAIT_CONFIG_LIST_UPDATED")
         frame:SetScript("OnEvent", function(self, event)
-            -- Delay update for spec/loadout changes to allow API to update
             if event == "ACTIVE_TALENT_GROUP_CHANGED" or event == "PLAYER_TALENT_UPDATE"
                or event == "TRAIT_CONFIG_UPDATED" or event == "TRAIT_CONFIG_LIST_UPDATED" then
                 C_Timer.After(0.1, Update)
@@ -3545,7 +3164,6 @@ Datatexts:Register("playerspec", {
             end
         end)
 
-        -- TalentLoadoutManager event registration (uses CallbackRegistryMixin)
         if hasTLM and TLM.RegisterCallback then
             TLM:RegisterCallback(TLM.Event.LoadoutListUpdated, function()
                 C_Timer.After(0.1, Update)
@@ -3558,7 +3176,6 @@ Datatexts:Register("playerspec", {
             end, frame)
         end
 
-        -- Tooltip
         slotFrame:EnableMouse(true)
         slotFrame:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
@@ -3566,15 +3183,13 @@ Datatexts:Register("playerspec", {
             GameTooltip:AddLine(ns.L["Talent Specialization"], 1, 1, 1)
             GameTooltip:AddLine(" ")
 
-            -- Get configured accent color for headers and active indicators
             local vr, vg, vb = GetValueColor()
-            local ar, ag, ab = vr/255, vg/255, vb/255  -- For AddLine (0-1 range)
-            local activeColor = format("|cff%02x%02x%02x", vr, vg, vb)  -- For inline color codes
+            local ar, ag, ab = vr/255, vg/255, vb/255
+            local activeColor = format("|cff%02x%02x%02x", vr, vg, vb)
 
             local currentSpec = GetSpecialization()
             local numSpecs = GetNumSpecializations() or 0
 
-            -- Show all specs
             GameTooltip:AddLine(ns.L["Specializations"], ar, ag, ab)
             for i = 1, numSpecs do
                 local specID, specName, _, icon = GetSpecializationInfo(i)
@@ -3585,7 +3200,6 @@ Datatexts:Register("playerspec", {
                 end
             end
 
-            -- Show loadouts
             if currentSpec and PlayerUtil.CanUseClassTalents() then
                 local specID = GetSpecializationInfo(currentSpec)
                 if specID then
@@ -3595,7 +3209,6 @@ Datatexts:Register("playerspec", {
                         local headerText = hasTLM and ns.L["Loadouts (TLM)"] or ns.L["Loadouts"]
                         GameTooltip:AddLine(headerText, ar, ag, ab)
 
-                        -- Starter build
                         if C_ClassTalents.GetHasStarterBuild() then
                             local isActive = C_ClassTalents.GetStarterBuildActive()
                             local status = isActive and " " .. activeColor .. ns.L["(Active)"] .. "|r" or ""
@@ -3606,7 +3219,6 @@ Datatexts:Register("playerspec", {
                             local isActive = (loadout.id == frame.activeLoadoutID)
                             local status = isActive and " " .. activeColor .. ns.L["(Active)"] .. "|r" or ""
                             local name = loadout.displayName or loadout.name or ns.L["Unknown"]
-                            -- Mark custom TLM loadouts (explicit == false, nil means unknown)
                             if loadout.isBlizzardLoadout == false then
                                 name = activeColor .. "[TLM]|r " .. name
                             end
@@ -3616,7 +3228,6 @@ Datatexts:Register("playerspec", {
                 end
             end
 
-            -- Show loot spec
             GameTooltip:AddLine(" ")
             GameTooltip:AddLine(ns.L["Loot Specialization"], ar, ag, ab)
             local lootSpec = GetLootSpecialization()
@@ -3643,25 +3254,21 @@ Datatexts:Register("playerspec", {
         end)
         slotFrame:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-        -- Click
         slotFrame:RegisterForClicks("AnyUp")
         slotFrame:SetScript("OnClick", function(self, button)
             local specIndex = GetSpecialization()
             if not specIndex then return end
 
-            -- Get configured accent color for active indicators in menus
             local vr, vg, vb = GetValueColor()
             local activeMarker = format(" |cff%02x%02x%02x*|r", vr, vg, vb)
             local accentColor = format("|cff%02x%02x%02x", vr, vg, vb)
 
             if button == "LeftButton" then
                 if IsShiftKeyDown() then
-                    -- Open talents
                     if not InCombatLockdown() then
                         TogglePlayerSpellsFrame()
                     end
                 elseif IsControlKeyDown() then
-                    -- Loadout menu
                     local specID = GetSpecializationInfo(specIndex)
                     if not specID or not PlayerUtil.CanUseClassTalents() then return end
 
@@ -3669,7 +3276,6 @@ Datatexts:Register("playerspec", {
                         local titleText = hasTLM and ns.L["Switch Loadout (TLM)"] or ns.L["Switch Loadout"]
                         root:CreateTitle(titleText)
 
-                        -- Starter build
                         if C_ClassTalents.GetHasStarterBuild() then
                             local isActive = C_ClassTalents.GetStarterBuildActive()
                             root:CreateButton("|cff0070DD" .. ns.L["Starter Build"] .. "|r" .. (isActive and activeMarker or ""), function()
@@ -3693,7 +3299,6 @@ Datatexts:Register("playerspec", {
                         for _, loadout in ipairs(loadouts) do
                             local isActive = (loadout.id == frame.activeLoadoutID)
                             local name = loadout.displayName or loadout.name or ns.L["Unknown"]
-                            -- Mark custom TLM loadouts (explicit == false, nil means unknown)
                             if loadout.isBlizzardLoadout == false then
                                 name = accentColor .. "[TLM]|r " .. name
                             end
@@ -3704,7 +3309,6 @@ Datatexts:Register("playerspec", {
                         end
                     end)
                 else
-                    -- Spec menu
                     local numSpecs = GetNumSpecializations() or 0
                     MenuUtil.CreateContextMenu(self, function(_, root)
                         root:CreateTitle(ns.L["Switch Specialization"])
@@ -3725,14 +3329,12 @@ Datatexts:Register("playerspec", {
                     end)
                 end
             elseif button == "RightButton" then
-                -- Loot spec menu
                 local numSpecs = GetNumSpecializations() or 0
                 local currentLoot = GetLootSpecialization()
 
                 MenuUtil.CreateContextMenu(self, function(_, root)
                     root:CreateTitle(ns.L["Loot Specialization"])
 
-                    -- Auto option
                     local _, currentSpecName = GetSpecializationInfo(specIndex)
                     local isAuto = (currentLoot == 0)
                     root:CreateButton(format(ns.L["%s (Auto)"], currentSpecName or ns.L["Current"]) .. (isAuto and activeMarker or ""), function()
@@ -3761,7 +3363,6 @@ Datatexts:Register("playerspec", {
 
     OnDisable = function(frame)
         frame:UnregisterAllEvents()
-        -- Unregister TalentLoadoutManager callbacks if available
         local TLM = TalentLoadoutManagerAPI
         if TLM and TLM.UnregisterCallback and TLM.Event then
             TLM:UnregisterCallback(TLM.Event.LoadoutListUpdated, frame)
@@ -3771,7 +3372,6 @@ Datatexts:Register("playerspec", {
     end,
 })
 
--- Experience datatext
 Datatexts:Register("experience", {
     displayName = ns.L["Experience"],
     category = ns.L["Character"],
@@ -3788,7 +3388,6 @@ Datatexts:Register("experience", {
             local level = UnitLevel("player")
             local maxLevel = GetMaxLevelForPlayerExpansion and GetMaxLevelForPlayerExpansion() or MAX_PLAYER_LEVEL or 80
 
-            -- Check if at max level
             if level >= maxLevel then
                 local label = GetLabel(ns.L["XP: "], ns.L["X: "], slotFrame.shortLabel, slotFrame.noLabel)
                 local r, g, b = GetValueColor()
@@ -3799,7 +3398,7 @@ Datatexts:Register("experience", {
             local currXP = UnitXP("player")
             local maxXP = UnitXPMax("player")
 
-            if maxXP == 0 then maxXP = 1 end  -- Avoid division by zero
+            if maxXP == 0 then maxXP = 1 end
             local percent = floor((currXP / maxXP) * 100 + 0.5)
 
             local label = GetLabel(ns.L["XP: "], ns.L["X: "], slotFrame.shortLabel, slotFrame.noLabel)
@@ -3807,7 +3406,6 @@ Datatexts:Register("experience", {
             text:SetFormattedText("%s|cff%02x%02x%02x%d%%|r", label, r, g, b, percent)
         end
 
-        -- Tooltip on hover
         frame:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_TOP")
             GameTooltip:ClearLines()
@@ -3824,7 +3422,6 @@ Datatexts:Register("experience", {
                 local maxXP = UnitXPMax("player")
                 local remaining = maxXP - currXP
 
-                -- Format numbers with commas
                 local function FormatNumber(n)
                     local s = tostring(floor(n))
                     local pos = #s % 3
@@ -3835,18 +3432,15 @@ Datatexts:Register("experience", {
                 GameTooltip:AddDoubleLine(ns.L["Current XP:"], FormatNumber(currXP) .. " / " .. FormatNumber(maxXP), 0.7, 0.7, 0.7, 1, 1, 1)
                 GameTooltip:AddDoubleLine(ns.L["Remaining:"], FormatNumber(remaining) .. ns.L[" to level "] .. (level + 1), 0.7, 0.7, 0.7, 1, 1, 1)
 
-                -- Rested XP
                 local exhaustionThreshold = GetXPExhaustion()
                 if exhaustionThreshold and exhaustionThreshold > 0 then
                     GameTooltip:AddLine(" ")
                     GameTooltip:AddDoubleLine(ns.L["Rested XP:"], FormatNumber(exhaustionThreshold), 0.2, 0.6, 1, 0.2, 0.6, 1)
 
-                    -- Calculate rested bonus as percentage of remaining
                     local restedPercent = floor((exhaustionThreshold / maxXP) * 100 + 0.5)
                     GameTooltip:AddDoubleLine(ns.L["Rested Bonus:"], restedPercent .. ns.L["% of level"], 0.2, 0.6, 1, 0.2, 0.6, 1)
                 end
 
-                -- Rest state
                 local exhaustionStateID, exhaustionStateName = GetRestState()
                 if exhaustionStateName then
                     GameTooltip:AddLine(" ")
@@ -3865,10 +3459,8 @@ Datatexts:Register("experience", {
             GameTooltip:Hide()
         end)
 
-        -- Click handler (no action for now)
         frame:RegisterForClicks("AnyUp")
 
-        -- Update on XP events
         frame:RegisterEvent("PLAYER_XP_UPDATE")
         frame:RegisterEvent("PLAYER_LEVEL_UP")
         frame:RegisterEvent("UPDATE_EXHAUSTION")

@@ -1,9 +1,3 @@
---[[
-    QUI Prey Tracker Module
-    Tracks prey hunting progress (WoW Midnight 12.0+ prey system)
-    with a progress bar, hunt scanner, currency tracker, and ambush alerts.
-]]
-
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 local UIKit = ns.UIKit
@@ -13,12 +7,8 @@ local SkinBase = ns.SkinBase
 local GetSettings = Helpers.CreateDBGetter("preyTracker")
 local GetCore = Helpers.GetCore
 
----------------------------------------------------------------------------
--- CONSTANTS
----------------------------------------------------------------------------
-
-local PREY_WIDGET_TYPE = 31 -- fallback if Enum not available
-local WIDGET_SHOWN = 1      -- fallback for Enum.WidgetShownState.Shown
+local PREY_WIDGET_TYPE = 31
+local WIDGET_SHOWN = 1
 local PREY_CURRENCIES = {
     { id = 3392, name = ns.L["Remnant of Anguish"] },
     { id = 3316, name = ns.L["Voidlight Marl"] },
@@ -54,10 +44,6 @@ local TEXT_FORMATS = {
     name_pct   = function(stage, pct, name) return string_format("%s — %d%%", name or ns.L["Prey"], pct) end,
 }
 
----------------------------------------------------------------------------
--- PERFORMANCE LOCALS
----------------------------------------------------------------------------
-
 local floor = math.floor
 local max = math.max
 local min = math.min
@@ -72,54 +58,34 @@ local CreateFrame = CreateFrame
 local UIParent = UIParent
 local GameTooltip = GameTooltip
 
----------------------------------------------------------------------------
--- STATE
----------------------------------------------------------------------------
-
 local State = {
     frame = nil,
     isPreviewMode = false,
-    -- Quest
     activeQuestID = nil,
     preyName = nil,
     difficulty = nil,
-    -- Progress (raw widget/quest data)
     progressState = nil,
     progressPercent = nil,
     lastWidgetSeenAt = 0,
-    -- Display (derived from raw state in UpdateBarDisplay)
     currentStage = 0,
     currentProgress = 0,
     cachedWidgetID = nil,
     stageSoundPlayed = {},
-    -- Zone
     isInPreyZone = false,
     preyZoneMapID = nil,
     preyZoneName = nil,
-    -- Hunt scanner
     availableHunts = {},
     isAtHuntTable = false,
     huntPanel = nil,
-    -- Currency
     sessionStart = {},
-    -- Ambush
     ambushActiveUntil = 0,
-    -- Timing
     elapsed = 0,
-    -- Deferred geometry
     deferredGeometry = false,
-    -- Completion hold
     completionUntil = 0,
-    -- Initialization
     initialized = false,
-    -- Blizzard widget suppression
     widgetSuppressed = false,
 }
 local RefreshContinuousUpdateScript
-
----------------------------------------------------------------------------
--- API GUARDS
----------------------------------------------------------------------------
 
 local HasPreyAPI = C_QuestLog and type(C_QuestLog.GetActivePreyQuest) == "function"
 local HasWidgetAPI = C_UIWidgetManager and type(C_UIWidgetManager.GetAllWidgetsBySetID) == "function"
@@ -128,15 +94,10 @@ local HasCurrencyAPI = C_CurrencyInfo and type(C_CurrencyInfo.GetCurrencyInfo) =
 local HasMapAPI = C_Map and type(C_Map.GetMapInfo) == "function"
 local HasTaskAPI = C_TaskQuest and type(C_TaskQuest.GetQuestZoneID) == "function"
 
----------------------------------------------------------------------------
--- UTILITY
----------------------------------------------------------------------------
-
 local SafeToNumber = Helpers.SafeToNumber
 local SafeNumberOrNil = Helpers.SafeNumberOrNil
 local SafeValue = Helpers.SafeValue
 
--- Safe currency-quantity read: returns the SafeToNumber'd quantity, or nil.
 local function GetCurrencyQuantity(currencyID)
     local ok, info = pcall(C_CurrencyInfo.GetCurrencyInfo, currencyID)
     if ok and info and info.quantity then
@@ -221,10 +182,6 @@ local function IsInInstanceZone()
     return instanceType == "party" or instanceType == "raid" or instanceType == "arena" or instanceType == "pvp" or instanceType == "scenario"
 end
 
----------------------------------------------------------------------------
--- QUEST & WIDGET DATA
----------------------------------------------------------------------------
-
 local function GetActivePreyQuest()
     if not HasPreyAPI then return nil end
     return LocalSafeCall(C_QuestLog.GetActivePreyQuest)
@@ -264,7 +221,6 @@ end
 local function ExtractProgressPercent(info, tooltip)
     if not info then return nil end
 
-    -- Try direct percentage fields in priority order
     local directFields = {
         "progressPercentage", "progressPercent", "fillPercentage",
         "percentage", "percent", "progress", "progressValue",
@@ -277,7 +233,6 @@ local function ExtractProgressPercent(info, tooltip)
         end
     end
 
-    -- Try value/max pairs
     local valueFields = { "barValue", "value", "currentValue" }
     local maxFields = { "barMax", "maxValue", "totalValue", "total", "max" }
     for _, vf in ipairs(valueFields) do
@@ -292,7 +247,6 @@ local function ExtractProgressPercent(info, tooltip)
         end
     end
 
-    -- Scan all keys for anything containing "percent" or current/max pairs
     local currentValues = {}
     local maxValues = {}
     for key, value in pairs(info) do
@@ -323,12 +277,10 @@ local function ExtractProgressPercent(info, tooltip)
         end
     end
 
-    -- Try parsing percentage from tooltip text
     local tooltipStr = tooltip or (info.tooltip and tostring(info.tooltip)) or nil
     if tooltipStr and type(tooltipStr) == "string" then
         local match = tooltipStr:match("(%d+)%s*%%")
         if match then
-            -- Plain tonumber: a Lua pattern capture is never secret.
             local pct = tonumber(match) or 0
             if pct > 0 then return max(0, min(100, pct)) end
         end
@@ -341,19 +293,15 @@ local function ExtractQuestObjectivePercent(questID)
     if not questID then return nil end
     if not C_QuestLog or not C_QuestLog.GetQuestObjectives then return nil end
 
-    -- Try quest progress bar first
     local questBarPct = nil
     local ok, rawPct = pcall(GetQuestProgressBarPercent, questID)
     if ok and rawPct then
-        -- SafeNumberOrNil so the nil guard below is live (SafeToNumber's
-        -- `fallback or 0` can never return nil).
         local val = SafeNumberOrNil(rawPct)
         if val and val > 0 then
             questBarPct = max(0, min(100, val))
         end
     end
 
-    -- Try quest objectives for granular progress
     local ok2, objectives = pcall(C_QuestLog.GetQuestObjectives, questID)
     if not ok2 or type(objectives) ~= "table" or #objectives == 0 then
         return questBarPct
@@ -365,13 +313,9 @@ local function ExtractQuestObjectivePercent(questID)
 
     for _, objective in ipairs(objectives) do
         if type(objective) == "table" then
-            -- SafeNumberOrNil keeps the alternate-field `or` chains and the
-            -- `fulfilled and required` guards below LIVE — SafeToNumber folded
-            -- absent fields to 0, so the fallbacks and guards were dead code.
             local fulfilled = SafeNumberOrNil(objective.numFulfilled) or SafeNumberOrNil(objective.fulfilled)
             local required = SafeNumberOrNil(objective.numRequired) or SafeNumberOrNil(objective.required)
 
-            -- Handle boolean finished with no required count
             if fulfilled and not required and objective.finished ~= nil then
                 required = 1
                 fulfilled = objective.finished and 1 or max(0, fulfilled)
@@ -382,12 +326,9 @@ local function ExtractQuestObjectivePercent(questID)
                 totalFulfilled = totalFulfilled + max(0, fulfilled)
                 totalRequired = totalRequired + max(0, required)
             else
-                -- Try parsing from text like "5/10" or "45%"
                 local text = objective.text
                 if type(text) == "string" and text ~= "" then
                     local curText, maxText = text:match("(%d+)%s*/%s*(%d+)")
-                    -- Plain tonumber: pattern captures are never secret, and
-                    -- nil must survive for the guards below.
                     local curVal = tonumber(curText)
                     local maxVal = tonumber(maxText)
                     if curVal and maxVal and maxVal > 0 then
@@ -411,7 +352,6 @@ local function ExtractQuestObjectivePercent(questID)
         objectivePct = max(0, min(100, (totalFulfilled / totalRequired) * 100))
     end
 
-    -- Return the best of objective % and quest bar %
     if objectivePct and questBarPct then
         return max(objectivePct, questBarPct)
     end
@@ -441,7 +381,6 @@ end
 local function DetectPreyZone(questID)
     if not questID then return end
 
-    -- Try task quest zone first
     if HasTaskAPI then
         local zoneID = LocalSafeCall(C_TaskQuest.GetQuestZoneID, questID)
         if zoneID and zoneID > 0 then
@@ -454,7 +393,6 @@ local function DetectPreyZone(questID)
         end
     end
 
-    -- Fall back to best map for player, walk parents
     if HasMapAPI then
         local mapID = LocalSafeCall(C_Map.GetBestMapForUnit, "player")
         if mapID then
@@ -466,13 +404,12 @@ local function DetectPreyZone(questID)
 end
 
 local function CheckInPreyZone()
-    if not State.preyZoneMapID then return true end -- if we can't determine zone, assume yes
+    if not State.preyZoneMapID then return true end
     if not HasMapAPI then return true end
 
     local currentMap = LocalSafeCall(C_Map.GetBestMapForUnit, "player")
     if not currentMap then return true end
 
-    -- Walk parent chain to see if we're in the same zone hierarchy
     local checkMap = currentMap
     for _ = 1, 20 do
         if checkMap == State.preyZoneMapID then
@@ -495,22 +432,16 @@ local function ExtractPreyInfo(questID)
 
     State.preyName = title
 
-    -- Try to parse difficulty from title (e.g., "Hunt: [Name] (Nightmare)")
     local difficulty = title:match("%((%w+)%)%s*$")
     if difficulty then
         State.difficulty = difficulty
     end
 end
 
----------------------------------------------------------------------------
--- BAR CREATION
----------------------------------------------------------------------------
-
 local function GetBarColors()
     local settings = GetSettings()
     if not settings then return 0.2, 0.8, 0.2, 1, 0.1, 0.1, 0.1, 0.8, 0, 0, 0, 1 end
 
-    -- Bar fill color
     local br, bg, bb, ba
     if settings.barUseClassColor then
         br, bg, bb = Helpers.GetPlayerClassColor()
@@ -526,7 +457,6 @@ local function GetBarColors()
         br, bg, bb, ba = 0.2, 0.8, 0.2, 1
     end
 
-    -- Background color
     local bgr, bgg, bgb, bga
     if settings.barBgOverride and type(settings.barBackgroundColor) == "table" then
         bgr = settings.barBackgroundColor[1] or 0.1
@@ -538,7 +468,6 @@ local function GetBarColors()
         _sr, _sg, _sb, _sa, bgr, bgg, bgb, bga = Helpers.GetSkinColors()
     end
 
-    -- Border color via centralized resolver (honors per-module source enum)
     local bdr, bdg, bdb, bda = Helpers.GetSkinBorderColor(settings, "")
 
     return br, bg, bb, ba, bgr, bgg, bgb, bga, bdr, bdg, bdb, bda
@@ -553,7 +482,6 @@ local function CreatePreyBar()
 
     local br, bg, bb, ba, bgr, bgg, bgb, bga, bdr, bdg, bdb, bda = GetBarColors()
 
-    -- Create main StatusBar
     local bar = CreateFrame("StatusBar", "QUI_PreyTracker", UIParent)
     bar:SetSize(width, height)
     bar:SetPoint("CENTER", UIParent, "CENTER", 0, -250)
@@ -566,7 +494,6 @@ local function CreatePreyBar()
     bar:SetMovable(true)
     bar:SetClampedToScreen(true)
 
-    -- Background texture
     bar.bg = bar:CreateTexture(nil, "BACKGROUND")
     bar.bg:SetAllPoints()
     bar.bg:SetTexture(DEFAULT_FALLBACK_TEXTURE)
@@ -575,13 +502,11 @@ local function CreatePreyBar()
         UIKit.DisablePixelSnap(bar.bg)
     end
 
-    -- UIKit border
     if UIKit and UIKit.CreateBackdropBorder then
         local borderSize = (settings and settings.borderSize) or 1
         bar.Border = UIKit.CreateBackdropBorder(bar, borderSize, bdr, bdg, bdb, bda)
     end
 
-    -- Tick marks (up to 3)
     bar.ticks = {}
     for i = 1, MAX_TICKS do
         local tick = bar:CreateTexture(nil, "OVERLAY", nil, 1)
@@ -592,14 +517,12 @@ local function CreatePreyBar()
         bar.ticks[i] = tick
     end
 
-    -- Spark
     bar.spark = bar:CreateTexture(nil, "OVERLAY", nil, 2)
     bar.spark:SetTexture("Interface\\CastingBar\\UI-CastingBar-Spark")
     bar.spark:SetBlendMode("ADD")
     bar.spark:SetSize(SPARK_WIDTH, height * SPARK_HEIGHT_MULT)
     bar.spark:Hide()
 
-    -- Text
     bar.text = bar:CreateFontString(nil, "OVERLAY")
     bar.text:SetPoint("CENTER", bar, "CENTER")
     if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
@@ -610,14 +533,12 @@ local function CreatePreyBar()
     bar.text:SetTextColor(1, 1, 1)
     bar.text:SetJustifyH("CENTER")
 
-    -- Tooltip
     bar:EnableMouse(true)
     bar:SetScript("OnEnter", function(self)
         if GameTooltip:IsForbidden() then return end
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
         GameTooltip:ClearLines()
 
-        -- Header
         local settings2 = GetSettings()
         local name = State.preyName or ns.L["Prey Hunt"]
         GameTooltip:AddLine(name, 1, 1, 1)
@@ -631,7 +552,6 @@ local function CreatePreyBar()
             GameTooltip:AddLine(ns.L["Zone: "] .. State.preyZoneName, 0.7, 0.7, 0.7)
         end
 
-        -- Currency section
         if settings2 and settings2.currencyEnabled and HasCurrencyAPI then
             GameTooltip:AddLine(" ")
             GameTooltip:AddLine(ns.L["Prey Currencies"], 0.9, 0.75, 0.3)
@@ -653,7 +573,6 @@ local function CreatePreyBar()
             end
         end
 
-        -- Preview mode indicator
         if State.isPreviewMode then
             GameTooltip:AddLine(" ")
             GameTooltip:AddLine(ns.L["Preview Mode"], 1, 0.8, 0)
@@ -668,10 +587,6 @@ local function CreatePreyBar()
     State.frame = bar
     return bar
 end
-
----------------------------------------------------------------------------
--- BAR APPEARANCE
----------------------------------------------------------------------------
 
 local function GetBarTexturePath()
     local settings = GetSettings()
@@ -691,21 +606,17 @@ local function UpdateBarAppearance()
 
     local br, bg, bb, ba, bgr, bgg, bgb, bga, bdr, bdg, bdb, bda = GetBarColors()
 
-    -- Texture
     local texturePath = GetBarTexturePath()
     bar:SetStatusBarTexture(texturePath)
     bar:SetStatusBarColor(br, bg, bb, ba)
 
-    -- Background
     bar.bg:SetVertexColor(bgr, bgg, bgb, bga)
 
-    -- Border
     if UIKit and UIKit.UpdateBorderLines and bar.Border then
         local borderSize = settings.borderSize or 1
         UIKit.UpdateBorderLines(bar.Border, borderSize, bdr, bdg, bdb, bda)
     end
 
-    -- Font
     local fontSize = settings.textSize or 11
     if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
         ns.Helpers.ApplyFontWithFallback(bar.text, STANDARD_TEXT_FONT, fontSize, FONT_FLAGS)
@@ -718,14 +629,11 @@ local function UpdateBarAppearance()
         bar.text:Hide()
     end
 
-    -- Spark visibility
     if settings.showSpark and bar.spark then
-        -- Spark shown/hidden per UpdateBarDisplay
     elseif bar.spark then
         bar.spark:Hide()
     end
 
-    -- Geometry (size) — defer in combat
     if InCombatLockdown() then
         State.deferredGeometry = true
     else
@@ -775,11 +683,8 @@ local function UpdateBarDisplay()
     local settings = GetSettings()
     if not settings then return end
 
-    -- Derive display stage from raw progressState
     local stage = DetermineStageFromProgressState(State.progressState)
 
-    -- Derive display percent: use raw progressPercent if available,
-    -- otherwise fall back to stage-based estimate (like the reference)
     local pct = State.progressPercent
     local shouldUseStageFallback = (pct == nil) or (pct <= 0)
     if stage == 4 then
@@ -791,17 +696,14 @@ local function UpdateBarDisplay()
     State.currentStage = stage
     State.currentProgress = pct
 
-    -- Set bar value (C-side handles secret values)
     bar:SetMinMaxValues(0, 100)
     bar:SetValue(pct)
 
-    -- Text
     if settings.showText and bar.text then
         local formatter = TEXT_FORMATS[settings.textFormat] or TEXT_FORMATS.stage_pct
         bar.text:SetText(formatter(stage, pct, State.preyName))
     end
 
-    -- Spark position
     if settings.showSpark and bar.spark then
         local barWidth = bar:GetWidth()
         local sparkX = barWidth * (pct / 100)
@@ -816,13 +718,8 @@ local function UpdateBarDisplay()
         bar.spark:Hide()
     end
 
-    -- Tick marks
     UpdateTickMarks()
 end
-
----------------------------------------------------------------------------
--- VISIBILITY
----------------------------------------------------------------------------
 
 local function ShouldShowBar()
     local settings = GetSettings()
@@ -830,21 +727,16 @@ local function ShouldShowBar()
 
     if State.isPreviewMode then return true end
 
-    -- Completion hold
     if State.completionUntil > 0 and GetTime() < State.completionUntil then return true end
 
-    -- No active quest
     if not State.activeQuestID then return false end
 
-    -- Auto-hide when no widget data is present (out of prey zone, no active hunt visible)
     if settings.autoHide and not State.cachedWidgetID then
         return false
     end
 
-    -- Instance check
     if settings.hideInInstances and IsInInstanceZone() then return false end
 
-    -- Zone check
     if settings.hideOutsidePreyZone and not State.isInPreyZone then return false end
 
     return true
@@ -871,23 +763,17 @@ local function UpdateVisibility()
     end
 end
 
----------------------------------------------------------------------------
--- BLIZZARD WIDGET SUPPRESSION
----------------------------------------------------------------------------
-
--- Tracks which widget frames have been hooked for OnShow re-suppression
 local suppressionHookedFrames = {}
 local function SetupDebugInstrumentation()
     local mp = ns._memprobes or {}; ns._memprobes = mp
     mp[#mp + 1] = { name = "Prey_suppressionHooked", tbl = suppressionHookedFrames }
 end
-if ns.DebugRegister then -- gate contract: core/debug_gate.lua
+if ns.DebugRegister then
     ns.DebugRegister(SetupDebugInstrumentation)
 else
-    SetupDebugInstrumentation() -- standalone test harness: no gate, run eagerly
+    SetupDebugInstrumentation()
 end
 
--- Determines if a child frame should be forcibly hidden (models, animations, glow)
 local function ShouldHardSuppress(target)
     if not target then return false end
     local objectType = target.GetObjectType and target:GetObjectType() or nil
@@ -902,7 +788,6 @@ local function ShouldHardSuppress(target)
         or lowered:find("glow", 1, true) ~= nil
 end
 
--- Frames that should never be suppressed (tooltips, money frames, etc.)
 local function ShouldNeverSuppress(target)
     if not target then return true end
     local name = target.GetName and target:GetName() or ""
@@ -914,7 +799,6 @@ local function ShouldNeverSuppress(target)
         or lowered:find("merchantframe", 1, true) ~= nil
 end
 
--- Apply suppression to a single widget frame and all its children recursively
 local function ApplyWidgetFrameSuppression(frameRef, suppress)
     if not frameRef then return end
 
@@ -969,7 +853,6 @@ local function ApplyWidgetFrameSuppression(frameRef, suppress)
         applyAnimationSuppression(node)
         applyHardVisibilitySuppression(node)
 
-        -- Alpha suppression
         if node.SetAlpha then
             if suppress then
                 local nodeState = GetWidgetState(node)
@@ -986,7 +869,6 @@ local function ApplyWidgetFrameSuppression(frameRef, suppress)
             end
         end
 
-        -- Regions (textures, font strings, etc.)
         if node.GetRegions then
             local regions = { node:GetRegions() }
             for _, region in ipairs(regions) do
@@ -1010,7 +892,6 @@ local function ApplyWidgetFrameSuppression(frameRef, suppress)
             end
         end
 
-        -- Recurse into children
         if node.GetChildren then
             local children = { node:GetChildren() }
             for _, child in ipairs(children) do
@@ -1021,13 +902,11 @@ local function ApplyWidgetFrameSuppression(frameRef, suppress)
 
     applyToFrameTree(frameRef, 0)
 
-    -- Disable mouse interaction on the top-level widget frame
     if frameRef.EnableMouse then
         frameRef:EnableMouse(not suppress)
     end
 end
 
--- Also suppress the immediate parent if it's a widget container wrapper
 local function ApplySuppressionToWidgetParent(frameRef, containerFrame, suppress)
     if not frameRef or not frameRef.GetParent then return end
     local okP, parent = pcall(frameRef.GetParent, frameRef)
@@ -1047,7 +926,6 @@ local function ApplySuppressionToWidgetParent(frameRef, containerFrame, suppress
     end
 end
 
--- Hook a widget frame's OnShow so it gets re-suppressed when Blizzard shows it
 local function EnsureWidgetSuppressionHook(frameRef)
     if not frameRef or suppressionHookedFrames[frameRef] or not frameRef.HookScript then return end
     suppressionHookedFrames[frameRef] = true
@@ -1063,7 +941,6 @@ local function EnsureWidgetSuppressionHook(frameRef)
     end)
 end
 
--- Scan container children for prey/hunt-related widget names as a fallback
 local function ApplySuppressionToContainerFallback(container, suppress)
     if not container or not container.GetChildren then return end
 
@@ -1093,7 +970,6 @@ local function ApplySuppressionToContainerFallback(container, suppress)
     scan(container, 0)
 end
 
--- Main function: find all prey widget frames and apply suppression
 local function ApplyDefaultPreyIconVisibility()
     if not HasWidgetAPI then return end
 
@@ -1108,7 +984,6 @@ local function ApplyDefaultPreyIconVisibility()
                     for _, globalName in ipairs(WIDGET_CONTAINER_GLOBALS) do
                         local container = _G[globalName]
 
-                        -- Try widgetFrames lookup
                         local widgetFrame = TryGetWidgetFrameByID(container, widget.widgetID)
                         if widgetFrame then
                             EnsureWidgetSuppressionHook(widgetFrame)
@@ -1116,7 +991,6 @@ local function ApplyDefaultPreyIconVisibility()
                             ApplySuppressionToWidgetParent(widgetFrame, container, suppress)
                         end
 
-                        -- Try global name pattern
                         local namedFrame = _G[globalName .. "Widget" .. tostring(widget.widgetID)]
                         if namedFrame then
                             EnsureWidgetSuppressionHook(namedFrame)
@@ -1124,7 +998,6 @@ local function ApplyDefaultPreyIconVisibility()
                             ApplySuppressionToWidgetParent(namedFrame, container, suppress)
                         end
 
-                        -- Fallback: scan container children for prey-related names
                         if container then
                             ApplySuppressionToContainerFallback(container, suppress)
                         end
@@ -1139,7 +1012,6 @@ local function SuppressBlizzardPreyWidget()
     if State.widgetSuppressed then return end
     State.widgetSuppressed = true
 
-    -- Deferred to avoid taint during widget processing
     C_Timer.After(0, ApplyDefaultPreyIconVisibility)
 end
 
@@ -1147,7 +1019,6 @@ local function RestoreBlizzardPreyWidget()
     if not State.widgetSuppressed then return end
     State.widgetSuppressed = false
 
-    -- Re-apply with suppress=false to restore original state
     C_Timer.After(0, ApplyDefaultPreyIconVisibility)
 end
 
@@ -1159,16 +1030,12 @@ local function ToggleDefaultIndicator(hide)
     end
 end
 
----------------------------------------------------------------------------
--- STAGE TRANSITIONS & ALERTS
----------------------------------------------------------------------------
-
 local STAGE_SOUNDS = {
     [2] = SOUNDKIT.UI_QUEST_ROLLING_FORWARD_01 or 170567,
     [3] = SOUNDKIT.UI_QUEST_ROLLING_FORWARD_01 or 170567,
     [4] = SOUNDKIT.UI_QUEST_ROLLING_FORWARD_01 or 170567,
 }
-local COMPLETION_SOUND = SOUNDKIT.ACHIEVEMENT_GENERAL or 888 -- fallback
+local COMPLETION_SOUND = SOUNDKIT.ACHIEVEMENT_GENERAL or 888
 
 local function OnStageTransition(oldStage, newStage)
     local settings = GetSettings()
@@ -1214,8 +1081,6 @@ local function TriggerAmbushAlert()
 end
 
 local function OnAmbushMessage(message)
-    -- CHAT_MSG_SYSTEM text is SecretInChatMessagingLockdown; probe BEFORE any
-    -- truth-test (`not message` on a secret throws).
     if Helpers.IsSecretValue(message) then return end -- @secret-policy: reject-secret-value
     if not message then return end
     local settings = GetSettings()
@@ -1230,7 +1095,6 @@ local function OnQuestCompleted(questID)
     if questID ~= State.activeQuestID then return end
     local settings = GetSettings()
 
-    -- Show 100% briefly
     State.progressState = PREY_PROGRESS_FINAL
     State.progressPercent = 100
     State.completionUntil = GetTime() + COMPLETION_HOLD_TIME
@@ -1241,7 +1105,6 @@ local function OnQuestCompleted(questID)
         ns.SafeCall("best-effort-style", PlaySound, COMPLETION_SOUND)
     end
 
-    -- Clear after hold time
     C_Timer.After(COMPLETION_HOLD_TIME + 0.1, function()
         if State.completionUntil > 0 and GetTime() >= State.completionUntil then
             State.completionUntil = 0
@@ -1259,10 +1122,6 @@ local function OnQuestCompleted(questID)
     end)
 end
 
----------------------------------------------------------------------------
--- HUNT SCANNER
----------------------------------------------------------------------------
-
 local ShowHuntPanel
 
 local function OnGossipShow()
@@ -1278,7 +1137,6 @@ local function OnGossipShow()
 
     for _, option in ipairs(options) do
         local name = option.name or ""
-        -- Look for hunt-related gossip options (prey/hunt keywords)
         if name:lower():find("hunt") or name:lower():find("prey") or name:lower():find("track") then
             State.isAtHuntTable = true
             table.insert(State.availableHunts, {
@@ -1369,10 +1227,6 @@ local function HideHuntPanel()
     end
 end
 
----------------------------------------------------------------------------
--- CURRENCY TRACKER
----------------------------------------------------------------------------
-
 local function InitCurrencyBaseline()
     if not HasCurrencyAPI then return end
 
@@ -1389,13 +1243,11 @@ local function SaveWarbandSnapshot()
     local core = GetCore()
     if not core or not core.db or not core.db.global then return end
 
-    -- Ensure global preyTracker table
     if not core.db.global.preyTracker then
         core.db.global.preyTracker = { warband = {}, weekly = {} }
     end
     local globalDB = core.db.global.preyTracker
 
-    -- Character key
     local name = Helpers.SafeValue(UnitName("player"))
     local realm = GetRealmName()
     if not name or not realm then return end
@@ -1415,10 +1267,6 @@ local function SaveWarbandSnapshot()
         end
     end
 end
-
----------------------------------------------------------------------------
--- MASTER UPDATE
----------------------------------------------------------------------------
 
 local function ResetState()
     State.activeQuestID = nil
@@ -1445,16 +1293,13 @@ local function UpdatePreyState()
 
     if State.isPreviewMode then return end
 
-    -- During completion hold, keep showing 100% — don't let widget data overwrite
     if State.completionUntil > 0 and GetTime() < State.completionUntil then
         return
     end
 
-    -- Try two detection paths: quest API and widget scan
     local questID = GetActivePreyQuest()
     local widgetID, widgetInfo = ScanPreyWidgets()
 
-    -- Check if the quest is flagged completed (catches kills even if QUEST_TURNED_IN is delayed)
     if questID and C_QuestLog.IsQuestFlaggedCompleted and C_QuestLog.IsQuestFlaggedCompleted(questID) then
         if State.activeQuestID and State.completionUntil == 0 then
             OnQuestCompleted(State.activeQuestID)
@@ -1463,11 +1308,9 @@ local function UpdatePreyState()
         return
     end
 
-    -- We have an active prey if either the quest API or widget scan found something
     local hasActivePrey = questID ~= nil or widgetInfo ~= nil
 
     if hasActivePrey then
-        -- New quest detected (or first widget detection)
         local trackingKey = questID or widgetID
         if trackingKey ~= State.activeQuestID then
             ResetState()
@@ -1478,21 +1321,17 @@ local function UpdatePreyState()
             end
         end
 
-        -- Update zone status
         State.isInPreyZone = CheckInPreyZone()
 
-        -- Store raw widget/quest data — display derivation happens in UpdateBarDisplay
         if widgetInfo then
             State.cachedWidgetID = widgetID
             State.isInPreyZone = true
             State.lastWidgetSeenAt = GetTime()
 
-            -- Store raw progressState from widget
             if widgetInfo.progressState ~= nil then
                 State.progressState = widgetInfo.progressState
             end
 
-            -- Store raw progressPercent: try widget fields first, then quest objectives
             local widgetPct = ExtractProgressPercent(widgetInfo, widgetInfo.tooltip)
             if widgetPct then
                 State.progressPercent = widgetPct
@@ -1503,12 +1342,10 @@ local function UpdatePreyState()
                 elseif widgetInfo.progressState == PREY_PROGRESS_FINAL then
                     State.progressPercent = 100
                 else
-                    -- No granular percent available — leave nil so display uses stage fallback
                     State.progressPercent = nil
                 end
             end
 
-            -- Try to get prey name from widget info if we didn't get it from quest
             if not State.preyName and widgetInfo.text then
                 local text = SafeValue(widgetInfo.text, nil)
                 if text and type(text) == "string" and text ~= "" then
@@ -1516,20 +1353,17 @@ local function UpdatePreyState()
                 end
             end
         elseif questID then
-            -- Widget no longer visible — clear cached ID, try quest objectives
             State.cachedWidgetID = nil
             local objectivePct = ExtractQuestObjectivePercent(questID)
             if objectivePct then
                 State.progressPercent = objectivePct
             end
-            -- No widget means no progressState — clear it if widget has been gone > 2s
             if (GetTime() - State.lastWidgetSeenAt) > 2 then
                 State.progressState = nil
                 State.progressPercent = nil
             end
         end
 
-        -- Stage transition sounds (before display update)
         local newStage = DetermineStageFromProgressState(State.progressState)
         local oldStage = State.currentStage
         if oldStage > 0 and newStage > oldStage then
@@ -1539,7 +1373,6 @@ local function UpdatePreyState()
         UpdateBarDisplay()
         UpdateVisibility()
     else
-        -- No active prey
         if State.activeQuestID and State.completionUntil == 0 then
             ResetState()
             UpdateVisibility()
@@ -1549,13 +1382,6 @@ local function UpdatePreyState()
     if RefreshContinuousUpdateScript then RefreshContinuousUpdateScript() end
 end
 
----------------------------------------------------------------------------
--- REFRESH & PREVIEW
----------------------------------------------------------------------------
-
--- One-time bar creation + default-widget suppression. Runs from the PEW
--- init branch at login, and from RefreshPreyTracker so enabling the module
--- mid-session works without a /reload.
 local function EnsureInitialized()
     local settings = GetSettings()
     if not settings or not settings.enabled then return end
@@ -1570,7 +1396,6 @@ local function EnsureInitialized()
 
     if settings.replaceDefaultIndicator then
         SuppressBlizzardPreyWidget()
-        -- Re-apply after a delay — widgets may not exist at first load
         C_Timer.After(1, ApplyDefaultPreyIconVisibility)
     end
 end
@@ -1578,8 +1403,6 @@ end
 local function RefreshPreyTracker()
     local settings = GetSettings()
     if not settings or not settings.enabled then
-        -- Master toggle off: hide our bar and hand the default indicator
-        -- back to Blizzard immediately (no /reload required).
         RestoreBlizzardPreyWidget()
         HideBar()
         return
@@ -1597,8 +1420,7 @@ local function TogglePreview(enable)
     if not bar then return end
 
     if enable then
-        -- Fake data for layout/options preview
-        State.progressState = 2  -- stage 3
+        State.progressState = 2
         State.progressPercent = 67
         State.preyName = ns.L["Prey Hunt Preview"]
         State.difficulty = ns.L["Normal"]
@@ -1617,13 +1439,8 @@ local function TogglePreview(enable)
     end
 end
 
--- Expose globals
 _G.QUI_RefreshPreyTracker = RefreshPreyTracker
 _G.QUI_TogglePreyTrackerPreview = TogglePreview
-
----------------------------------------------------------------------------
--- REGISTRY
----------------------------------------------------------------------------
 
 if ns.Registry then
     ns.Registry:Register("preyTracker", {
@@ -1633,10 +1450,6 @@ if ns.Registry then
         importCategories = { "trackersTimers" },
     })
 end
-
----------------------------------------------------------------------------
--- EVENT HANDLING
----------------------------------------------------------------------------
 
 local eventFrame = CreateFrame("Frame")
 
@@ -1660,8 +1473,8 @@ local function OnEvent(self, event, arg1, arg2)
         if not settings or not settings.enabled then return end
 
         EnsureInitialized()
-        InitCurrencyBaseline() -- re-baseline session deltas on every loading screen
-        C_Timer.After(0.5, UpdatePreyState) -- slight delay for quest log to be ready
+        InitCurrencyBaseline()
+        C_Timer.After(0.5, UpdatePreyState)
 
     elseif event == "QUEST_LOG_UPDATE" or event == "QUEST_ACCEPTED" then
         C_Timer.After(0.1, UpdatePreyState)
@@ -1678,8 +1491,6 @@ local function OnEvent(self, event, arg1, arg2)
         end
 
     elseif event == "UPDATE_UI_WIDGET" then
-        -- Always update — internal scan determines if it's a prey widget.
-        -- Also re-apply suppression in case Blizzard re-showed the widget frame.
         ScheduleWidgetUpdate(0)
 
     elseif event == "UPDATE_ALL_UI_WIDGETS" then
@@ -1688,7 +1499,6 @@ local function OnEvent(self, event, arg1, arg2)
     elseif event == "ZONE_CHANGED_NEW_AREA" or event == "ZONE_CHANGED" or event == "ZONE_CHANGED_INDOORS" then
         if State.activeQuestID then
             State.isInPreyZone = CheckInPreyZone()
-            -- Full state update to re-scan widgets (they disappear outside prey zones)
             C_Timer.After(0.1, UpdatePreyState)
         end
 
@@ -1705,7 +1515,6 @@ local function OnEvent(self, event, arg1, arg2)
         SaveWarbandSnapshot()
 
     elseif event == "PLAYER_REGEN_ENABLED" then
-        -- Apply deferred geometry
         if State.deferredGeometry and State.frame then
             local settings = GetSettings()
             if settings then
@@ -1722,7 +1531,6 @@ local function OnEvent(self, event, arg1, arg2)
     end
 end
 
--- OnUpdate for continuous progress polling
 local function OnUpdate(self, elapsed)
     if State.isPreviewMode or not State.activeQuestID then
         self:SetScript("OnUpdate", nil)
@@ -1747,7 +1555,6 @@ end
 
 eventFrame:SetScript("OnEvent", OnEvent)
 
--- Register events on ADDON_LOADED so we don't miss PLAYER_ENTERING_WORLD
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("QUEST_LOG_UPDATE")
 eventFrame:RegisterEvent("QUEST_ACCEPTED")
@@ -1766,18 +1573,11 @@ eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 
 RefreshContinuousUpdateScript()
 
--- LOD catch-up: first PEW already fired before this module loads; run the
--- PEW init branch (bar creation + default-widget suppression) now.
--- ns.WhenLoggedIn is nil only in the headless test harness.
 if ns.WhenLoggedIn then
     ns.WhenLoggedIn(function()
         OnEvent(eventFrame, "PLAYER_ENTERING_WORLD")
     end)
 end
-
----------------------------------------------------------------------------
--- NAMESPACE EXPORT
----------------------------------------------------------------------------
 
 ns.QUI_PreyTracker = {
     GetState = function() return State end,

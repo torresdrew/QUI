@@ -1,13 +1,5 @@
 local _, ns = ...
 
----------------------------------------------------------------------------
--- CDM Layout
---
--- Pure layout helpers for addon-owned CDM icon containers. This module
--- computes row configuration, icon order, icon coordinates, and container
--- metrics; frame writes stay in cdm_containers.lua.
----------------------------------------------------------------------------
-
 local CDMLayout = {}
 ns.CDMLayout = CDMLayout
 
@@ -118,8 +110,6 @@ function CDMLayout.BuildRows(settings)
                 count = row.iconCount,
                 size = row.iconSize or 50,
                 borderSize = row.borderSize or 2,
-                -- Forward the per-row border source/color so the renderer resolves
-                -- via Helpers.GetSkinBorderColor (inherit/theme/class/custom).
                 borderColorSource = row.borderColorSource,
                 borderColor = row.borderColor or row.borderColorTable or {0, 0, 0, 1},
                 aspectRatioCrop = row.aspectRatioCrop or 1.0,
@@ -142,9 +132,6 @@ function CDMLayout.BuildRows(settings)
                 stackFont = row.stackFont,
                 hideStackText = row.hideStackText,
                 opacity = row.opacity or 1.0,
-                -- Per-row horizontal growth/alignment. nil or "inherit" =
-                -- use the container's existing centered layout (unchanged).
-                -- "CENTERED"/"LEFT"/"RIGHT" override only this row's icons.
                 growDirection = row.growDirection,
             }
         end
@@ -393,13 +380,6 @@ function CDMLayout.BuildIconLayout(settings, icons, opts)
                     else
                         rowCenterY = currentY - (iconHeight / 2) + rowConfig.yOffset
                     end
-                    -- Per-row horizontal growth. Default (nil/"inherit"/"CENTERED")
-                    -- keeps the row centered in the container box — byte-identical
-                    -- to the prior behavior. "RIGHT" left-aligns the row within the
-                    -- container box (grows toward the right); "LEFT" right-aligns it
-                    -- (grows toward the left). Container width (maxRowWidth) and all
-                    -- container metrics are computed earlier and are unaffected, so
-                    -- only this row's narrower-than-widest icons shift inside the box.
                     local rowGrow = rowConfig.growDirection
                     local rowStartX
                     if rowGrow == "RIGHT" then
@@ -482,13 +462,6 @@ function CDMLayout.BuildIconLayout(settings, icons, opts)
     }
 end
 
--- Single-line growth layout for flat-schema surfaces (buff): their settings use a
--- top-level iconSize / growthDirection instead of row1/row2/row3, so BuildIconLayout's
--- BuildRows yields 0 rows and bails. This emits the SAME {placements, metrics} contract
--- the re-anchor runtime feeds to PositionEntries + applySize, so buff shells get
--- positioned and the container sized. Mirrors CDMBuffLayout.LayoutBuffIcons math
--- (CENTERED_HORIZONTAL default; UP/DOWN = vertical). Pixel-snapping is applied
--- downstream by the runtime's pixelRound.
 function CDMLayout.BuildBuffGridLayout(settings, icons, _opts)
     if not icons or #icons == 0 then return nil end
     settings = settings or {}
@@ -506,9 +479,6 @@ function CDMLayout.BuildBuffGridLayout(settings, icons, _opts)
         iconWidth = iconSize * aspectRatio
     end
 
-    -- One shared row config for every buff icon (flat schema -> one style). Mirrors
-    -- the rowConfig CDMBuffLayout.ApplyIconStyle builds, so positionShell sizes the
-    -- shell + border and decorate sizes the native count/countdown identically.
     local rowConfig = {
         rowNum = 1,
         count = #icons,
@@ -548,7 +518,7 @@ function CDMLayout.BuildBuffGridLayout(settings, icons, _opts)
         local startY
         if growthDirection == "UP" then
             startY = -(totalHeight / 2) + iconHeight / 2
-        else -- DOWN
+        else
             startY = (totalHeight / 2) - iconHeight / 2
         end
         for i = 1, n do
@@ -572,7 +542,7 @@ function CDMLayout.BuildBuffGridLayout(settings, icons, _opts)
         icons = icons,
         placements = placements,
         metrics = {
-            iconWidth = totalWidth,        -- container content width (applySize -> SetSize w)
+            iconWidth = totalWidth,
             rawContentWidth = totalWidth,
             totalHeight = totalHeight,
             proxyYOffset = 0,
@@ -590,12 +560,6 @@ function CDMLayout.BuildBuffGridLayout(settings, icons, _opts)
     }
 end
 
--- Bar-stack layout for the trackedBar surface: wide StatusBars (barWidth x barHeight)
--- stacked vertically (horizontal orientation, default) or tall bars stacked horizontally
--- (vertical orientation). The icon-grid layout above would size each shell to iconSize
--- (a small square) -- bars need the bar dimensions. Mirrors CDMBars:LayoutBars. Bar dims
--- are encoded via rowConfig.size + aspectRatioCrop so PositionEntries' (w=size,
--- h=size/aspect) yields barW x barH; pixel-snapping is applied downstream.
 function CDMLayout.BuildBuffBarLayout(settings, icons, _opts)
     if not icons or #icons == 0 then return nil end
     settings = settings or {}
@@ -614,8 +578,6 @@ function CDMLayout.BuildBuffBarLayout(settings, icons, _opts)
         rowNum = 1,
         count = n,
         size = barW,
-        -- Icon crop stays square (1); the bar shell's wide dims come from placement.w/h
-        -- (PositionEntries), so the bar's small icon texcoord isn't stretched to bar aspect.
         aspectRatioCrop = 1,
         borderSize = settings.borderSize or 0,
         borderColorSource = settings.borderColorSource,

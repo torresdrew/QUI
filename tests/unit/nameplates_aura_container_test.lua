@@ -1,11 +1,14 @@
 -- tests/unit/nameplates_aura_container_test.lua
 -- Run: lua tests/unit/nameplates_aura_container_test.lua
 --
--- 12.1 CustomAuraContainer path: Build probes the engine frame type and
--- prefers it; SetUnit-time configuration binds the unit BEFORE Configure,
--- carries the composed filter strings + spell lists as candidate filters,
--- and honors per-context/channel enables; Clear disables without unbinding;
--- the Lua delta consumer is bypassed; legacy path remains the fallback.
+-- Shared element-model container path: NPAuras.Build/ApplyAppearance drive
+-- NP.DefaultNameplateBucket()'s three seeded elements through
+-- ns.AuraSurface.ApplyElementPass into a per-ordinal container pool on
+-- plate._quiAuraContainers -- the master switch and the per-context gate
+-- (world/dungeon/raid) both route through NPAuras.ResolveElements, which
+-- empties the pool's active-element list rather than touching each
+-- container directly, and every container anchors to plate.healthBar, not
+-- the plate itself.
 
 local function fail(msg)
     print("FAIL: nameplates_aura_container_test - " .. msg)
@@ -34,16 +37,16 @@ local function NewFrame(parent)
     return f
 end
 
-local containersEnabled = true
-CreateFrame = function(kind, name, parent, template)
+CreateFrame = function(kind, name, parent)
     if kind == "AuraContainer" then
-        if not containersEnabled then error("unknown frame type") end
         local c = NewFrame(parent)
-        c._groups = {}
         c._enabled = nil
-        c.AddAuraGroup = function(self, key, filter, opts) self._groups[key] = { filter = filter, opts = opts } end
-        c.HasAuraGroup = function(self, key) return self._groups[key] ~= nil end
-        c.SetUnit = function(self, unit) assert(type(unit) == "string", "SetUnit requires a unit"); self._unit = unit end
+        c._points = {}
+        c.SetPoint = function(self, ...) self._points[#self._points + 1] = { ... } end
+        c.SetUnit = function(self, unit)
+            assert(type(unit) == "string", "SetUnit requires a unit")
+            self._unit = unit
+        end
         c.SetEnabled = function(self, e) self._enabled = e end
         return c
     end
@@ -53,134 +56,127 @@ UIParent = NewFrame(nil)
 wipe = function(t) for k in pairs(t) do t[k] = nil end return t end
 C_Timer = { After = function() end, NewTicker = function() return { Cancel = noop } end }
 InCombatLockdown = function() return false end
-C_UnitAuras = nil; C_CurveUtil = nil; C_StringUtil = nil; CreateColor = nil
 Enum = {}
 AuraContainerSortMethod = { Default = 0, Expiration = 4 }
 
--- AuraSkin/AuraGlue stubs recording configure passes
-local configures = {}
 _G.QUI = { AuraSkin = {
-    Configure = function(container, profile, groups)
-        configures[#configures + 1] = { container = container, profile = profile, groups = groups, unitAtConfigure = container._unit }
-    end,
+    Configure = noop,
     Restyle = noop,
     LayoutAnchor = function(profile) return "TOPLEFT" end,
 } }
 
-local settings = {
-    enabled = true,
-    auras = {
-        enabled = true, mineOnly = true,
-        duration = { enabled = true, size = 12 },
-        debuffs = { enabled = true, size = 26, limit = 5, growth = "RIGHT", spacing = 2, textSize = 11,
-                    allowList = {}, blockList = { [666] = true } },
-        buffs = { enabled = false, size = 24, limit = 4, allowList = {}, blockList = {} },
-        cc = { enabled = true, size = 24, limit = 3, allowList = { [8122] = true }, blockList = {} },
-    },
-}
+local instanceKind = "world"
+local settings
 local ns = {
     Helpers = {
         IsSecretValue = function() return false end,
         GetModuleSettings = function() return settings end,
-        TruncateUTF8 = function(s) return s end,
     },
-    UIKit = { CreateIcon = function(parent) local f = NewFrame(parent); f.texture = NewRegion(f); f.border = NewRegion(f); return f end,
-        CreateText = function(p) return NewRegion(p) end, ResolveFontPath = function() return "" end,
-        UpdateIconLayout = noop, CreateBackground = function(p) return NewRegion(p) end,
-        CreateBorderLines = noop, UpdateBorderLines = noop },
-    Addon = { Pixels = function(_, v) return v end, SetPixelPerfectSize = noop, ApplyFont = noop },
-    AuraGlue = nil, -- exercise the direct AuraSkin.Configure branch
-    AuraEvents = { Subscribe = function() fail("container mode must not subscribe the dispatcher tier") end },
+    Addon = { Pixels = function(_, v) return v end },
+    AuraSlots = { Park = noop, Sync = function() return true end },
 }
 
+assert(loadfile("core/aura_elements.lua"))("QUI", ns)
+assert(loadfile("core/aura_glue.lua"))("QUI", ns)
+assert(loadfile("core/aura_surface.lua"))("QUI", ns)
 assert(loadfile("QUI_Nameplates/nameplates/shared.lua"))("QUI_Nameplates", ns)
-assert(loadfile("QUI_Nameplates/nameplates/plate_extras.lua"))("QUI_Nameplates", ns)
-IsInInstance = function() return false, "none" end
-UnitGroupRolesAssigned = function() return "DAMAGER" end
-UnitThreatSituation = function() return nil end
-UnitName = function() return "x" end
-C_TooltipInfo = nil
-assert(loadfile("QUI_Nameplates/nameplates/plate_auras.lua"))("QUI_Nameplates", ns)
-
+assert(loadfile("QUI_Nameplates/nameplates/plate_type.lua"))("QUI_Nameplates", ns)
 local NP = ns.QUI_Nameplates
-local Auras = NP.Auras
-local function test(n, f) print(n); f(); print("  ok") end
+NP.Extras = { GetContext = function() return { instanceKind = instanceKind } end }
+assert(loadfile("QUI_Nameplates/nameplates/plate_auras.lua"))("QUI_Nameplates", ns)
+local NPAuras = NP.Auras
 
-local plate = NewFrame(UIParent)
-plate.healthBar = NewFrame(plate)
-plate.nameText = NewRegion(plate)
+local function NewPlate()
+    local plate = NewFrame(UIParent)
+    plate.healthBar = NewFrame(plate)
+    plate.npType = "enemyNPC"
+    return plate
+end
 
-test("Build prefers the engine containers (one per channel)", function()
-    Auras.Build(plate)
-    if plate.npAuraMode ~= "container" then fail("must choose container mode") end
-    for _, ch in ipairs({ "debuffs", "buffs", "cc" }) do
-        local c = plate.npAuraContainers[ch]
-        if not c then fail("missing container for " .. ch) end
-        if c._enabled ~= false then fail("containers start disabled") end
+local auraSettings = { enabled = true, elements = {} }
+local typeSettings = { auras = auraSettings }
+settings = { types = { enemyNPC = typeSettings } }
+
+do
+    local prewarmPlate = NewPlate()
+    NPAuras.Build(prewarmPlate)
+    if prewarmPlate._quiAuraContainers ~= nil then
+        fail("Build on a plate with no unit (the genuine prewarm state) must not create containers")
     end
-end)
+end
 
-test("SetUnit-time configure: unit bound BEFORE Configure; lists ride as candidate filters", function()
-    Auras.ApplyAppearance(plate, settings)
-    plate.unit = "nameplate3"
-    plate.npAurasEnabled = true
-    Auras.FullRescan(plate)
-    if #configures < 2 then fail("expected configure passes, got " .. #configures) end
-    local byFilter = {}
-    for _, cfg in ipairs(configures) do
-        if cfg.unitAtConfigure ~= "nameplate3" then fail("SetUnit must precede Configure") end
-        byFilter[cfg.groups[1].filter] = cfg.groups[1]
+do
+    local buildOnlyPlate = NewPlate()
+    buildOnlyPlate.unit = "nameplate2"
+    NPAuras.Build(buildOnlyPlate)
+    local buildPool = buildOnlyPlate._quiAuraContainers
+    if not buildPool or #buildPool ~= 3 then
+        fail("Build alone (no ApplyAppearance) must create the container pool, got "
+            .. tostring(buildPool and #buildPool))
     end
-    local debuff = byFilter["HARMFUL|INCLUDE_NAME_PLATE_ONLY|PLAYER"]
-    if not debuff then fail("debuff group filter missing (mine-only)") end
-    if not (debuff.candidateFilters and debuff.candidateFilters.excludeSpellIDs
-        and debuff.candidateFilters.excludeSpellIDs[666]) then
-        fail("block list must ride as excludeSpellIDs")
+    for i = 1, 3 do
+        if buildPool[i]._unit ~= "nameplate2" then fail("Build alone must bind the unit on container " .. i) end
+        if buildPool[i]._shown ~= true then fail("Build alone must show container " .. i) end
     end
-    if debuff.maxFrameCount ~= 5 then fail("limit must map to maxFrameCount") end
-    if debuff.sortMethod ~= 4 then fail("expiration sort expected") end
-    local cc = byFilter["HARMFUL|CROWD_CONTROL"]
-    if not cc then fail("cc group missing") end
-    if not (cc.candidateFilters and cc.candidateFilters.includeSpellIDs
-        and cc.candidateFilters.includeSpellIDs[8122]) then
-        fail("allow list must ride as includeSpellIDs")
-    end
-    -- disabled buffs channel: either no configure or hidden container
-    local buffs = plate.npAuraContainers.buffs
-    if buffs._enabled == true then fail("disabled channel container must not enable") end
-end)
+end
 
-test("delta consumer bypasses container plates", function()
-    NP.plates.nameplate3 = plate
-    -- reaching the Lua path would touch npAuraSets (nil in container mode)
-    local h = ns.AuraEvents -- consumer isn't subscribed in container mode; call internal via public seam:
-    -- FullRescan on a container plate must not touch npAuraSets either
-    Auras.FullRescan(plate)
-    if plate.npAuraSets then fail("container mode must not build legacy sets") end
-    NP.plates.nameplate3 = nil
-end)
+local plate = NewPlate()
+plate.unit = "nameplate1"
 
-test("Clear disables and hides without unbinding", function()
-    Auras.Clear(plate)
-    for _, ch in ipairs({ "debuffs", "cc" }) do
-        local c = plate.npAuraContainers[ch]
-        if c._enabled ~= false then fail(ch .. " must disable on Clear") end
-        if c._shown then fail(ch .. " must hide on Clear") end
-        if c._unit ~= "nameplate3" then fail("unit binding stays (SetUnit(nil) is illegal)") end
-    end
-end)
+NPAuras.Build(plate)
+NPAuras.ApplyAppearance(plate)
 
-test("legacy fallback when the frame type is unavailable", function()
-    containersEnabled = false
-    local subscribed = false
-    ns.AuraEvents = { Subscribe = function() subscribed = true end }
-    local plate2 = NewFrame(UIParent)
-    plate2.healthBar = NewFrame(plate2)
-    plate2.nameText = NewRegion(plate2)
-    Auras.Build(plate2)
-    if plate2.npAuraMode ~= "legacy" then fail("must fall back to legacy") end
-    if not plate2.npAuraSets then fail("legacy sets must build") end
-    if not subscribed then fail("legacy mode must subscribe the dispatcher tier") end
-end)
+local pool = plate._quiAuraContainers
+if not pool or #pool ~= 3 then
+    fail("default seed must produce three containers, got " .. tostring(pool and #pool))
+end
+for i = 1, 3 do
+    if pool[i]._unit ~= "nameplate1" then fail("container " .. i .. " must bind the unit") end
+    if pool[i]._shown ~= true then fail("container " .. i .. " must be shown") end
+end
+
+auraSettings.enabled = false
+NPAuras.ApplyAppearance(plate)
+for i = 1, 3 do
+    if pool[i]._shown ~= false then fail("master off must hide container " .. i) end
+    if pool[i]._enabled ~= false then fail("master off must disable container " .. i) end
+end
+
+auraSettings.enabled = true
+auraSettings.enableDungeon = false
+instanceKind = "dungeon"
+NPAuras.ApplyAppearance(plate)
+if pool[1]._shown ~= false then fail("dungeon gate off must hide containers") end
+
+auraSettings.enableDungeon = true
+instanceKind = "world"
+NPAuras.ApplyAppearance(plate)
+for i = 1, 3 do
+    if pool[i]._shown ~= true then fail("re-enabling must show container " .. i .. " again") end
+end
+local anchored = pool[1]._points[#pool[1]._points]
+if not anchored then fail("container must be anchored") end
+if anchored[2] ~= plate.healthBar then
+    fail("containers must anchor to plate.healthBar, not the plate")
+end
+if anchored[1] ~= "TOPLEFT" then
+    fail("container 1 must pin at AuraSkin.LayoutAnchor's corner (TOPLEFT), got " .. tostring(anchored[1]))
+end
+if anchored[3] ~= "TOP" then
+    fail("container 1 must attach to element.anchor (TOP), got " .. tostring(anchored[3]))
+end
+if anchored[4] ~= 0 then
+    fail("container 1 X offset must be element.offsetX (0), got " .. tostring(anchored[4]))
+end
+if anchored[5] ~= 20 then
+    fail("container 1 Y offset must be element.offsetY (20), got " .. tostring(anchored[5]))
+end
+
+NPAuras.Clear(plate)
+for i = 1, 3 do
+    if pool[i]._shown ~= false then fail("Clear must hide container " .. i) end
+    if pool[i]._enabled ~= false then fail("Clear must disable container " .. i) end
+    if pool[i]._unit ~= "nameplate1" then fail("Clear must not unbind container " .. i .. "'s unit") end
+end
 
 print("OK: nameplates_aura_container_test")

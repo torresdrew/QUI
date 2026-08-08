@@ -21,7 +21,7 @@ on PATH with a warning. Override with `LUA=/path/to/lua5.1` /
 
 ## generate_search_cache.lua
 
-Regenerates `QUI_OptionsSearch/search_cache.lua` from in-source settings
+Regenerates `QUI_Options/search_cache.lua` from in-source settings
 definitions. Run after adding or renaming user-visible settings.
 
 ```sh

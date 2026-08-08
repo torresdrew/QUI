@@ -104,6 +104,22 @@ check("2d: 'Deduplicate Defensives' row removed", editor:find("Deduplicate Defen
 check("2d: dedupeDefensives no longer referenced anywhere in the editor",
     editor:find("dedupeDefensives", 1, true) == nil)
 
+check("list row hides the icon when GetElementLabel returns none (strips)",
+    editor:find("row.icon:Hide()", 1, true) ~= nil
+    and editor:find("row.icon:SetTexture(icon or FALLBACK_ICON)", 1, true) == nil)
+check("filterStrip is the mode GetElementLabel returns no icon for",
+    editor:match('if element%.mode == "filterStrip" then.-return ns%.L%["Buffs"%], nil')
+        ~= nil)
+check("missingRaidBuff and tracked still return an icon",
+    editor:find('return ns.L["Missing Raid Buff"], icon', 1, true) ~= nil
+    and editor:find('return ns.L["Tracked (empty)"], FALLBACK_ICON', 1, true) ~= nil
+    and editor:find("return name, GetSpellTexture(first)", 1, true) ~= nil)
+check("iconless rows re-anchor the label onto the toggle, closing the gap",
+    editor:find('row.name:SetPoint("LEFT", row.enable, "RIGHT", 6, 0)', 1, true) ~= nil)
+check("both branches re-anchor every render (rows are pooled and reused)",
+    editor:match("row%.name:ClearAllPoints%(%).-row%.icon:Show%(%).-"
+        .. 'row%.name:SetPoint%("LEFT", row%.icon.-row%.icon:Hide%(%)') ~= nil)
+
 -- Defensives fold-in: optional per-element border color -----------------
 check("editor exposes borderColor", editor:find("\"borderColor\"", 1, true) ~= nil)
 check("editor gates borderColor behind a custom-border toggle",

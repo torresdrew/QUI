@@ -1,9 +1,3 @@
---[[
-    QUI Options - Autohide Tab
-    BuildAutohideTab for Autohide & Skinning page. Migrated to V3 body
-    pattern (CreateAccentDotLabel + CreateSettingsCardGroup + BuildSettingRow).
-]]
-
 local _, ns = ...
 local QUI = QUI
 local GUI = QUI.GUI
@@ -16,7 +10,6 @@ local Schema = Settings and Settings.Schema
 local MakeLayout = ns.QUI_ModulesSettingsLayout.MakeLayout
 local row = ns.QUI_ModulesSettingsLayout.Row
 
--- Pair an entry list 2-per-row into card `s`, optionally trailing unpaired.
 local function pairEntries(s, entries, dbTable, refresh)
     local cells = {}
     for _, it in ipairs(entries) do
@@ -51,9 +44,6 @@ local function BuildAutohideTab(tabContent)
 
     local L = MakeLayout(tabContent)
 
-    ---------------------------------------------------------------------------
-    -- OBJECTIVE TRACKER
-    ---------------------------------------------------------------------------
     L.headerAt(ns.L["Objective Tracker"])
     local sOT = L.sectionAt()
     local hideAlwaysW = GUI:CreateFormCheckbox(sOT.frame, nil, "hideObjectiveTrackerAlways", db.uiHider, RefreshUIHider,
@@ -77,9 +67,6 @@ local function BuildAutohideTab(tabContent)
     }, db.uiHider.hideObjectiveTrackerInstanceTypes, RefreshUIHider)
     L.closeSection(sOT)
 
-    ---------------------------------------------------------------------------
-    -- FRAMES & BUTTONS
-    ---------------------------------------------------------------------------
     L.headerAt(ns.L["Frames & Buttons"])
     local sFB = L.sectionAt()
     pairEntries(sFB, {
@@ -92,9 +79,6 @@ local function BuildAutohideTab(tabContent)
     }, db.uiHider, RefreshUIHider)
     L.closeSection(sFB)
 
-    ---------------------------------------------------------------------------
-    -- NAMEPLATES
-    ---------------------------------------------------------------------------
     L.headerAt(ns.L["Nameplates"])
     local sNP = L.sectionAt()
     local npFriendlyW = GUI:CreateFormCheckbox(sNP.frame, nil, "hideFriendlyPlayerNameplates", db.uiHider, RefreshUIHider,
@@ -107,9 +91,6 @@ local function BuildAutohideTab(tabContent)
     )
     L.closeSection(sNP)
 
-    ---------------------------------------------------------------------------
-    -- STATUS BARS
-    ---------------------------------------------------------------------------
     L.headerAt(ns.L["Status Bars"])
     local sSB = L.sectionAt()
     local sbXP = GUI:CreateFormCheckbox(sSB.frame, nil, "hideExperienceBar", db.uiHider, RefreshUIHider,
@@ -131,9 +112,6 @@ local function BuildAutohideTab(tabContent)
     )
     L.closeSection(sSB)
 
-    ---------------------------------------------------------------------------
-    -- BUFF / DEBUFF FRAMES
-    ---------------------------------------------------------------------------
     L.headerAt(ns.L["Buff / Debuff Frames"])
     local sBD = L.sectionAt()
     local bdHideBuff = GUI:CreateFormCheckbox(sBD.frame, nil, "hideBuffFrame", db.buffBorders, RefreshBuffBorders,
@@ -159,9 +137,6 @@ local function BuildAutohideTab(tabContent)
     sBD.AddRow(row(sBD.frame, ns.L["Fade Out Opacity"], bdAlphaW))
     L.closeSection(sBD)
 
-    ---------------------------------------------------------------------------
-    -- COMBAT & MESSAGES
-    ---------------------------------------------------------------------------
     L.headerAt(ns.L["Combat & Messages"])
     local sCM = L.sectionAt()
     local cmErr = GUI:CreateFormCheckbox(sCM.frame, nil, "hideErrorMessages", db.uiHider, RefreshUIHider,

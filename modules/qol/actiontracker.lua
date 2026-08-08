@@ -1,7 +1,3 @@
----------------------------------------------------------------------------
--- QUI Action Tracker
--- Displays recent player-triggered casts as animated icons.
----------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 local UIKit = ns.UIKit
@@ -21,7 +17,7 @@ local DEFAULT_SETTINGS = {
     iconHideBorder = false,
     iconBorderColorSource = "inherit",
     iconBorderColor = {0, 0, 0, 0.85},
-    orientation = "VERTICAL", -- VERTICAL | HORIZONTAL
+    orientation = "VERTICAL",
     invertScrollDirection = false,
     xOffset = 0,
     yOffset = -210,
@@ -73,7 +69,6 @@ local CONTAINER_PADDING = 4
 local ANIMATION_LERP_RATE = 18
 local COMBAT_EXIT_FADE_DURATION = 0.2
 
--- Forward declarations for helpers referenced before definition.
 local LayoutIcons, ClearHistory
 local RefreshActionTracker
 
@@ -83,33 +78,24 @@ local state = {
     preview = false,
     inCombat = false,
     suppressUntil = 0,
-    -- Cached settings.enabled flag. Refreshed in RefreshActionTracker so the
-    -- hot-path OnEvent gate can skip allocation without calling GetSettings()
-    -- (which itself allocates via EnsureDefaults/CopyColor) per event.
     enabled = false,
 
-    -- Cast lifecycle tracking
     castByGUID = {},
     sentByGUID = {},
     sentBySpell = {},
 
-    -- Action bar fallback filter for instant spells
     actionBarSpells = {},
     actionBarCacheReady = false,
 
-    -- Blocklist cache
     blockedSpells = {},
 
-    -- Icon rendering state
     iconPool = {},
     activeIcons = {},
     iconByEntry = {},
 
-    -- Combat-exit fade state
     pendingClearOnFade = false,
     fadeOutToken = 0,
 
-    -- Inactivity fade tracking
     lastActivityTime = 0,
     inactivityTicker = nil,
 }
@@ -136,8 +122,6 @@ local function GetSpellNameAndIcon(spellID)
         end
     end
 
-    -- No bare GetSpellInfo fallback: the global was removed in 12.x (C_Spell is the
-    -- only surviving API), so the type()-guarded branch was permanently dead.
     return nil, nil
 end
 
@@ -164,7 +148,6 @@ local function GetSettings()
     settings.clearOnInactivity = settings.clearOnInactivity == true
     settings.orientation = (settings.orientation == "HORIZONTAL") and "HORIZONTAL" or "VERTICAL"
     if settings.invertScrollDirection == nil then
-        -- Backward compatibility: migrate old enum direction to boolean invert.
         if settings.orientation == "HORIZONTAL" then
             settings.invertScrollDirection = settings.scrollDirection == "LEFT"
         else
@@ -180,9 +163,6 @@ local function GetSettings()
     return settings
 end
 
----------------------------------------------------------------------------
--- FILTERING CACHE
----------------------------------------------------------------------------
 local function RebuildBlocklist(settings)
     if type(wipe) == "function" then
         wipe(state.blockedSpells)
@@ -301,7 +281,6 @@ local function WasSentCast(castGUID, spellID)
         end
     end
 
-    -- Fallback for instant casts with unreliable GUID linkage.
     if ConsumeSentSpell(spellID) then
         if castGUID then
             state.sentByGUID[castGUID] = nil
@@ -313,13 +292,7 @@ local function WasSentCast(castGUID, spellID)
 end
 
 local function ExtractCastGUIDAndSpellID(...)
-    -- UNIT_SPELLCAST_SENT payload: unitTarget, target, castGUID, spellID
     local _, _, castGUID, spellID = ...
-    -- 68569: SENT is SecretWhenUnitSpellCastRestricted too (castGUID/spellID
-    -- carry no NeverSecret). type() reveals a secret's UNDERLYING type, so
-    -- the type checks below do NOT filter secrets — probe explicitly before
-    -- MarkSentCast indexes sentByGUID/sentBySpell with these. Secret = drop
-    -- the arg; the SUCCEEDED-side action-bar fallback still covers the cast.
     if Helpers.IsSecretValue then
         if Helpers.IsSecretValue(castGUID) then castGUID = nil end
         if Helpers.IsSecretValue(spellID) then spellID = nil end
@@ -370,9 +343,6 @@ local function IsActionBarSpell(spellID)
     return state.actionBarSpells[numericSpellID] == true
 end
 
----------------------------------------------------------------------------
--- ICON RENDERING
----------------------------------------------------------------------------
 local function RemoveActiveIcon(icon)
     for i = #state.activeIcons, 1, -1 do
         if state.activeIcons[i] == icon then
@@ -689,7 +659,6 @@ local function CreateTrackerFrame()
 
         local relX = frameX - uiX
         local relY = frameY - uiY
-        -- Match existing slider granularity (integer offsets).
         if relX >= 0 then
             settings.xOffset = math.floor(relX + 0.5)
         else
@@ -714,10 +683,6 @@ local function UpdatePreviewDragState()
     local canDrag = state.preview == true
         and not (_G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("actionTracker"))
 
-    -- Drag is a layout-mode-only concern.  EnableMouse is protected during
-    -- combat (TWW 11.0+), so skip no-op re-applies and never toggle in combat;
-    -- layout mode can only be entered out of combat, so the real value is
-    -- always applied via the preview toggle (RefreshAppearance).
     if state.dragEnabled == canDrag then return end
     if InCombatLockdown() then return end
 
@@ -894,9 +859,6 @@ local function RefreshInactivityTicker(settings)
     end
 end
 
----------------------------------------------------------------------------
--- HISTORY / CAST LIFECYCLE
----------------------------------------------------------------------------
 ClearHistory = function()
     if type(wipe) == "function" then
         wipe(state.history)
@@ -993,7 +955,6 @@ local function ResolveCastToSucceeded(castGUID, spellID, fromChannelStop)
         return
     end
 
-    -- Controlled fallback for instant melee/button casts.
     if IsActionBarSpell(spellID) then
         AddSpellToHistory(spellID, castGUID, false, false, false)
         if castGUID then
@@ -1105,7 +1066,6 @@ RefreshActionTracker = function()
         state.lastActivityTime = GetTime()
     end
     RefreshAppearance()
-    -- Preserve anchor override position when changing tracker options.
     if state.frame and _G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("actionTracker") and _G.QUI_ApplyFrameAnchor then
         _G.QUI_ApplyFrameAnchor("actionTracker")
     end
@@ -1121,26 +1081,15 @@ local function IsPreviewMode()
     return state.preview
 end
 
----------------------------------------------------------------------------
--- EVENTS
----------------------------------------------------------------------------
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
--- ACTIONBAR_SLOT_CHANGED intentionally not registered: fires constantly
--- even while idle.  SPELLS_CHANGED and UPDATE_MACROS cover all real
--- changes (talent swaps, respec, macro edits).
 eventFrame:RegisterEvent("UPDATE_MACROS")
 eventFrame:RegisterEvent("SPELLS_CHANGED")
 eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_START", "player")
 eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_START", "player")
 eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_SENT", "player")
--- 68569: RegisterUnitEvent filters delivery to "player" only — that
--- registration is the sole trusted unit identity for every UNIT_SPELLCAST_*
--- event on this frame; the payload's own unit arg is dropped below rather
--- than compared. The payload can still be whole-secret under restriction
--- even though delivery is player-scoped — see the spellID probe below.
 eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
 eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_STOP", "player")
 eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_FAILED", "player")
@@ -1178,9 +1127,6 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         return
     end
 
-    -- Skip per-cast allocation work when tracker is disabled. The events stay
-    -- registered (cheap) so we don't have to wire register/unregister into the
-    -- settings toggle path; only the allocating dispatch below is gated.
     if not state.enabled then
         return
     end
@@ -1194,13 +1140,6 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     end
 
     local _, castGUID, spellID = ...
-    -- SecretWhenUnitSpellCastRestricted covers spellID/castGUID/unit alike;
-    -- probe once here (choke point for every branch below) rather than at
-    -- each callee — a secret spellID throws as a table key or in a compare,
-    -- and a secret castGUID throws as a castByGUID/sentByGUID table key
-    -- (every branch below indexes those maps with it).
-    -- Statement-split per value: the analyzer only proves the binary
-    -- `Guard and Guard(x)` shape — a joint or-probe is invisible to it.
     if Helpers.IsSecretValue and Helpers.IsSecretValue(spellID) then
         return
     end
@@ -1220,10 +1159,6 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     end
 end)
 
--- Install after login. ns.WhenLoggedIn runs now if already logged in (the
--- post-login LOD case) rather than this addon's own ADDON_LOADED, which is NOT
--- delivered when the core eager-LoadAddOn's the module from OnEnable (see
--- petwarning.lua / tooltip_provider.lua). Nil only in the headless test harness.
 if ns.WhenLoggedIn then
     ns.WhenLoggedIn(function()
         state.inCombat = InCombatLockdown()

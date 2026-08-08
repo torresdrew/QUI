@@ -63,7 +63,9 @@ assert(loadfile("QUI_CDM/cdm/cdm_spelldata.lua"))("QUI", ns)
 
 -- Stub the composer: capture the ownedSet it receives.
 local capturedOwned
-ns.CDMComposer = {
+-- Runtime reads ns.CDMCatalog directly; ns.CDMComposer is only the alias that
+-- ships in the LoadOnDemand options addon.
+ns.CDMCatalog = {
     GetAvailableSpellsForContainer = function(containerKey, containerType, ownedSet, correctionMap)
         capturedOwned = ownedSet
         return {}

@@ -1,7 +1,3 @@
--- cdm_icon_factory.lua
--- Icon pool lifecycle for the QUI CDM owned engine. CDMIcons owns the
--- public runtime update interface.
-
 local _, ns = ...
 local Helpers = ns.Helpers
 local Resolvers = ns.CDMResolvers
@@ -22,9 +18,6 @@ local function GetIcons()
     return ns.CDMIcons
 end
 
----------------------------------------------------------------------------
--- LOCAL UPVALUE ALIASES
----------------------------------------------------------------------------
 local GetGeneralFont        = Helpers.GetGeneralFont
 local GetGeneralFontOutline = Helpers.GetGeneralFontOutline
 local GetEntryTexture       = Resolvers.GetEntryTexture
@@ -34,9 +27,6 @@ local InCombatLockdown = InCombatLockdown
 local CreateFrame      = CreateFrame
 local type             = type
 
----------------------------------------------------------------------------
--- CONSTANTS (kept local to the icon factory/runtime chunks)
----------------------------------------------------------------------------
 local DEFAULT_ICON_SIZE      = 39
 local MAX_RECYCLE_POOL_SIZE  = 20
 
@@ -102,9 +92,6 @@ function CDMIconFactory.ShowEntryTooltip(owner, entry, tooltipContext)
         GameTooltip:SetOwner(owner, "ANCHOR_BOTTOM")
     end
 
-    -- Prefer the resolver's active aura identity. Avoid ad-hoc live aura
-    -- lookups here; tooltip hover should not bypass the same filtering
-    -- rules that drive the icon face and swipe.
     local sid = owner._activeAuraSpellID
     if not sid then
         sid = owner._runtimeSpellID
@@ -130,10 +117,6 @@ function CDMIconFactory.ShowEntryTooltip(owner, entry, tooltipContext)
         end
     end
 
-    -- Append a source-spec line for entries migrated from a legacy
-    -- spec-specific bar so the user can see at a glance where the
-    -- entry came from (e.g. "Source: Discipline Priest"). Resolver
-    -- writes _sourceSpecID at migration time.
     local srcSpecID = entry._sourceSpecID
     if type(srcSpecID) == "number" and GetSpecializationInfoByID then
         local _, specName, _, _, _, classToken = GetSpecializationInfoByID(srcSpecID)
@@ -147,25 +130,19 @@ function CDMIconFactory.ShowEntryTooltip(owner, entry, tooltipContext)
     return true
 end
 
----------------------------------------------------------------------------
--- POOL STATE
----------------------------------------------------------------------------
 local iconPools = {
     essential = {},
     utility   = {},
     buff      = {},
 }
--- Pools for custom containers are created dynamically via EnsurePool().
 local recyclePool = {}
-local recycleProtectedPool = {}  -- dedicated, capped pool for clickButton-protected icons
+local recycleProtectedPool = {}
 local iconCounter = 0
 
 local function SetupDebugInstrumentation()
     local mp = ns._memprobes or {}; ns._memprobes = mp
     mp[#mp + 1] = { name = "CDM_iconRecyclePool", tbl = recyclePool }
     mp[#mp + 1] = { name = "CDM_iconRecycleProtectedPool", tbl = recycleProtectedPool }
-    -- iconPools is a multi-key map of arrays; count across every sub-pool
-    -- (incl. dynamically created Composer pools) so retention growth surfaces.
     mp[#mp + 1] = { name = "CDM_iconPools", fn = function()
         local count, deep = 0, 0
         for _, pool in pairs(iconPools) do
@@ -177,10 +154,10 @@ local function SetupDebugInstrumentation()
         return count, deep
     end }
 end
-if ns.DebugRegister then -- gate contract: core/debug_gate.lua
+if ns.DebugRegister then
     ns.DebugRegister(SetupDebugInstrumentation)
 else
-    SetupDebugInstrumentation() -- standalone test harness: no gate, run eagerly
+    SetupDebugInstrumentation()
 end
 
 local function CreateIconPool()
@@ -210,11 +187,6 @@ end
 function CDMIconFactory:ClearPool(viewerType)
     local pool = iconPools[viewerType]
     if pool then
-        -- Honor the release-refusal contract: ReleaseIcon returns false when it
-        -- refuses to recycle a combat-protected icon (secure clickButton child) --
-        -- that icon is NOT hidden. Wiping it from the pool anyway would strand an
-        -- untracked, still-visible/clickable icon. Keep refused icons in the pool
-        -- so they stay tracked; a later out-of-combat ClearPool recycles them.
         local kept
         for _, icon in ipairs(pool) do
             if self:ReleaseIcon(icon) == false then
@@ -234,12 +206,6 @@ function CDMIconFactory:ClearPool(viewerType)
     return iconPools[viewerType]
 end
 
--- True when any icon still pooled for this viewer carries a secure clickButton
--- child. Such an icon is visibility-protected for its lifetime (the child is
--- retained even after clickableIcons is toggled off and the button hidden), so
--- rebuilding/releasing the pool in combat would raise ADDON_ACTION_BLOCKED.
--- The container combat gate (cdm_containers ShouldDeferContainerLayoutInCombat)
--- reads this to defer such a container until PLAYER_REGEN_ENABLED.
 function CDMIconFactory:PoolHasProtectedIcon(viewerType)
     local pool = iconPools[viewerType]
     if not pool then return false end
@@ -252,19 +218,10 @@ function CDMIconFactory:PoolHasProtectedIcon(viewerType)
     return false
 end
 
--- Expose pool tables so renderer code can read the same table object while
--- factory remains the writer for frame lifecycle and pool membership.
 CDMIconFactory._iconPools   = iconPools
 CDMIconFactory._recyclePool = recyclePool
 CDMIconFactory._recycleProtectedPool = recycleProtectedPool
 
----------------------------------------------------------------------------
--- ICON CREATION — BARE
--- Pure frame construction: tree + textures + default fonts + initial
--- spell texture. No runtime hooks (mirror binding, tooltip, mouseover,
--- factory callbacks). Used by both the runtime CreateIcon path and the
--- preview AcquireForPreview path.
----------------------------------------------------------------------------
 local function CreateIconBare(parent, spellEntry)
     iconCounter = iconCounter + 1
     local frameName = "QUICDMIcon" .. iconCounter
@@ -273,11 +230,9 @@ local function CreateIconBare(parent, spellEntry)
     local size = DEFAULT_ICON_SIZE
     icon:SetSize(size, size)
 
-    -- .Icon texture (ARTWORK layer)
     icon.Icon = icon:CreateTexture(nil, "ARTWORK")
     icon.Icon:SetAllPoints(icon)
 
-    -- .Cooldown frame (CooldownFrameTemplate for swipe/countdown)
     icon.Cooldown = CreateFrame("Cooldown", frameName .. "Cooldown", icon, "CooldownFrameTemplate")
     icon.Cooldown:SetAllPoints(icon)
     icon.Cooldown:SetDrawSwipe(true)
@@ -288,48 +243,33 @@ local function CreateIconBare(parent, spellEntry)
     icon._drawBlingEnabled = false
     icon.Cooldown:EnableMouse(false)
 
-    -- .TextOverlay (sits above the CooldownFrame so text is never behind the swipe)
     icon.TextOverlay = CreateFrame("Frame", nil, icon)
     icon.TextOverlay:SetAllPoints(icon)
     icon.TextOverlay:SetFrameLevel(icon.Cooldown:GetFrameLevel() + 2)
     icon.TextOverlay:EnableMouse(false)
 
-    -- .Border texture (BACKGROUND, sublayer -8, pre-created)
     icon.Border = icon:CreateTexture(nil, "BACKGROUND", nil, -8)
     icon.Border:Hide()
 
-    -- .DurationText (OVERLAY, sublayer 7 — parented to TextOverlay, above swipe)
     icon.DurationText = icon.TextOverlay:CreateFontString(nil, "OVERLAY", nil, 7)
     icon.DurationText:SetPoint("CENTER")
 
-    -- .StackText (OVERLAY, sublayer 7 — parented to TextOverlay, above swipe)
     icon.StackText = icon.TextOverlay:CreateFontString(nil, "OVERLAY", nil, 7)
     icon.StackText:SetPoint("BOTTOMRIGHT")
 
-    -- .AbsorbText (OVERLAY, sublayer 7 — parented to TextOverlay, above swipe).
-    -- Opt-in shield/absorb amount shown at the BOTTOM edge of buff icons
-    -- (showAbsorbAmount). Created hidden; the row styling pass positions it and
-    -- the per-tick update shows it only when an absorb amount is present.
     icon.AbsorbText = icon.TextOverlay:CreateFontString(nil, "OVERLAY", nil, 7)
     icon.AbsorbText:SetPoint("BOTTOM")
     icon.AbsorbText:Hide()
 
-    -- Set a default font so SetText() never fires before row styling applies.
     local defaultFont = GetGeneralFont()
     local defaultOutline = GetGeneralFontOutline()
     CJKFont(icon.DurationText, defaultFont, 10, defaultOutline)
     CJKFont(icon.StackText, defaultFont, 10, defaultOutline)
     CJKFont(icon.AbsorbText, defaultFont, 10, defaultOutline)
 
-    -- Metadata
     icon._spellEntry = spellEntry
     icon._isQUICDMIcon = true
 
-    -- Set initial texture.
-    -- Aura entries: dynamic buff icon (e.g., Roll the Bones → Broadside)
-    -- arrives via the per-tick UpdateIconCooldown path, which reads the
-    -- live aura's icon from r.auraData.icon. Initial icon is the
-    -- composer-resolved entry texture.
     if spellEntry then
         local texID
         if spellEntry.type then
@@ -339,34 +279,22 @@ local function CreateIconBare(parent, spellEntry)
         end
         if texID then
             icon.Icon:SetTexture(texID)
-            -- Only lock texture for cooldown entries — aura icons rely on
-            -- the tick update + Blizzard texture hook for dynamic changes.
             if not spellEntry.isAura then
                 icon._desiredTexture = texID
             end
         end
     end
 
-    -- Note: frame is NOT hidden here. Runtime callers go through
-    -- CreateIcon, which calls icon:Hide() at the end. Preview callers
-    -- (CDMIconFactory.AcquireForPreview) manage visibility themselves.
     return icon
 end
 
----------------------------------------------------------------------------
--- ICON CREATION — RUNTIME
--- Adds runtime-only hooks on top of CreateIconBare: mouseover, factory
--- callback, tooltip OnEnter/OnLeave. Preview path skips this layer.
----------------------------------------------------------------------------
 local function CreateIcon(parent, spellEntry)
     local icon = CreateIconBare(parent, spellEntry)
 
-    -- Mouseover hover wiring (reads live runtime state)
     if ns.HookFrameForMouseover then
         ns.HookFrameForMouseover(icon)
     end
 
-    -- Notify icons module that a new factory icon was created.
     if spellEntry then
         local icons = GetIcons()
         if icons and icons.OnFactoryIconCreated then
@@ -374,7 +302,6 @@ local function CreateIcon(parent, spellEntry)
         end
     end
 
-    -- Tooltip support
     icon:EnableMouse(true)
     icon:SetScript("OnEnter", function(self)
         CDMIconFactory.ShowEntryTooltip(self, self._spellEntry)
@@ -387,19 +314,8 @@ local function CreateIcon(parent, spellEntry)
     return icon
 end
 
----------------------------------------------------------------------------
--- ICON POOL LIFECYCLE
----------------------------------------------------------------------------
 function CDMIconFactory:AcquireIcon(parent, spellEntry, clickable)
     local icons = GetIcons()
-    -- Reuse a protected (clickButton) icon only for a clickable destination AND
-    -- only when mutation is safe: the SetParent/SetSize below are protected calls,
-    -- so in combat (outside the init-safe window) we must never hand out a
-    -- protected icon (ADDON_ACTION_BLOCKED). Non-clickable / combat acquisitions
-    -- draw from the plain recyclePool (or mint fresh), so protected icons never
-    -- spread to non-clickable containers. Preferring the protected pool for
-    -- clickable OOC acquisitions keeps it drained -- protected frames are reused,
-    -- not leaked (retention is also hard-capped in ReleaseIcon).
     local icon
     if clickable and ((not InCombatLockdown()) or (ns and ns._inInitSafeWindow)) then
         icon = table.remove(recycleProtectedPool)
@@ -414,6 +330,11 @@ function CDMIconFactory:AcquireIcon(parent, spellEntry, clickable)
         icon._isQUICDMIcon = true
         icon._lastStart = nil
         icon._lastDuration = nil
+        icon._lastDurObjKey = nil
+        icon._lastDurObj = nil
+        icon._lastResolvedMode = nil
+        icon._lastResolvedSourceID = nil
+        icon._lastResolvedSpellID = nil
         icon._showingGCDSwipe = nil
         icon._showingRealCooldownSwipe = nil
         icon._wasShowingGCDSwipe = nil
@@ -443,7 +364,6 @@ function CDMIconFactory:AcquireIcon(parent, spellEntry, clickable)
         icon.wasSetFromCooldown = nil
         icon.wasSetFromCharges = nil
 
-        -- Update texture
         local texID
         if spellEntry.type then
             texID = GetEntryTexture(spellEntry)
@@ -453,12 +373,8 @@ function CDMIconFactory:AcquireIcon(parent, spellEntry, clickable)
         if icon.Icon then
             if texID then
                 icon.Icon:SetTexture(texID)
-                -- Only lock texture for cooldown entries — aura icons rely on
-                -- the Blizzard texture hook for the correct aura icon.
                 icon._desiredTexture = (not spellEntry.isAura) and texID or nil
             else
-                -- Clear stale texture from previous owner to prevent
-                -- recycled icons showing the wrong spell/item icon.
                 icon.Icon:SetTexture(nil)
                 icon._desiredTexture = nil
             end
@@ -474,7 +390,6 @@ function CDMIconFactory:AcquireIcon(parent, spellEntry, clickable)
             icons.OnFactoryIconAcquired(icon, spellEntry, true)
         end
         icon:Hide()
-        -- Notify rotation helper that an icon was assigned a spell
         if ns._onIconAssigned then ns._onIconAssigned(icon) end
         return icon
     end
@@ -482,20 +397,12 @@ function CDMIconFactory:AcquireIcon(parent, spellEntry, clickable)
     if icons and icons.OnFactoryIconAcquired then
         icons.OnFactoryIconAcquired(newIcon, spellEntry, false)
     end
-    -- Notify rotation helper that an icon was assigned a spell
     if ns._onIconAssigned then ns._onIconAssigned(newIcon) end
     return newIcon
 end
 
 function CDMIconFactory:ReleaseIcon(icon)
     if not icon then return end
-    -- Fail-closed combat backstop. A pooled icon that owns a SecureActionButton
-    -- child (clickButton) is visibility-protected: the Hide/ClearAllPoints/
-    -- SetParent below raise ADDON_ACTION_BLOCKED in combat (QUICDMIconN:Hide()).
-    -- Refuse BEFORE any callback or mutation and signal the caller to keep the
-    -- icon tracked -- clearing the ledger without a successful recycle strands a
-    -- visible/clickable ghost. The reanchor runtime already defers such passes
-    -- (RefreshContainer gate); this covers any other in-combat release path.
     if icon.clickButton and InCombatLockdown and InCombatLockdown()
         and not (ns and ns._inInitSafeWindow) then
         return false
@@ -514,6 +421,11 @@ function CDMIconFactory:ReleaseIcon(icon)
     icon._desaturateIgnoreAura = nil
     icon._lastStart = nil
     icon._lastDuration = nil
+    icon._lastDurObjKey = nil
+    icon._lastDurObj = nil
+    icon._lastResolvedMode = nil
+    icon._lastResolvedSourceID = nil
+    icon._lastResolvedSpellID = nil
     icon._showingGCDSwipe = nil
     icon._showingRealCooldownSwipe = nil
     icon._wasShowingGCDSwipe = nil
@@ -540,7 +452,6 @@ function CDMIconFactory:ReleaseIcon(icon)
     icon._quiTooltipContext = nil
     icon.__quiTooltipContext = nil
     icon.__customTrackerIcon = nil
-    -- Reset grey-out child alpha (set by greyOutInactive/greyOutInactiveBuffs)
     icon._greyType = nil
     if icon._greyedOut then
         icon._greyedOut = nil
@@ -563,16 +474,6 @@ function CDMIconFactory:ReleaseIcon(icon)
     icon._pendingSecureUpdate = nil
 
     if icon.clickButton ~= nil then
-        -- Protected (SecureActionButton) icons go to a DEDICATED, UNCAPPED pool --
-        -- never the shared recyclePool. AcquireIcon reuses them only for a clickable
-        -- destination when mutation-safe, so they are recycled (stable identity)
-        -- instead of abandoned, and a combat rebuild of a non-clickable viewer can
-        -- never pop one (SetParent/SetSize/Hide would ADDON_ACTION_BLOCK).
-        -- NO cap: secure frames cannot be destroyed, so dropping an overflow frame
-        -- would both abandon it permanently AND force a fresh one next refresh ->
-        -- unbounded churn for a >MAX-icon clickable container. With reuse the pool
-        -- self-bounds to the working set of protected icons -- bounded by config,
-        -- not by refresh count.
         icon:SetParent(UIParent)
         recycleProtectedPool[#recycleProtectedPool + 1] = icon
     elseif #recyclePool < MAX_RECYCLE_POOL_SIZE then
@@ -582,10 +483,6 @@ function CDMIconFactory:ReleaseIcon(icon)
     return true
 end
 
-
--- Keep CooldownFrame ready-flash ("bling") disabled on owned cooldowns.
--- The Blizzard ready-flash is especially visible after short GCD bindings and
--- HUD visibility transitions; QUI uses its own glow/highlight systems instead.
 local function SyncCooldownBling(icon)
     if not icon or not icon.Cooldown or not icon.Cooldown.SetDrawBling then return end
     if icon._drawBlingEnabled ~= false then
@@ -596,18 +493,10 @@ end
 
 CDMIconFactory.SyncCooldownBling = SyncCooldownBling
 
-
----------------------------------------------------------------------------
--- PREVIEW ENTRY POINTS
--- Used by modules/cdm/settings/composer_preview_driver.lua to construct
--- icon frames inside the settings preview pane. Bypasses every runtime
--- coupling hook (mirror binding, rotation, tooltip, mouseover, factory
--- callbacks) so the preview can never contaminate the live CDM render.
----------------------------------------------------------------------------
 function CDMIconFactory.AcquireForPreview(parent, spellEntry)
     local icon = CreateIconBare(parent, spellEntry)
     icon._isPreview = true
-    icon:EnableMouse(false)  -- no tooltip; preview is non-interactive
+    icon:EnableMouse(false)
     return icon
 end
 
@@ -625,6 +514,4 @@ function CDMIconFactory.ReleaseForPreview(icon)
     end
     if icon.Border then icon.Border:Hide() end
     icon:SetParent(nil)
-    -- Preview icons are NOT returned to recyclePool: keeping the runtime
-    -- pool free of preview-state contamination is a hard invariant.
 end

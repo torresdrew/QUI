@@ -1,8 +1,3 @@
----------------------------------------------------------------------------
--- QUI Inspect Pane Module
--- Custom inspect panel styling with equipment overlays and stats panel
--- Split from qui_character.lua for better organization
----------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local QUI = ns.QUI or {}
 ns.QUI = QUI
@@ -19,9 +14,6 @@ local function CJKFont(fs, p, s, f)
     end
 end
 
--- Resolve the user's configured general font FACE (falling back to the WoW
--- default). CJKFont keeps CJK glyph fallback either way; this just ensures the
--- label uses the QUI font instead of the hardcoded engine default.
 local function GeneralFontFace()
     return (ns.Helpers and ns.Helpers.GetGeneralFont and ns.Helpers.GetGeneralFont()) or STANDARD_TEXT_FONT
 end
@@ -30,27 +22,18 @@ local function GetSkinBase()
     return ns.SkinBase
 end
 
----------------------------------------------------------------------------
--- Module State
----------------------------------------------------------------------------
 local inspectPaneInitialized = false
-local inspectOverlays = {}  -- Stores overlay frames for inspect slots
+local inspectOverlays = {}
 local inspectLayoutApplied = false
-local currentInspectTab = 1  -- 1=Character, 2=PvP, 3=Guild
+local currentInspectTab = 1
 
----------------------------------------------------------------------------
--- COMBAT DEFERRAL — InspectFrame is a managed panel; SetWidth,
--- ClearAllPoints, SetPoint on it or its children are protected during
--- combat.  Defer to PLAYER_REGEN_ENABLED.
----------------------------------------------------------------------------
-local pendingInspectMode = nil  -- "extended" (tab 1/2) or "normal" (tab 3)
-local pendingInspectTab  = nil  -- tab number for extended mode
+local pendingInspectMode = nil
+local pendingInspectTab  = nil
 local pendingInspectScale = nil
 local pendingInspectLayout = false
 local pendingInspectRosterRefresh = false
 local ApplyInspectPaneLayout
 local RefreshInspectUnitAfterRosterUpdate
--- Filled after SetInspectExtendedMode / SetInspectNormalMode are defined:
 local InspectModeHandlers = {}
 
 local inspectCombatFrame = CreateFrame("Frame")
@@ -76,8 +59,6 @@ inspectCombatFrame:SetScript("OnEvent", function()
     if pendingInspectScale then
         InspectFrame:SetScale(pendingInspectScale)
         pendingInspectScale = nil
-        -- Per-frame SetScale does not fire the global scale-refresh; rebuild the
-        -- inspect skin's 1px borders at the new effective scale.
         if _G.QUI_InspectFrameSkinning and _G.QUI_InspectFrameSkinning.RefreshScale then
             _G.QUI_InspectFrameSkinning.RefreshScale()
         end
@@ -98,7 +79,7 @@ inspectCombatFrame:SetScript("OnEvent", function()
     end
 end)
 local inspectSettingsPanel = nil
-local currentInspectGUID = nil  -- Tracks inspected unit's GUID for validation
+local currentInspectGUID = nil
 local pendingInspectReadyGUID = nil
 local inspectSessionGUID = nil
 local inspectSessionUnit = nil
@@ -111,9 +92,6 @@ local function SetInsetPixelPoints(region, relativeTo, pixels)
     end
 end
 
--- DisablePixelSnap delegates to the shared UIKit helper. Solid 1px / inset
--- color-textures must opt out of texel snapping or they rasterize to nothing
--- (or seam) at fractional UI scales.
 local function DisablePixelSnap(region)
     local skinBase = GetSkinBase()
     if skinBase and skinBase.DisablePixelSnap then
@@ -121,8 +99,6 @@ local function DisablePixelSnap(region)
     end
 end
 
--- Border chrome delegates to the shared SkinBase policy. Kept as a local name
--- so existing call sites remain thin per-frame wiring.
 local function ApplyOnePixelBorder(frame, withBackground, borderColor, bgColor)
     local skinBase = GetSkinBase()
     if skinBase and skinBase.ApplyChromeBackdrop then
@@ -135,10 +111,6 @@ local function ApplyOnePixelBorder(frame, withBackground, borderColor, bgColor)
     end
 end
 
--- Live-recolor a frame skinned via ApplyOnePixelBorder. Routes through
--- SkinBase.SetBackdropColors so a scale refresh keeps the new color; a bare
--- SetBackdrop*Color is discarded when RefreshPixelBackdrop rebuilds from the
--- persisted backdrop data.
 local function SetOnePixelBorderColors(frame, borderColor, bgColor)
     local skinBase = GetSkinBase()
     if skinBase and skinBase.SetBackdropColors then
@@ -152,41 +124,28 @@ local function SetInspectScaleDeferred(scale)
         pendingInspectScale = scale
     else
         InspectFrame:SetScale(scale)
-        -- Per-frame SetScale does not fire the global scale-refresh; rebuild the
-        -- inspect skin's 1px borders at the new effective scale.
         if _G.QUI_InspectFrameSkinning and _G.QUI_InspectFrameSkinning.RefreshScale then
             _G.QUI_InspectFrameSkinning.RefreshScale()
         end
     end
 end
 
--- Lite mode state
-local liteOverlays = {}           -- FontStrings for per-slot ilvl
-local liteOverallDisplay = nil    -- Overall ilvl frame
+local liteOverlays = {}
+local liteOverallDisplay = nil
 
--- TAINT SAFETY: Store per-frame state in weak-keyed table instead of writing properties
--- to Blizzard frames, which taints them in Midnight (12.0)
 local frameState, GetState = Helpers.CreateStateTable()
 local inspectGuildNilGuard = Helpers.CreateStateTable()
 local EMPTY = {}
 
----------------------------------------------------------------------------
--- Import shared functions from qui_character.lua
--- These will be available after qui_character.lua loads
----------------------------------------------------------------------------
 local function GetShared()
     return ns.QUI.CharacterShared or {}
 end
 
----------------------------------------------------------------------------
--- Get settings from database (wrapper for shared function)
----------------------------------------------------------------------------
 local function GetSettings()
     local shared = GetShared()
     if shared.GetSettings then
         return shared.GetSettings()
     end
-    -- Fallback defaults if shared not ready
     return {
         inspectEnabled = true,
         showInspectItemName = true,
@@ -199,7 +158,6 @@ local function GetSettings()
         inspectEnchantTextColor = {0.376, 0.647, 0.980},
         inspectNoEnchantTextColor = {0.5, 0.5, 0.5},
         inspectUpgradeTrackColor = {0.98, 0.60, 0.35, 1},
-        -- Lite mode defaults
         inspectLiteMode = false,
         inspectLiteShowPerSlot = true,
         inspectLiteShowOverall = true,
@@ -220,9 +178,6 @@ local function IsFullInspectEnabled(settings)
     return IsCharacterModuleEnabled(settings) and settings.inspectEnabled ~= false
 end
 
----------------------------------------------------------------------------
--- Get colors (from shared module)
----------------------------------------------------------------------------
 local function GetColors()
     local shared = GetShared()
     return shared.C or {
@@ -233,9 +188,6 @@ local function GetColors()
     }
 end
 
----------------------------------------------------------------------------
--- Slots counted for average ilvl calculation
----------------------------------------------------------------------------
 local COUNTED_SLOTS = {
     [INVSLOT_HEAD] = true,
     [INVSLOT_NECK] = true,
@@ -255,13 +207,8 @@ local COUNTED_SLOTS = {
     [INVSLOT_OFFHAND] = true,
 }
 
----------------------------------------------------------------------------
--- Structured inspect item-data helpers
----------------------------------------------------------------------------
 local TOOLTIP_LINE_TYPE_ITEM_LEVEL = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.ItemLevel or 31
 
--- Shared secret-safe parsers come from character.lua's CharacterShared table
--- (character.lua loads first). Aliased as locals so call sites stay thin.
 local CleanTooltipText = GetShared().CleanTooltipText
 local ReadableNumber = GetShared().ReadableNumber
 
@@ -442,9 +389,6 @@ local function GetSlotItemLevel(unit, slotId)
     return nil
 end
 
----------------------------------------------------------------------------
--- Get slot item quality
----------------------------------------------------------------------------
 local function GetSlotItemQuality(unit, slotId)
     if not unit or not slotId then return nil end
 
@@ -457,9 +401,6 @@ local function GetSlotItemQuality(unit, slotId)
     return nil
 end
 
----------------------------------------------------------------------------
--- Check if mainhand is a two-handed weapon.
----------------------------------------------------------------------------
 local function IsMainHand2H(unit)
     local itemLink = GetReadableInventoryItemLink(unit, INVSLOT_MAINHAND)
     if not itemLink then return false end
@@ -473,10 +414,6 @@ local function IsMainHand2H(unit)
     return equipSlot == "INVTYPE_2HWEAPON"
 end
 
----------------------------------------------------------------------------
--- Calculate average item level.
--- Handles 2H weapons by counting mainhand twice
----------------------------------------------------------------------------
 local function CalculateAverageILvl(unit)
     if unit and unit ~= "player" and IsCurrentInspectUnit(unit)
         and C_PaperDollInfo and C_PaperDollInfo.GetInspectItemLevel
@@ -495,7 +432,6 @@ local function CalculateAverageILvl(unit)
     for slotId, counted in pairs(COUNTED_SLOTS) do
         if counted then
             if slotId == INVSLOT_OFFHAND and is2H then
-                -- 2H weapon counts twice - add mainhand ilvl again
                 local mainIlvl = GetSlotItemLevel(unit, INVSLOT_MAINHAND)
                 if mainIlvl and mainIlvl > 0 then
                     totalIlvl = totalIlvl + mainIlvl
@@ -517,10 +453,6 @@ local function CalculateAverageILvl(unit)
     return 0
 end
 
----------------------------------------------------------------------------
--- Calculate average equipped quality.
--- Used for coloring the overall ilvl display
----------------------------------------------------------------------------
 local function CalculateAverageEquippedQuality(unit)
     local totalQuality = 0
     local itemCount = 0
@@ -550,9 +482,6 @@ local function CalculateAverageEquippedQuality(unit)
     return 1
 end
 
----------------------------------------------------------------------------
--- Get overall ilvl color based on average equipped quality.
----------------------------------------------------------------------------
 local function GetOverallILvlColor(unit)
     local avgQuality = CalculateAverageEquippedQuality(unit)
     avgQuality = math.max(1, math.min(avgQuality, 7))
@@ -560,24 +489,18 @@ local function GetOverallILvlColor(unit)
     return r, g, b
 end
 
----------------------------------------------------------------------------
--- Inspect Frame Configuration Constants
----------------------------------------------------------------------------
 local INSPECT_CONFIG = {
-    FRAME_TARGET_WIDTH = 500,      -- Narrower than CharacterFrame (no stats panel)
-    FRAME_DEFAULT_WIDTH = 338,     -- Default InspectFrame width (Guild tab)
-    CLOSE_BUTTON_EXTENDED_X = -2,  -- Close button X offset
-    CLOSE_BUTTON_NORMAL_X = -2,    -- Close button X offset when normal
-    CLOSE_BUTTON_Y = -2,           -- Close button Y offset
-    -- Weapon slot positioning (centered for 500px frame)
-    MAINHAND_X_OFFSET = -25,       -- Main hand X offset from center (+10px right)
-    MAINHAND_Y_OFFSET = -42,       -- Main hand Y offset from bottom
-    OFFHAND_SPACING = 30,          -- Spacing between main and off hand
-    -- Scale settings
-    BASE_SCALE = 1.30,             -- Base scale (same as character panel)
+    FRAME_TARGET_WIDTH = 500,
+    FRAME_DEFAULT_WIDTH = 338,
+    CLOSE_BUTTON_EXTENDED_X = -2,
+    CLOSE_BUTTON_NORMAL_X = -2,
+    CLOSE_BUTTON_Y = -2,
+    MAINHAND_X_OFFSET = -25,
+    MAINHAND_Y_OFFSET = -42,
+    OFFHAND_SPACING = 30,
+    BASE_SCALE = 1.30,
 }
 
--- All inspect slot names (used for skinning and border updates)
 local INSPECT_SLOT_NAMES = {
     "InspectHeadSlot", "InspectNeckSlot", "InspectShoulderSlot",
     "InspectBackSlot", "InspectChestSlot", "InspectShirtSlot",
@@ -588,32 +511,19 @@ local INSPECT_SLOT_NAMES = {
     "InspectMainHandSlot", "InspectSecondaryHandSlot",
 }
 
----------------------------------------------------------------------------
--- Track current inspect tab
----------------------------------------------------------------------------
 local function GetCurrentInspectTab()
     return currentInspectTab
 end
 
----------------------------------------------------------------------------
--- Reposition inspect frame tabs for wider frame
----------------------------------------------------------------------------
 local function RepositionInspectTabs()
     local tabs = { InspectFrameTab1, InspectFrameTab2, InspectFrameTab3 }
     local firstTab = tabs[1]
 
     if firstTab then
         firstTab:ClearAllPoints()
-        -- The skinned box (frames/inspect.lua) extends 50px below the frame to
-        -- cover the weapon slots + talents button. Hang the tab row just below
-        -- that box bottom so it reads as a separate strip beneath the window.
-        -- A 32px tab anchored by BOTTOMLEFT at -81 puts its top at -49 and its
-        -- skinned backdrop (3px top inset) ~2px under the -50 box edge — a tight
-        -- seam rather than a floating gap.
         firstTab:SetPoint("BOTTOMLEFT", InspectFrame, "BOTTOMLEFT", 15, -81)
     end
 
-    -- Reposition Talents button just below last slot (Trinket1)
     local talentsBtn = InspectPaperDollItemsFrame and InspectPaperDollItemsFrame.InspectTalents
     if talentsBtn and InspectTrinket1Slot then
         talentsBtn:ClearAllPoints()
@@ -621,9 +531,6 @@ local function RepositionInspectTabs()
     end
 end
 
----------------------------------------------------------------------------
--- Reset inspect tabs to default position (for Guild tab)
----------------------------------------------------------------------------
 local function ResetInspectTabsPosition()
     local firstTab = InspectFrameTab1
     if firstTab then
@@ -632,19 +539,15 @@ local function ResetInspectTabsPosition()
     end
 end
 
----------------------------------------------------------------------------
--- Reposition INSPECT equipment slots into portrait layout
----------------------------------------------------------------------------
 local function RepositionInspectSlots()
     if not InspectFrame then return end
 
-    local vpad = 14  -- Vertical padding between slots
+    local vpad = 14
     local SLOT_SCALE = 0.90
     local TOP_OFFSET = -75
     local LEFT_X = 20
-    local RIGHT_X = 493  -- Push right column further to edge (+2px more)
+    local RIGHT_X = 493
 
-    -- All inspect slots to scale
     local allSlots = {
         InspectHeadSlot, InspectNeckSlot, InspectShoulderSlot,
         InspectBackSlot, InspectChestSlot, InspectShirtSlot,
@@ -655,12 +558,10 @@ local function RepositionInspectSlots()
         InspectMainHandSlot, InspectSecondaryHandSlot,
     }
 
-    -- Apply scale to all slots
     for _, slot in ipairs(allSlots) do
         if slot then slot:SetScale(SLOT_SCALE) end
     end
 
-    -- LEFT COLUMN
     if InspectHeadSlot then
         InspectHeadSlot:ClearAllPoints()
         InspectHeadSlot:SetPoint("TOPLEFT", InspectFrame, "TOPLEFT", LEFT_X, TOP_OFFSET)
@@ -696,7 +597,6 @@ local function RepositionInspectSlots()
         InspectTabardSlot:SetPoint("TOPLEFT", InspectShirtSlot, "BOTTOMLEFT", 0, -vpad)
     end
 
-    -- RIGHT COLUMN
     if InspectHandsSlot then
         InspectHandsSlot:ClearAllPoints()
         InspectHandsSlot:SetPoint("TOPLEFT", InspectFrame, "TOPLEFT", RIGHT_X, TOP_OFFSET)
@@ -737,14 +637,12 @@ local function RepositionInspectSlots()
         InspectTrinket1Slot:SetPoint("TOPLEFT", InspectTrinket0Slot, "BOTTOMLEFT", 0, -vpad)
     end
 
-    -- LEFT COLUMN BOTTOM: Wrist aligned horizontally with Trinket1
     if InspectWristSlot and InspectTrinket1Slot and InspectHeadSlot then
         InspectWristSlot:ClearAllPoints()
         InspectWristSlot:SetPoint("TOP", InspectTrinket1Slot, "TOP", 0, 0)
         InspectWristSlot:SetPoint("LEFT", InspectHeadSlot, "LEFT", 0, 0)
     end
 
-    -- BOTTOM: Weapons centered
     if InspectMainHandSlot then
         InspectMainHandSlot:ClearAllPoints()
         InspectMainHandSlot:SetPoint("BOTTOM", InspectFrame, "BOTTOM", INSPECT_CONFIG.MAINHAND_X_OFFSET, INSPECT_CONFIG.MAINHAND_Y_OFFSET)
@@ -758,11 +656,6 @@ local function RepositionInspectSlots()
     RepositionInspectTabs()
 end
 
----------------------------------------------------------------------------
--- Inspect Slot Border Skinning (match character pane style)
----------------------------------------------------------------------------
-
--- Block Blizzard's IconBorder from showing
 local function BlockInspectIconBorder(iconBorder)
     if not iconBorder or (frameState[iconBorder] or EMPTY).blocked then return end
     GetState(iconBorder).blocked = true
@@ -771,23 +664,17 @@ local function BlockInspectIconBorder(iconBorder)
     Helpers.DeferredSetAtlasBlock(iconBorder, false)
 end
 
--- Skin a single inspect equipment slot
 local function SkinInspectEquipmentSlot(slot)
     if not slot or (frameState[slot] or EMPTY).skinned then return end
     GetState(slot).skinned = true
 
-    -- Hide NormalTexture (decorative frame)
     local normalTex = slot:GetNormalTexture()
     if normalTex then normalTex:SetAlpha(0) end
 
-    -- Hide BottomRightSlotTexture if exists
     if slot.BottomRightSlotTexture then
         slot.BottomRightSlotTexture:Hide()
     end
 
-    -- Hide non-icon decorative regions, but preserve runtime-state overlays
-    -- that Blizzard toggles on filter contexts (ItemContextOverlay,
-    -- searchOverlay, IconOverlay/2, IconQuestTexture).
     local preserve = {
         [slot.icon or false] = true,
         [slot.Icon or false] = true,
@@ -806,18 +693,15 @@ local function SkinInspectEquipmentSlot(slot)
         end
     end
 
-    -- Block Blizzard's IconBorder
     if slot.IconBorder then
         BlockInspectIconBorder(slot.IconBorder)
     end
 
-    -- Apply base crop to icon texture
     local iconTex = slot.icon or slot.Icon
     if iconTex and iconTex.SetTexCoord then
         iconTex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
     end
 
-    -- Create custom border frame
     local slotState = GetState(slot)
     if not slotState.borderFrame then
         slotState.borderFrame = CreateFrame("Frame", nil, slot, "BackdropTemplate")
@@ -827,7 +711,6 @@ local function SkinInspectEquipmentSlot(slot)
     end
 end
 
--- Update border color based on inspected item quality
 local function UpdateInspectSlotBorder(slot, unit)
     local borderFrame = slot and (frameState[slot] or EMPTY).borderFrame
     if not borderFrame then return end
@@ -835,7 +718,6 @@ local function UpdateInspectSlotBorder(slot, unit)
     local slotID = slot:GetID()
     unit = unit or "target"
 
-    -- Get item quality for inspected target (pcall for edge cases where item data isn't cached)
     local itemLink = GetReadableInventoryItemLink(unit, slotID)
     local quality = nil
     if itemLink then
@@ -845,8 +727,6 @@ local function UpdateInspectSlotBorder(slot, unit)
 
     if quality and quality >= 1 then
         local r, g, b = C_Item.GetItemQualityColor(quality)
-        -- Persist the quality tint into data.borderColor so it survives a scale
-        -- rebuild (a bare SetBackdropBorderColor reverts to default chrome on refresh).
         SetOnePixelBorderColors(borderFrame, { r, g, b, 1 })
         borderFrame:Show()
     else
@@ -854,9 +734,6 @@ local function UpdateInspectSlotBorder(slot, unit)
     end
 end
 
--- InspectPaperDollItemSlotButton_Update re-Shows the IconBorder (SetItemButtonQuality)
--- on every INSPECT_READY refresh, defeating the once-guarded BlockInspectIconBorder.
--- Re-suppress after each Update, once-installed for the session.
 local inspectSlotUpdateHooked = false
 local function HookInspectSlotUpdate()
     if inspectSlotUpdateHooked then return end
@@ -867,7 +744,6 @@ local function HookInspectSlotUpdate()
     end)
 end
 
--- Skin all inspect equipment slots
 local function SkinAllInspectSlots()
     HookInspectSlotUpdate()
     for _, slotName in ipairs(INSPECT_SLOT_NAMES) do
@@ -878,7 +754,6 @@ local function SkinAllInspectSlots()
     end
 end
 
--- Update all inspect slot borders
 local function UpdateAllInspectSlotBorders(unit)
     for _, slotName in ipairs(INSPECT_SLOT_NAMES) do
         local slot = _G[slotName]
@@ -888,29 +763,18 @@ local function UpdateAllInspectSlotBorders(unit)
     end
 end
 
----------------------------------------------------------------------------
--- Position InspectModelFrame
----------------------------------------------------------------------------
 local function PositionInspectModelScene()
     if not InspectModelFrame then return end
 
-    -- Center model between slot columns
-    -- For 500px frame with slots at x=20 and x=493
     InspectModelFrame:ClearAllPoints()
     InspectModelFrame:SetPoint("TOPLEFT", InspectFrame, "TOPLEFT", 55, -85)
     InspectModelFrame:SetPoint("BOTTOMRIGHT", InspectFrame, "BOTTOMRIGHT", -55, 65)
     InspectModelFrame:SetFrameLevel(2)
 
-    -- Hide control frame like character pane does.
-    -- NOTE: InspectModelFrame inherits ModelWithControlsTemplate (PlayerModel) which
-    -- exposes the child as `controlFrame` (lowercase), unlike CharacterModelScene
-    -- which inherits PanningModelSceneMixinTemplate and exposes `.ControlFrame`.
     if InspectModelFrame.controlFrame then
         InspectModelFrame.controlFrame:Hide()
     end
 
-    -- Reset model to zoomed out state (uses ModelFrameMixin)
-    -- minZoom = 0 (fully zoomed out), resets position to 0,0,0
     if InspectModelFrame.ResetModel then
         InspectModelFrame:ResetModel()
     end
@@ -918,19 +782,10 @@ local function PositionInspectModelScene()
     InspectModelFrame:Show()
 end
 
----------------------------------------------------------------------------
--- Calculate average item level for inspect target
--- Wrapper for the new CalculateAverageILvl function
----------------------------------------------------------------------------
 local function CalculateInspectAverageILvl(unit)
     return CalculateAverageILvl(unit)
 end
 
----------------------------------------------------------------------------
--- Lite Mode Functions
----------------------------------------------------------------------------
-
--- Slot ID mapping for lite mode (slot name to slot ID)
 local LITE_SLOT_IDS = {
     InspectHeadSlot = INVSLOT_HEAD,
     InspectNeckSlot = INVSLOT_NECK,
@@ -950,7 +805,6 @@ local LITE_SLOT_IDS = {
     InspectSecondaryHandSlot = INVSLOT_OFFHAND,
 }
 
--- Create centered FontString on slot for lite mode
 local function CreateLiteSlotText(slotFrame)
     if not slotFrame then return nil end
 
@@ -969,7 +823,6 @@ local function CreateLiteSlotText(slotFrame)
     return text
 end
 
--- Create overall iLvL display frame (positioned below wrist slot with offsets)
 local function CreateLiteOverallDisplay()
     if liteOverallDisplay then return liteOverallDisplay end
     if not InspectFrame or not InspectWristSlot then return nil end
@@ -986,14 +839,12 @@ local function CreateLiteOverallDisplay()
     frame:SetPoint("TOP", InspectWristSlot, "BOTTOM", offsetX, offsetY)
     frame:SetFrameLevel(InspectFrame:GetFrameLevel() + 15)
 
-    -- Label text "iLvL:"
     local label = frame:CreateFontString(nil, "OVERLAY")
     CJKFont(label, font, fontSize, "OUTLINE")
     label:SetPoint("LEFT", frame, "LEFT", 0, 0)
     label:SetText(ns.L["iLvL:"])
     label:SetTextColor(0.8, 0.8, 0.8, 1)
 
-    -- Value text (colored by quality)
     local value = frame:CreateFontString(nil, "OVERLAY")
     CJKFont(value, font, fontSize, "OUTLINE")
     value:SetPoint("LEFT", label, "RIGHT", 4, 0)
@@ -1006,7 +857,6 @@ local function CreateLiteOverallDisplay()
     return frame
 end
 
--- Update single slot's lite text
 local function UpdateLiteSlotText(slotName, unit, settings, cachedFont)
     local slotFrame = _G[slotName]
     if not slotFrame then return end
@@ -1014,7 +864,6 @@ local function UpdateLiteSlotText(slotName, unit, settings, cachedFont)
     local slotId = LITE_SLOT_IDS[slotName]
     if not slotId then return end
 
-    -- Create overlay if needed
     if not liteOverlays[slotName] then
         liteOverlays[slotName] = CreateLiteSlotText(slotFrame)
     end
@@ -1022,44 +871,36 @@ local function UpdateLiteSlotText(slotName, unit, settings, cachedFont)
     local text = liteOverlays[slotName]
     if not text then return end
 
-    -- Use cached settings/font if provided, otherwise fetch
     settings = settings or GetSettings()
     local font = cachedFont or (function()
         local shared = GetShared()
         return shared.GetGlobalFont and shared.GetGlobalFont() or "Fonts\\FRIZQT__.TTF"
     end)()
 
-    -- Update font size in case it changed
     local fontSize = settings.inspectLiteFontSize or 15
     CJKFont(text, font, fontSize, "OUTLINE")
 
-    -- Check if we should show per-slot ilvl
     if not settings.inspectLiteShowPerSlot then
         text:Hide()
         return
     end
 
-    -- Get item link
     local itemLink = GetReadableInventoryItemLink(unit, slotId)
     if not itemLink then
         text:Hide()
         return
     end
 
-    -- Get ilvl using the structured item-level helper.
     local ilvl = GetSlotItemLevel(unit, slotId)
     if not ilvl or ilvl <= 0 then
         text:Hide()
         return
     end
 
-    -- Get item quality for coloring
     local quality = GetSlotItemQuality(unit, slotId)
 
-    -- Set text
     text:SetText(tostring(math.floor(ilvl)))
 
-    -- Color by quality
     if quality and quality >= 1 then
         local r, g, b = C_Item.GetItemQualityColor(quality)
         text:SetTextColor(r, g, b, 1)
@@ -1070,19 +911,16 @@ local function UpdateLiteSlotText(slotName, unit, settings, cachedFont)
     text:Show()
 end
 
--- Update overall iLvL display
 local function UpdateLiteOverallDisplay(unit, settings, cachedFont)
     local frame = liteOverallDisplay or CreateLiteOverallDisplay()
     if not frame then return end
 
-    -- Use cached settings/font if provided, otherwise fetch
     settings = settings or GetSettings()
     local font = cachedFont or (function()
         local shared = GetShared()
         return shared.GetGlobalFont and shared.GetGlobalFont() or "Fonts\\FRIZQT__.TTF"
     end)()
 
-    -- Update font sizes in case they changed
     local fontSize = settings.inspectLiteOverallFontSize or 11
     if frame.label then
         CJKFont(frame.label, font, fontSize, "OUTLINE")
@@ -1091,61 +929,49 @@ local function UpdateLiteOverallDisplay(unit, settings, cachedFont)
         CJKFont(frame.value, font, fontSize, "OUTLINE")
     end
 
-    -- Update position in case offsets changed
     local offsetX = settings.inspectLiteOverallOffsetX or 0
     local offsetY = settings.inspectLiteOverallOffsetY or -8
     frame:ClearAllPoints()
     frame:SetPoint("TOP", InspectWristSlot, "BOTTOM", offsetX, offsetY)
 
-    -- Check if we should show overall ilvl
     if not settings.inspectLiteShowOverall then
         frame:Hide()
         return
     end
 
-    -- Calculate average ilvl
     local avgIlvl = CalculateInspectAverageILvl(unit)
     if avgIlvl <= 0 then
         frame:Hide()
         return
     end
 
-    -- Get color based on average equipped quality.
     local r, g, b = GetOverallILvlColor(unit)
 
-    -- Set value text
     frame.value:SetText(string.format("%.1f", avgIlvl))
     frame.value:SetTextColor(r, g, b, 1)
 
     frame:Show()
 end
 
--- Master update for all lite displays
--- Per-slot and overall displays are independent - each checks its own toggle
 local function UpdateAllLiteDisplays(unit)
     local settings = GetSettings()
 
-    -- Cache font lookup once for all updates
     local shared = GetShared()
     local cachedFont = shared.GetGlobalFont and shared.GetGlobalFont() or "Fonts\\FRIZQT__.TTF"
 
-    -- Update per-slot displays (controlled by inspectLiteShowPerSlot, checked inside UpdateLiteSlotText)
     if settings.inspectLiteShowPerSlot then
         for _, slotName in ipairs(INSPECT_SLOT_NAMES) do
             UpdateLiteSlotText(slotName, unit, settings, cachedFont)
         end
     else
-        -- Hide per-slot overlays if disabled
         for slotName, text in pairs(liteOverlays) do
             if text then text:Hide() end
         end
     end
 
-    -- Update overall display (controlled by inspectLiteShowOverall, checked inside UpdateLiteOverallDisplay)
     UpdateLiteOverallDisplay(unit, settings, cachedFont)
 end
 
--- Hide all lite displays
 local function HideLiteDisplays()
     for slotName, text in pairs(liteOverlays) do
         if text then
@@ -1157,7 +983,6 @@ local function HideLiteDisplays()
     end
 end
 
--- Hide detailed overlays
 local function HideDetailedOverlays()
     for _, overlay in pairs(inspectOverlays) do
         if overlay then
@@ -1166,27 +991,20 @@ local function HideDetailedOverlays()
     end
 end
 
----------------------------------------------------------------------------
--- Setup inspect title area (header display)
--- Creates: [Name] [iLvl] [Level Spec Class]
----------------------------------------------------------------------------
 local function SetupInspectTitleArea()
     if not InspectFrame then return end
 
     local shared = GetShared()
     local font = shared.GetGlobalFont and shared.GetGlobalFont() or "Fonts\\FRIZQT__.TTF"
 
-    -- Hide Blizzard's title text
     if InspectFrame.TitleContainer and InspectFrame.TitleContainer.TitleText then
         InspectFrame.TitleContainer.TitleText:Hide()
     end
 
-    -- Hide Blizzard's level/class text (shows "Level XX Spec Class" below model)
     if InspectLevelText then
         InspectLevelText:Hide()
     end
 
-    -- Create top-left display: Name (class-colored)
     local inspState = GetState(InspectFrame)
     if not inspState.ilvlDisplay then
         local displayFrame = CreateFrame("Frame", nil, InspectFrame)
@@ -1194,13 +1012,11 @@ local function SetupInspectTitleArea()
         displayFrame:SetPoint("TOPLEFT", InspectFrame, "TOPLEFT", 19, -10)
         displayFrame:SetFrameLevel(InspectFrame:GetFrameLevel() + 10)
 
-        -- Line 1: Target name
         local nameText = displayFrame:CreateFontString(nil, "OVERLAY")
         CJKFont(nameText, font, 12, "")
         nameText:SetPoint("TOPLEFT", displayFrame, "TOPLEFT", 0, 0)
         nameText:SetJustifyH("LEFT")
 
-        -- Line 2: Level + Spec (right-aligned, spread evenly)
         local specText = InspectFrame:CreateFontString(nil, "OVERLAY")
         CJKFont(specText, font, 12, "")
         specText:SetPoint("TOPRIGHT", InspectFrame, "TOPRIGHT", -70, -10)
@@ -1211,7 +1027,6 @@ local function SetupInspectTitleArea()
         inspState.ilvlDisplay = displayFrame
     end
 
-    -- Create center ilvl display (title bar)
     if not inspState.centerILvl then
         local centerFrame = CreateFrame("Frame", nil, InspectFrame)
         centerFrame:SetSize(200, 20)
@@ -1228,9 +1043,6 @@ local function SetupInspectTitleArea()
     end
 end
 
----------------------------------------------------------------------------
--- Update inspect iLvl display with target's info
----------------------------------------------------------------------------
 local function UpdateInspectILvlDisplay()
     local inspS = InspectFrame and frameState[InspectFrame] or EMPTY
     if not InspectFrame or not inspS.ilvlDisplay then return end
@@ -1256,7 +1068,6 @@ local function UpdateInspectILvlDisplay()
         return
     end
 
-    -- Get target info
     local ok, name = pcall(UnitName, unit)
     if Helpers.IsSecretValue(name) then name = nil end
     if not ok then name = nil end
@@ -1267,12 +1078,9 @@ local function UpdateInspectILvlDisplay()
     level = ok and ReadableNumber(level) or nil
     level = level or 0
 
-    -- Get class info
     local className = ""
     local _, classToken, classIndex
     ok, _, classToken, classIndex = pcall(UnitClass, unit)
-    -- PTR7: probe must be the sole if-condition (mirrors the name probe above);
-    -- the compound `not ok or IsSecretValue(...)` shape defeats the collapse.
     -- @secret-policy: collapse-only
     if Helpers.IsSecretValue(classToken) then classToken = nil end
     if not ok then classToken = nil end
@@ -1285,7 +1093,6 @@ local function UpdateInspectILvlDisplay()
         className = classToken
     end
 
-    -- Get spec info (requires inspect data)
     local specName = ""
     local specID
     ok, specID = ns.SafeCall("best-effort-style", GetInspectSpecialization, unit)
@@ -1300,18 +1107,15 @@ local function UpdateInspectILvlDisplay()
         end
     end
 
-    -- Get class color
     local classColor = Helpers.GetClassColorTable(classToken)
     local r, g, b = 1, 1, 1
     if classColor then
         r, g, b = classColor.r, classColor.g, classColor.b
     end
 
-    -- Line 1: Target name (class colored)
     displayFrame.text:SetText(name)
     displayFrame.text:SetTextColor(r, g, b, 1)
 
-    -- Line 2: Level + Spec + Class (class colored)
     if displayFrame.specText then
         local abbreviatedClass = shared.AbbreviateClassName and shared.AbbreviateClassName(className) or className
         local specLine = string.format("%d %s %s", level, specName, abbreviatedClass)
@@ -1319,7 +1123,6 @@ local function UpdateInspectILvlDisplay()
         displayFrame.specText:SetTextColor(r, g, b, 1)
     end
 
-    -- Update center ilvl display
     local centerFrame = inspS.centerILvl
     if centerFrame and centerFrame.text then
         local equipped = CalculateInspectAverageILvl(unit)
@@ -1335,10 +1138,6 @@ local function UpdateInspectILvlDisplay()
     end
 end
 
-
----------------------------------------------------------------------------
--- Reposition inspect close button for extended/normal mode
----------------------------------------------------------------------------
 local function RepositionInspectCloseButton(extended)
     local closeButton = InspectFrame and (InspectFrame.CloseButton or InspectFrameCloseButton)
     if closeButton then
@@ -1348,14 +1147,10 @@ local function RepositionInspectCloseButton(extended)
     end
 end
 
----------------------------------------------------------------------------
--- Set inspect frame to extended mode (Character/PvP tabs)
----------------------------------------------------------------------------
 local function SetInspectExtendedMode(tabNum)
     if not InspectFrame then return end
     currentInspectTab = tabNum
 
-    -- Protected: SetWidth, ClearAllPoints, SetPoint on managed panel children
     if InCombatLockdown() then
         pendingInspectMode = "extended"
         pendingInspectTab  = tabNum
@@ -1374,14 +1169,10 @@ local function SetInspectExtendedMode(tabNum)
     end
 end
 
----------------------------------------------------------------------------
--- Set inspect frame to normal mode (Guild tab)
----------------------------------------------------------------------------
 local function SetInspectNormalMode()
     if not InspectFrame then return end
     currentInspectTab = 3
 
-    -- Protected: SetWidth, ClearAllPoints, SetPoint on managed panel children
     if InCombatLockdown() then
         pendingInspectMode = "normal"
         pendingInspectTab  = nil
@@ -1400,22 +1191,12 @@ local function SetInspectNormalMode()
     end
 end
 
--- Wire deferred handlers now that the functions exist
 InspectModeHandlers["extended"] = function() SetInspectExtendedMode(pendingInspectTab or 1) end
 InspectModeHandlers["normal"]   = SetInspectNormalMode
 
----------------------------------------------------------------------------
--- Inspect Settings Button and Panel
--- Mirrors character panel settings structure
----------------------------------------------------------------------------
 local function CreateInspectSettingsButton()
     if not InspectFrame then return end
     if (frameState[InspectFrame] or EMPTY).gearBtn then return end
-
-    -- The QUI.GUI widget-API check (and the QUI_Options companion-addon
-    -- load that comes with it) used to live here. It now lives inside
-    -- BuildPanelContent below so QUI_Options stays unloaded until the
-    -- user actually opens this panel.
 
     local core = GetCore()
     if not (core and core.db and core.db.profile and core.db.profile.character) then
@@ -1424,7 +1205,6 @@ local function CreateInspectSettingsButton()
     end
     local charDB = core.db.profile.character
 
-    -- Initialize inspect color defaults if not set (ensures color pickers show correct values)
     if charDB.inspectEnchantTextColor == nil then
         charDB.inspectEnchantTextColor = {0.376, 0.647, 0.980}
     end
@@ -1437,7 +1217,6 @@ local function CreateInspectSettingsButton()
     if charDB.inspectSlotTextSize == nil then
         charDB.inspectSlotTextSize = 12
     end
-    -- Initialize lite mode defaults
     if charDB.inspectLiteMode == nil then
         charDB.inspectLiteMode = false
     end
@@ -1463,12 +1242,9 @@ local function CreateInspectSettingsButton()
     local C = GetColors()
     local shared = GetShared()
 
-    -- Create gear icon button
     local gearBtn = CreateFrame("Button", "QUI_InspectSettingsBtn", InspectFrame, "BackdropTemplate")
     gearBtn:SetSize(70, 20)
     gearBtn:SetPoint("TOPRIGHT", InspectFrame, "TOPRIGHT", -5, -28)
-    -- ApplyOnePixelBorder already applies and persists these colors; no bare
-    -- follow-up setter (it would be discarded on the next scale-refresh rebuild).
     ApplyOnePixelBorder(gearBtn, true, { C.border[1], C.border[2], C.border[3], 1 }, { 0.1, 0.1, 0.1, 0.8 })
     gearBtn:SetFrameStrata("HIGH")
     gearBtn:SetFrameLevel(100)
@@ -1493,16 +1269,9 @@ local function CreateInspectSettingsButton()
 
     GetState(InspectFrame).gearBtn = gearBtn
 
-    -- Settings panel (matches character panel size: 450x600)
     inspectSettingsPanel = CreateFrame("Frame", "QUI_InspectSettingsPanel", InspectFrame, "BackdropTemplate")
     inspectSettingsPanel:SetSize(450, 600)
     inspectSettingsPanel:SetPoint("TOPLEFT", InspectFrame, "TOPRIGHT", 5, 0)
-    -- bg = main QUI options panel background (#0d1117 @ 0.97 alpha) rather than
-    -- the lighter inspect-panel bg, so settings popouts read as the same surface
-    -- as the rest of QUI's settings UI. ApplyOnePixelBorder persists these colors
-    -- in the pixel-backdrop data; a bare SetBackdrop*Color follow-up would be
-    -- discarded when RefreshPixelBackdrop rebuilds on scale refresh, so it is
-    -- omitted (matches the gearBtn precedent above). Live recolor → SetOnePixelBorderColors.
     ApplyOnePixelBorder(inspectSettingsPanel, true, { C.border[1], C.border[2], C.border[3], 1 }, { 0.051, 0.067, 0.09, 0.97 })
     inspectSettingsPanel:SetFrameStrata("DIALOG")
     inspectSettingsPanel:SetFrameLevel(200)
@@ -1510,15 +1279,11 @@ local function CreateInspectSettingsButton()
     inspectSettingsPanel:Hide()
     GetState(InspectFrame).settingsPanel = inspectSettingsPanel
 
-    -- Subtle content-area wash (white 2%) layered on top of the dark backdrop
-    -- — matches QUI_Options C.bgContent so the surface reads as the same
-    -- "card" the main settings panel uses.
     local panelContentBg = inspectSettingsPanel:CreateTexture(nil, "BACKGROUND", nil, 1)
     SetInsetPixelPoints(panelContentBg, inspectSettingsPanel, 1)
     panelContentBg:SetColorTexture(1, 1, 1, 0.02)
     DisablePixelSnap(panelContentBg)
 
-    -- Horizontal accent gradient wash to match the main QUI options panel.
     local panelGlow = inspectSettingsPanel:CreateTexture(nil, "BACKGROUND", nil, 2)
     SetInsetPixelPoints(panelGlow, inspectSettingsPanel, 1)
     panelGlow:SetTexture("Interface\\BUTTONS\\WHITE8x8")
@@ -1546,51 +1311,41 @@ local function CreateInspectSettingsButton()
     inspectSettingsPanel._accentGlow = panelGlow
     inspectSettingsPanel:HookScript("OnShow", ApplyPanelGlow)
 
-    -- Title
     local title = inspectSettingsPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     title:SetPoint("TOP", inspectSettingsPanel, "TOP", 0, -8)
     CJKFont(title, GeneralFontFace(), 14, "")
     title:SetText(ns.L["QUI Inspect Panel"])
     title:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 1)
 
-    -- Close button
     local closeBtn = CreateFrame("Button", nil, inspectSettingsPanel, "UIPanelCloseButton")
     closeBtn:SetPoint("TOPRIGHT", -3, -3)
     closeBtn:SetScript("OnClick", function() inspectSettingsPanel:Hide() end)
     do
-        -- Was an unskinned stock red X; route through the canonical close button.
         local skinBase = GetSkinBase()
         if skinBase and skinBase.SkinCloseButton then skinBase.SkinCloseButton(closeBtn) end
     end
 
-    -- Scroll frame for settings
     local scrollFrame = CreateFrame("ScrollFrame", nil, inspectSettingsPanel, "UIPanelScrollFrameTemplate")
     scrollFrame:SetPoint("TOPLEFT", inspectSettingsPanel, "TOPLEFT", 5, -28)
     scrollFrame:SetPoint("BOTTOMRIGHT", inspectSettingsPanel, "BOTTOMRIGHT", -26, 40)
 
     local scrollChild = CreateFrame("Frame", nil, scrollFrame)
-    scrollChild:SetWidth(419)  -- settingsPanel(450) - left(5) - right(26)
-    scrollChild:SetHeight(1)   -- Will be updated after adding widgets
+    scrollChild:SetWidth(419)
+    scrollChild:SetHeight(1)
     scrollFrame:SetScrollChild(scrollChild)
 
-    -- Style the scroll bar
     local scrollBar = scrollFrame.ScrollBar
     if scrollBar then
         scrollBar:SetPoint("TOPLEFT", scrollFrame, "TOPRIGHT", 2, -16)
         scrollBar:SetPoint("BOTTOMLEFT", scrollFrame, "BOTTOMRIGHT", 2, 16)
-        -- Canonical thin QUI scrollbar (was only repositioned, left stock art).
         local skinBase = GetSkinBase()
         if skinBase and skinBase.SkinTrimScrollBar then skinBase.SkinTrimScrollBar(scrollBar) end
     end
 
-    -- Layout constants
     local PAD = 8
     local FORM_ROW = 28
     local y = -5
 
-    -- Alternating-row tint helpers (mirror the main QUI options panel
-    -- rhythm: odd rows plain, even rows with a 2% white wash). Resets at
-    -- every section header.
     local _rowIdx = 0
     local function ResetRows() _rowIdx = 0 end
     local function PlaceRow(widget, currentY)
@@ -1608,14 +1363,12 @@ local function CreateInspectSettingsButton()
         return currentY - FORM_ROW
     end
 
-    -- Refresh callback
     local function RefreshInspect()
         if InspectFrame and InspectFrame:IsShown() and shared.ScheduleUpdate then
             shared.ScheduleUpdate()
         end
     end
 
-    -- Refresh inspect overlay fonts (for live text size updates)
     local function RefreshInspectFonts()
         local settings = GetSettings()
         local slotTextSize = settings.inspectSlotTextSize or 12
@@ -1639,10 +1392,6 @@ local function CreateInspectSettingsButton()
         RefreshInspect()
     end
 
-    -- Defer the form-widget construction (and the QUI.GUI widget-API load
-    -- that comes with it) until the user opens the inspect settings
-    -- panel. The scaffold above is cheap native frames; only the form
-    -- widgets below need the QUI_Options companion addon.
     local panelContentBuilt = false
     local function BuildPanelContent()
         if panelContentBuilt then return true end
@@ -1657,15 +1406,11 @@ local function CreateInspectSettingsButton()
 
         panelContentBuilt = true
 
-    ---------------------------------------------------------------------------
-    -- APPEARANCE Section
-    ---------------------------------------------------------------------------
     local appearHeader = GUI:CreateSectionHeader(scrollChild, ns.L["Appearance"])
     appearHeader:SetPoint("TOPLEFT", PAD, y)
     y = y - appearHeader.gap
     ResetRows()
 
-    -- Scale slider (multiplier on base 1.30 scale, range 0.75-1.5)
     local scaleSlider = GUI:CreateFormSlider(scrollChild, ns.L["Panel Scale"], 0.75, 1.5, 0.05, "inspectPanelScale", charDB, function()
         local multiplier = charDB.inspectPanelScale or 1.0
         SetInspectScaleDeferred(INSPECT_CONFIG.BASE_SCALE * multiplier)
@@ -1673,12 +1418,10 @@ local function CreateInspectSettingsButton()
         { description = ns.L["Zoom factor applied to the inspect panel on top of the base scale. 1.0 leaves the panel at the default QUI size."] })
     y = PlaceRow(scaleSlider, y)
 
-    -- Background color (uses shared skinning background color)
     local generalDB = core and core.db and core.db.profile and core.db.profile.general
     local bgColorPicker = nil
     if generalDB then
         bgColorPicker = GUI:CreateFormColorPicker(scrollChild, ns.L["Background Color"], "skinBgColor", generalDB, function()
-            -- Refresh inspect skinning module
             if _G.QUI_RefreshInspectColors then
                 _G.QUI_RefreshInspectColors()
             end
@@ -1689,7 +1432,6 @@ local function CreateInspectSettingsButton()
             { description = ns.L["Background color applied to the inspect panel. Shared with the global skinning background so character and inspect panels match."] })
         y = PlaceRow(bgColorPicker, y)
 
-        -- Refresh color picker when panel shows
         inspectSettingsPanel:HookScript("OnShow", function()
             if bgColorPicker and bgColorPicker.swatch and generalDB and generalDB.skinBgColor then
                 local col = generalDB.skinBgColor
@@ -1700,9 +1442,6 @@ local function CreateInspectSettingsButton()
 
     y = y - 10
 
-    ---------------------------------------------------------------------------
-    -- SLOT OVERLAYS Section
-    ---------------------------------------------------------------------------
     local overlayHeader = GUI:CreateSectionHeader(scrollChild, ns.L["Slot Overlays"])
     overlayHeader:SetPoint("TOPLEFT", PAD, y)
     y = y - overlayHeader.gap
@@ -1726,9 +1465,6 @@ local function CreateInspectSettingsButton()
 
     y = y - 10
 
-    ---------------------------------------------------------------------------
-    -- TEXT SIZES Section
-    ---------------------------------------------------------------------------
     local textSizeHeader = GUI:CreateSectionHeader(scrollChild, ns.L["Text Sizes"])
     textSizeHeader:SetPoint("TOPLEFT", PAD, y)
     y = y - textSizeHeader.gap
@@ -1740,18 +1476,13 @@ local function CreateInspectSettingsButton()
 
     y = y - 10
 
-    ---------------------------------------------------------------------------
-    -- TEXT COLORS Section
-    ---------------------------------------------------------------------------
     local textColorHeader = GUI:CreateSectionHeader(scrollChild, ns.L["Text Colors"])
     textColorHeader:SetPoint("TOPLEFT", PAD, y)
     y = y - textColorHeader.gap
     ResetRows()
 
-    -- Widget references for conditional disable
     local widgetRefs = {}
 
-    -- Enchant Class Color toggle
     local enchantClassColor = GUI:CreateFormCheckbox(scrollChild, ns.L["Enchant Class Color"], "inspectEnchantClassColor", charDB, function()
         RefreshInspect()
         if widgetRefs.enchantColor then
@@ -1777,14 +1508,9 @@ local function CreateInspectSettingsButton()
 
     y = y - 10
 
-    -- Update scroll child height
     scrollChild:SetHeight(math.abs(y) + 20)
 
-    ---------------------------------------------------------------------------
-    -- Reset Button (at bottom of panel, outside scroll)
-    ---------------------------------------------------------------------------
     local resetBtn = GUI:CreateButton(inspectSettingsPanel, ns.L["Reset"], 80, 24, function()
-        -- Reset all inspect settings to defaults
         charDB.inspectPanelScale = 1.0
         charDB.showInspectItemName = true
         charDB.showInspectItemLevel = true
@@ -1796,10 +1522,8 @@ local function CreateInspectSettingsButton()
         charDB.inspectNoEnchantTextColor = {0.5, 0.5, 0.5}
         charDB.inspectUpgradeTrackColor = {0.98, 0.60, 0.35, 1}
 
-        -- Apply scale (base 1.30 * multiplier 1.0)
         SetInspectScaleDeferred(INSPECT_CONFIG.BASE_SCALE)
 
-        -- Refresh and reload the settings panel through its normal OnShow hooks.
         RefreshInspectFonts()
         inspectSettingsPanel:Hide()
         BuildPanelContent()
@@ -1809,13 +1533,7 @@ local function CreateInspectSettingsButton()
 
         return true
     end
-    -- (BuildPanelContent body kept at the original indent to keep this
-    -- patch a small diff. Closing 'end' above terminates the function.)
 
-    -- Toggle panel on gear click. Lazily build the form widgets (and
-    -- load QUI_Options as a side effect) on first open so the
-    -- companion addon stays unloaded when the user never opens this
-    -- panel.
     gearBtn:SetScript("OnClick", function()
         if inspectSettingsPanel:IsShown() then
             inspectSettingsPanel:Hide()
@@ -1826,9 +1544,6 @@ local function CreateInspectSettingsButton()
     end)
 end
 
----------------------------------------------------------------------------
--- Master function: Apply inspect portrait layout
----------------------------------------------------------------------------
 ApplyInspectPaneLayout = function(force)
     local settings = GetSettings()
     if not IsFullInspectEnabled(settings) then return end
@@ -1850,12 +1565,9 @@ ApplyInspectPaneLayout = function(force)
     InspectFrame:SetWidth(INSPECT_CONFIG.FRAME_TARGET_WIDTH)
     RepositionInspectCloseButton(true)
 
-    -- Apply panel scale from settings (base scale 1.30, slider is multiplier)
     SetInspectScaleDeferred(targetScale)
 
     -- FrameXML InspectFrame_OnEvent calls ShowUIPanel(InspectFrame) before InspectFrame_UpdateTabs()
-    -- on synchronous INSPECT_READY. Run our layout after that event stack so
-    -- Blizzard's tab/button refreshes and paper-doll slot updates finish first.
     C_Timer.After(0.1, function()
         if InCombatLockdown() then
             pendingInspectLayout = true
@@ -1871,7 +1583,6 @@ ApplyInspectPaneLayout = function(force)
             _G.QUI_InspectFrameSkinning.SetExtended(true)
         end
 
-        -- Second pass to ensure positions stick after Blizzard code
         C_Timer.After(0.05, function()
             if InCombatLockdown() then
                 pendingInspectLayout = true
@@ -1886,16 +1597,9 @@ ApplyInspectPaneLayout = function(force)
         end)
     end)
 
-    -- InspectFrame static-text font face is applied globally via the shared
-    -- font-object override; frames/inspect.lua drives tab font objects.
-    -- No per-frame font walk is needed here.
-
     inspectLayoutApplied = true
 end
 
----------------------------------------------------------------------------
--- Initialize slot overlays for inspect frame
----------------------------------------------------------------------------
 local function InitializeInspectOverlays()
     if inspectPaneInitialized then return end
 
@@ -1913,11 +1617,8 @@ local function InitializeInspectOverlays()
     inspectPaneInitialized = true
 end
 
----------------------------------------------------------------------------
--- Update inspect frame (called from qui_character.lua's ScheduleUpdate)
----------------------------------------------------------------------------
 local function UpdateInspectFrame()
-    if ns.IsSkinningEnabled and not ns.IsSkinningEnabled() then return end -- master skinning gate
+    if ns.IsSkinningEnabled and not ns.IsSkinningEnabled() then return end
     if not InspectFrame or not InspectFrame:IsShown() then return end
 
     local settings = GetSettings()
@@ -1929,16 +1630,10 @@ local function UpdateInspectFrame()
         return
     end
 
-    -- Use the actual inspected unit, not "target". Right-click-inspect from
-    -- a raid frame sets InspectFrame.unit to e.g. "raid7" without changing
-    -- the player's target. Reading "target" here would paint overlays from
-    -- the wrong unit (or nil) and wipe Blizzard's correct data, producing
-    -- the "text flashes then disappears" symptom.
     local unit = InspectFrame.unit or "target"
     local dataReady = IsCurrentInspectUnit(unit)
 
     if IsFullInspectEnabled(settings) then
-        -- Full overlay mode: always use detailed overlays, never lite mode
         HideLiteDisplays()
         if dataReady and shared.UpdateAllSlotOverlays then
             shared.UpdateAllSlotOverlays(unit, inspectOverlays)
@@ -1946,7 +1641,6 @@ local function UpdateInspectFrame()
             HideDetailedOverlays()
         end
     elseif settings.inspectLiteShowPerSlot or settings.inspectLiteShowOverall then
-        -- Lite mode (only when full overlays disabled): show enabled lite displays
         HideDetailedOverlays()
         if dataReady then
             UpdateAllLiteDisplays(unit)
@@ -1954,29 +1648,21 @@ local function UpdateInspectFrame()
             HideLiteDisplays()
         end
     else
-        -- All disabled: hide everything
         HideLiteDisplays()
         HideDetailedOverlays()
     end
 
-    -- Update header display (name, ilvl, spec)
     UpdateInspectILvlDisplay()
 
-    -- Update slot borders based on item quality
     if dataReady then
         UpdateAllInspectSlotBorders(unit)
     end
 end
 
----------------------------------------------------------------------------
--- Hook inspect frame
----------------------------------------------------------------------------
 local function HookInspectFrame()
-    if ns.IsSkinningEnabled and not ns.IsSkinningEnabled() then return end -- master skinning gate
+    if ns.IsSkinningEnabled and not ns.IsSkinningEnabled() then return end
     if not InspectFrame then return end
 
-    -- Master gate: if Skin Inspect Frame is disabled, do not modify the
-    -- inspect frame at all (no slot reposition, no width change, no overlays).
     local core = QUICore or ns.Addon
     local generalDB = core and core.db and core.db.profile and core.db.profile.general
     if generalDB and generalDB.skinInspectFrame == false then return end
@@ -1988,7 +1674,6 @@ local function HookInspectFrame()
         InspectFrame:UnregisterEvent("GROUP_ROSTER_UPDATE")
     end
 
-    -- Skip if full overlays are disabled AND no lite features are enabled
     local hasLiteFeature = settings.inspectLiteShowPerSlot or settings.inspectLiteShowOverall
     if settings.inspectEnabled == false and not hasLiteFeature then return end
 
@@ -2000,27 +1685,16 @@ local function HookInspectFrame()
         currentInspectTab = 1
         RefreshCurrentInspectGUID(unit)
 
-        -- Only apply full layout/overlays when full overlay mode is enabled
         if IsFullInspectEnabled(currentSettings) then
             ApplyInspectPaneLayout()
             InitializeInspectOverlays()
         end
-
-        -- NOTE: do NOT call NotifyInspect here. Blizzard's InspectFrame_Show
-        -- already calls NotifyInspect(unit) before firing OnShow. Calling it
-        -- again cancels the server request that's already in flight and
-        -- restarts it, which loses the inspect data (GetInventoryItemLink
-        -- returns nil for every slot). Confirmed via /qinspect trace.
 
         if shared.ScheduleUpdate then
             C_Timer.After(0.3, shared.ScheduleUpdate)
         end
     end)
 
-    -- First-show race: if InspectFrame is already shown when our hook
-    -- installs, OnShow won't fire for this open. Apply layout/overlays
-    -- manually. Blizzard already called NotifyInspect as part of showing
-    -- the frame; do not call it again here.
     if InspectFrame:IsShown() then
         local unit = InspectFrame.unit or "target"
         currentInspectTab = 1
@@ -2071,13 +1745,6 @@ local function HookInspectFrame()
     end
 end
 
----------------------------------------------------------------------------
--- Patch: guildless inspect target crashes Blizzard's Guild tab.
--- FrameXML calls InspectGuildFrame_Update only from InspectGuildFrame_OnShow
--- and InspectGuildFrame_OnEvent(INSPECT_READY). Wrap those frame scripts
--- instead of replacing the global updater, so guilded targets still run
--- Blizzard's original path unchanged.
----------------------------------------------------------------------------
 local function ClearInspectGuildFrame()
     if InspectGuildFrame.guildName then InspectGuildFrame.guildName:SetText("") end
     if InspectGuildFrame.guildRealmName then InspectGuildFrame.guildRealmName:SetText("") end
@@ -2136,9 +1803,6 @@ local function PatchInspectGuildNilGuard()
 
     if originalOnEvent then
         InspectGuildFrame:SetScript("OnEvent", function(self, event, unit, ...)
-            -- UnitGUID is SecretWhenUnitIdentityRestricted; a raw == on a secret
-            -- value throws in restricted/PvP combat. Guard the payload, then resolve
-            -- InspectFrame.unit through the readable-GUID helper before comparing.
             if event == "INSPECT_READY"
                 and InspectFrame and InspectFrame.unit
                 and not Helpers.IsSecretValue(unit)
@@ -2153,9 +1817,6 @@ local function PatchInspectGuildNilGuard()
     end
 end
 
----------------------------------------------------------------------------
--- Event frame for inspect-specific events
----------------------------------------------------------------------------
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
@@ -2164,8 +1825,6 @@ eventFrame:RegisterEvent("INSPECT_READY")
 eventFrame:SetScript("OnEvent", function(self, event, arg1)
     if event == "ADDON_LOADED" then
         if arg1 == "Blizzard_InspectUI" then
-            -- Run immediately: Blizzard's own code shows InspectFrame in the
-            -- same tick as ADDON_LOADED, so deferring races the first OnShow.
             HookInspectFrame()
             PatchInspectGuildNilGuard()
         end
@@ -2180,7 +1839,6 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
         C_Timer.After(0, RefreshInspectUnitAfterRosterUpdate)
         C_Timer.After(0.2, RefreshInspectUnitAfterRosterUpdate)
     elseif event == "INSPECT_READY" then
-        -- arg1 is the GUID of the inspected unit.
         if Helpers.IsSecretValue(arg1) then
             arg1 = nil
         end
@@ -2197,16 +1855,12 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
     end
 end)
 
--- LOD catch-up: Blizzard_InspectUI may have loaded before this module did.
 local skinBase = GetSkinBase()
 if skinBase and skinBase.IsAddOnFullyLoaded and skinBase.IsAddOnFullyLoaded("Blizzard_InspectUI") then
     HookInspectFrame()
     PatchInspectGuildNilGuard()
 end
 
----------------------------------------------------------------------------
--- Module API (exported for qui_character.lua to call)
----------------------------------------------------------------------------
 QUI.InspectPane = {
     UpdateInspectFrame = UpdateInspectFrame,
     GetCurrentTab = GetCurrentInspectTab,

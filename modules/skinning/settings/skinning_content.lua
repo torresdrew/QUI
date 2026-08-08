@@ -1,8 +1,3 @@
---[[
-    QUI Options - Skinning Tab
-    BuildSkinningTab + BuildThemeColorsTab. Migrated to V3 body pattern.
-]]
-
 local _, ns = ...
 local QUI = QUI
 local GUI = QUI.GUI
@@ -18,9 +13,6 @@ local RenderAdapters = Settings and Settings.RenderAdapters
 
 local THEME_COLORS_SUBPAGE_INDEX = 10
 
----------------------------------------------------------------------------
--- Refresh helpers (unchanged)
----------------------------------------------------------------------------
 local function RefreshSkinSurfaces()
     if ns.Registry and type(ns.Registry.RefreshAll) == "function" then
         ns.Registry:RefreshAll("skinning")
@@ -135,10 +127,6 @@ local function ReloadConfirm()
     })
 end
 
----------------------------------------------------------------------------
--- V3 layout helpers
----------------------------------------------------------------------------
--- Shared provider-panel layout scaffold (core/settings_layout_shared.lua).
 local function MakeLayout(content)
     return ns.QUI_SettingsLayoutShared.MakeLayout(content)
 end
@@ -147,7 +135,6 @@ local function row(parent, label, widget, desc)
     return Shared.BuildSettingRow(parent, label, widget, desc)
 end
 
--- Pair an iterable list of cells 2-per-row, with a trailing unpaired cell.
 local function pairCells(card, cells)
     local i = 1
     while i <= #cells do
@@ -163,9 +150,6 @@ local function pairCells(card, cells)
     end
 end
 
----------------------------------------------------------------------------
--- THEME & COLORS TAB
----------------------------------------------------------------------------
 local function BuildThemeColorsTab(tabContent)
     local db = Shared.GetDB()
 
@@ -188,11 +172,9 @@ local function BuildThemeColorsTab(tabContent)
     local tooltip = db.tooltip
 
     if general.themePreset == nil then general.themePreset = "Custom" end
-    -- Match BuildSkinningTab and core/defaults.lua (true) so this shared key cannot resolve
-    -- differently depending on which tab the user opens first.
     if general.skinUseClassColor == nil then general.skinUseClassColor = true end
     if general.addonAccentColor == nil then general.addonAccentColor = {0.376, 0.647, 0.980, 1} end
-    if general.skinBgColor == nil then general.skinBgColor = {0.008, 0.008, 0.008, 1} end -- match core/defaults.lua
+    if general.skinBgColor == nil then general.skinBgColor = {0.008, 0.008, 0.008, 1} end
     if general.hideSkinBorders == nil then general.hideSkinBorders = false end
     if general.skinBorderColorSource == nil then
         general.skinBorderColorSource = general.skinBorderUseClassColor and "class" or "theme"
@@ -220,7 +202,6 @@ local function BuildThemeColorsTab(tabContent)
 
     local L = MakeLayout(tabContent)
 
-    -- Theme Accent
     L.headerAt(ns.L["Theme Accent"])
     local sTA = L.sectionAt()
     local themeDropdown, accentColorPicker
@@ -250,7 +231,6 @@ local function BuildThemeColorsTab(tabContent)
     )
     L.closeSection(sTA)
 
-    -- Global Skin Colors
     L.headerAt(ns.L["Global Skin Colors"])
     local sGS = L.sectionAt()
     local gsBgColorW = GUI:CreateFormColorPicker(sGS.frame, nil, "skinBgColor", general, RefreshSkinSurfaces, { hasAlpha = true },
@@ -285,7 +265,6 @@ local function BuildThemeColorsTab(tabContent)
     )
     L.closeSection(sGS)
 
-    -- Chat Background
     L.headerAt(ns.L["Chat Background"])
     local sCB = L.sectionAt()
     local cbEnableW = GUI:CreateFormCheckbox(sCB.frame, nil, "enabled", chat.glass, RefreshChatSurfaces,
@@ -316,7 +295,6 @@ local function BuildThemeColorsTab(tabContent)
     )
     L.closeSection(sCB)
 
-    -- Tooltip Skinning
     L.headerAt(ns.L["Tooltip Skinning"])
     local sTS = L.sectionAt()
     local tsSkinW = GUI:CreateFormCheckbox(sTS.frame, nil, "skinTooltips", tooltip, ReloadConfirm,
@@ -355,9 +333,6 @@ local function BuildThemeColorsTab(tabContent)
     L.finish()
 end
 
----------------------------------------------------------------------------
--- SKINNING TAB
----------------------------------------------------------------------------
 local function BuildSkinningTab(tabContent)
     local db = Shared.GetDB()
 
@@ -367,7 +342,6 @@ local function BuildSkinningTab(tabContent)
 
     local general = db.general
 
-    -- Initialize defaults
     if general.skinUseClassColor == nil then general.skinUseClassColor = true end
     if general.addonAccentColor == nil then general.addonAccentColor = {0.376, 0.647, 0.980, 1} end
     if general.hideSkinBorders == nil then general.hideSkinBorders = false end
@@ -376,7 +350,6 @@ local function BuildSkinningTab(tabContent)
     end
     if general.skinKeystoneFrame == nil then general.skinKeystoneFrame = true end
 
-    -- Helper: ensure border-override keys exist on a settings table.
     local function EnsureBorderOverrideDefaults(settings, prefix)
         if type(settings) ~= "table" then return end
         local kp = type(prefix) == "string" and prefix or ""
@@ -393,7 +366,6 @@ local function BuildSkinningTab(tabContent)
         end
     end
 
-    -- Append the 4 border-override widgets as 2 paired rows in a card.
     local function AddBorderOverrides(card, settings, prefix)
         EnsureBorderOverrideDefaults(settings, prefix)
         local kp = type(prefix) == "string" and prefix or ""
@@ -421,7 +393,6 @@ local function BuildSkinningTab(tabContent)
         )
     end
 
-    -- Append the 3 background-override widgets as paired rows in a card.
     local function AddBgOverrides(card, settings, prefix)
         local kp = type(prefix) == "string" and prefix or ""
         local overrideKey = kp ~= "" and (kp .. "BgOverride") or "bgOverride"
@@ -444,9 +415,6 @@ local function BuildSkinningTab(tabContent)
 
     local L = MakeLayout(tabContent)
 
-    ---------------------------------------------------------------------------
-    -- GAME MENU
-    ---------------------------------------------------------------------------
     if general.skinGameMenu == nil then general.skinGameMenu = false end
     if general.addQUIButton == nil then general.addQUIButton = false end
     if general.addEditModeButton == nil then general.addEditModeButton = true end
@@ -480,9 +448,6 @@ local function BuildSkinningTab(tabContent)
     sGM.AddRow(row(sGM.frame, ns.L["Dim Background"], gmDimW))
     L.closeSection(sGM)
 
-    ---------------------------------------------------------------------------
-    -- LOOT WINDOW
-    ---------------------------------------------------------------------------
     if not db.loot then db.loot = {} end
     if db.loot.enabled == nil then db.loot.enabled = true end
     if db.loot.lootUnderMouse == nil then db.loot.lootUnderMouse = false end
@@ -516,9 +481,6 @@ local function BuildSkinningTab(tabContent)
     sLW.AddRow(row(sLW.frame, ns.L["Show Transmog Markers"], lwTransmogW))
     L.closeSection(sLW)
 
-    ---------------------------------------------------------------------------
-    -- ROLL FRAMES
-    ---------------------------------------------------------------------------
     if not db.lootRoll then db.lootRoll = {} end
     if db.lootRoll.enabled == nil then db.lootRoll.enabled = false end
     if db.lootRoll.growDirection == nil then db.lootRoll.growDirection = "DOWN" end
@@ -556,9 +518,6 @@ local function BuildSkinningTab(tabContent)
     )
     L.closeSection(sRF)
 
-    ---------------------------------------------------------------------------
-    -- SKIN BLIZZARD FRAMES (28 checkboxes paired 2-per-row)
-    ---------------------------------------------------------------------------
     if general.skinPowerBarAlt == nil then general.skinPowerBarAlt = true end
     if general.skinAlerts == nil then general.skinAlerts = true end
     if general.controlAlertAnchors == nil then general.controlAlertAnchors = false end
@@ -658,9 +617,6 @@ local function BuildSkinningTab(tabContent)
     pairCells(sSBF, sbfCells)
     L.closeSection(sSBF)
 
-    ---------------------------------------------------------------------------
-    -- ALERT FRAMES (border color)
-    ---------------------------------------------------------------------------
     if general.alertsBorderColorSource == nil then general.alertsBorderColorSource = "inherit" end
     if general.alertsBorderColor == nil then general.alertsBorderColor = {0, 0, 0, 1} end
 
@@ -680,9 +636,6 @@ local function BuildSkinningTab(tabContent)
     )
     L.closeSection(sAF)
 
-    ---------------------------------------------------------------------------
-    -- STATUS TRACKING BARS
-    ---------------------------------------------------------------------------
     local function RefreshStatusTrackingBars()
         if _G.QUI_RefreshStatusTrackingBarSkin then
             _G.QUI_RefreshStatusTrackingBarSkin()
@@ -788,9 +741,6 @@ local function BuildSkinningTab(tabContent)
     AddBgOverrides(sSTB, general, "statusTrackingBars")
     L.closeSection(sSTB)
 
-    ---------------------------------------------------------------------------
-    -- OBJECTIVE TRACKER
-    ---------------------------------------------------------------------------
     if general.skinObjectiveTracker == nil then general.skinObjectiveTracker = false end
     if general.objectiveTrackerClickThrough == nil then general.objectiveTrackerClickThrough = false end
     if general.objectiveTrackerHeight == nil then general.objectiveTrackerHeight = 600 end
@@ -861,7 +811,6 @@ local function BuildSkinningTab(tabContent)
     L.finish()
 end
 
--- Export
 ns.QUI_SkinningOptions = {
     BuildSkinningTab = BuildSkinningTab,
     BuildThemeColorsTab = BuildThemeColorsTab,

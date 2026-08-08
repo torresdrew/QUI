@@ -1,8 +1,3 @@
---[[
-    QUI Chat Shared Settings Providers
-    Owns provider-backed Chat settings content in the shared settings layer for full pages and Layout Mode drawers.
-]]
-
 local ADDON_NAME, ns = ...
 
 local Settings = ns.Settings
@@ -26,13 +21,6 @@ local function IsChatLayoutLockedDown()
         or (I and I.IsChatMessagingLockedDown and I.IsChatMessagingLockedDown())
 end
 
-local function SafeFrameNumber(value, fallback)
-    if Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(value) then
-        return fallback or 0
-    end
-    return tonumber(value) or fallback or 0
-end
-
 local function GetPixelSize(frame)
     local uikit = ns.UIKit
     if uikit and uikit.GetPixelSize then
@@ -42,9 +30,6 @@ local function GetPixelSize(frame)
     return (core and core.GetPixelSize and core:GetPixelSize(frame)) or 1
 end
 
--- Walk GetChannelList() (id, name, header, id, name, header, ...) and return
--- the joined non-header channel names in order. Returns an empty table when
--- the API is unavailable.
 local function CollectJoinedChannelNames()
     local names = {}
     if type(GetChannelList) == "function" then
@@ -62,9 +47,6 @@ local function CollectJoinedChannelNames()
     return names
 end
 
--- Dropdown options for the per-window selectors: one entry per configured
--- window, with window 1 labelled the primary. Always yields at least one
--- entry so the dropdown is never empty.
 local function BuildWindowOptions(windowsCfg)
     local opts = {}
     for i = 1, math.max(1, #windowsCfg) do
@@ -76,10 +58,6 @@ end
 ProviderPanels:RegisterAfterLoad(function(ctx)
     local GUI = ctx.GUI
     local U = ctx.U
-    -- V2 row-placement helper retained for legacy custom-block bodies
-    -- (Tab Filters, Button Bar, Channel Colors, Persistent History, New
-    -- Message Sound) where row-by-row anchoring is still simpler than
-    -- adapting the V3 paired-row card pattern.
     local P = ctx.P
     local FORM_ROW = ctx.FORM_ROW
     local NotifyProviderFor = ctx.NotifyProviderFor
@@ -88,10 +66,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         ctx.RegisterShared(providerKey, provider)
     end
 
-    -- V3 layout helper. Mirrors the minimap_providers.lua / qol_content.lua
-    -- shape: headerAt / sectionAt / closeSection / placeCustom drive a single
-    -- y cursor while sections{}/relayoutSections support legacy V2 collapsibles
-    -- (Position, OpenFullSettings) at the bottom of the panel.
     local function MakeLayout(content)
         return ns.QUI_SettingsLayoutShared.MakeLayout(content)
     end
@@ -100,15 +74,10 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         return ns.QUI_Options.BuildSettingRow(parent, label, widget, desc)
     end
 
-    ---------------------------------------------------------------------------
-    -- Multi-frame editor state. These upvalues persist across structural
-    -- rebuilds of the chat panel — the build closure is recreated on each
-    -- NotifyProviderFor({ structural = true }), but RegisterAfterLoad's outer
-    -- closure runs once per session, so frame-selection survives the rebuild.
-    ---------------------------------------------------------------------------
     local selectedCustomDisplayTabIndex = 1
     local selectedWindowIndex = 1
     local selectedButtonBarFrame = 1
+    local buttonBarExpanded = {}
 
     local function MarkTransientOptionsBinding(tableRef)
         if type(tableRef) == "table" then
@@ -136,22 +105,11 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         end
     end
 
-    -- Build dropdown options for the per-frame editor selectors. Excludes
-    -- combat log frames — neither tab filters nor a custom button bar make
-    -- sense on a frame whose purpose is the system-driven combat-log feed.
-    -- WoW preallocates all NUM_CHAT_WINDOWS frames, so _G["ChatFrame3"]
-    -- survives FCF_Close. The NAME from GetChatWindowInfo also persists
-    -- across FCF_Close (the saved variable is never cleared), so the
-    -- canonical "is this slot active?" check is FCF_IsChatWindowIndexActive
-    -- — Blizzard's own active-window iterator (see Shared/FloatingChatFrame.lua)
-    -- consults the `shown` flag (7th return of GetChatWindowInfo) and the
-    -- frame's `isDocked` state.
     local function IsChatWindowSlotActive(i, f)
         if type(_G.FCF_IsChatWindowIndexActive) == "function" then
             local ok, active = pcall(_G.FCF_IsChatWindowIndexActive, i)
             if ok then return active and true or false end
         end
-        -- Fallback for older clients: read `shown` directly, then dock state.
         if type(GetChatWindowInfo) == "function" then
             local shown = select(7, GetChatWindowInfo(i))
             if shown then return true end
@@ -171,9 +129,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 or f.privateMessageList
                 or (I and I.IsTemporaryChatFrame and I.IsTemporaryChatFrame(f))
             )
-            -- ChatFrame2 identity check: `isCombatLog` is not a real property
-            -- in modern FrameXML (see tab_manager.ShouldSeedWindow); without
-            -- the identity skip the combat log shows up as a button-bar host.
             if f and f ~= _G.ChatFrame2
                 and not f.isCombatLog and not isTemporary and not f.privateMessageList
                 and IsChatWindowSlotActive(i, f)
@@ -181,15 +136,12 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 opts[#opts + 1] = { value = i, text = "ChatFrame" .. i .. " (" .. name .. ")" }
             end
         end
-        if #opts == 0 then  -- defensive: always offer at least ChatFrame1
+        if #opts == 0 then
             opts[1] = { value = 1, text = "ChatFrame1" }
         end
         return opts
     end
 
-    ---------------------------------------------------------------------------
-    -- CHAT
-    ---------------------------------------------------------------------------
     RegisterSharedOnly("chatFrame1", { build = function(content, key, _width, options)
         local db = U.GetProfileDB()
         if not db or not db.chat or not ns.QUI_Options then return 80 end
@@ -237,10 +189,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             return not sectionFilter or sectionFilter[sectionId] == true
         end
 
-        -- V3 section emitter: an accent-dot header + card group replaces the
-        -- V2 collapsible chrome. buildFunc(card) receives the
-        -- CreateSettingsCardGroup return value; widgets attach to card.frame
-        -- and rows are added via card.AddRow.
         local function CreateChatSection(sectionId, title, _contentHeight, buildFunc)
             if not ShouldRenderSection(sectionId) then
                 return nil
@@ -252,20 +200,12 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             return card
         end
 
-        -- Custom-block variant for sections whose content cannot fit the V3
-        -- paired-row card pattern (dynamic editors, multi-column distributors,
-        -- per-row inline buttons). Renders an accent-dot header followed by a
-        -- bare container placed with L.placeCustom — no card chrome.
         local function CreateChatCustomSection(sectionId, title, buildFunc, defaultHeight)
             if not ShouldRenderSection(sectionId) then
                 return nil
             end
             L.headerAt(title)
             local container = CreateFrame("Frame", nil, content)
-            -- Anchor at current y so children can use the container's body.
-            -- L.placeCustom is invoked after buildFunc computes the final
-            -- height; we provide a temporary anchor in the meantime so that
-            -- relative TOPLEFT children render correctly during build.
             container:SetPoint("TOPLEFT", content, "TOPLEFT", PAD, L.getY())
             container:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
             container:SetHeight(defaultHeight or 1)
@@ -274,11 +214,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             return container
         end
 
-        -- Master enable toggle. The flip is live (enabling activates the QUI
-        -- display and suppresses the stock frames; disabling hands everything
-        -- back), but a UI reload is offered so the change takes full effect and
-        -- residues clear — parity with the Module Addons tile, the other surface
-        -- that toggles this module (moduleAddon_QUI_Chat), which always prompts.
         local function ShowChatModuleReloadPrompt()
             local Q = _G.QUI
             local G = Q and Q.GUI
@@ -300,11 +235,8 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             card.AddRow(row(card.frame, ns.L["Enable Chat Module"], w))
         end)
 
-        -- Chat Display
         CreateChatSection("customDisplay", ns.L["Chat Display"], FORM_ROW * 4 + 8, function(card)
             if not chat.customDisplay then chat.customDisplay = {} end
-            -- Combat Log tab toggle: embeds Blizzard's ChatFrame2 as a pinned
-            -- tab in window 1. The reconcile runs through GetWindowsConfig.
             local clt
             clt = GUI:CreateFormCheckbox(card.frame, nil, "combatLogTab", chat.customDisplay, function()
                 local TM = ns.QUI and ns.QUI.Chat and ns.QUI.Chat.TabManager
@@ -312,11 +244,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 local TabUI = ns.QUI and ns.QUI.Chat and ns.QUI.Chat.TabUI
                 if TabUI and TabUI.Rebuild then TabUI.Rebuild() end
                 Refresh()
-                -- Structural: the reconcile adds/removes the window-1 combat-log
-                -- tab entry, and the Filters sub-page's "Editing tab" dropdown
-                -- captures its option list at build time. Without the notify the
-                -- provider revision never bumps, so that (hidden) surface stays
-                -- stale and a re-enabled Combat Log tab never appears in it.
                 NotifyProviderFor(clt, { structural = true })
             end, { description = ns.L["Show Blizzard's Combat Log as a pinned tab in the primary chat window. Right-click the tab for Blizzard's combat-log filter settings."] })
             card.AddRow(row(card.frame, ns.L["Show Combat Log Tab"], clt))
@@ -326,12 +253,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             })
             card.AddRow(row(card.frame, ns.L["Scrollback Lines"], ml))
 
-            -- Window management. Windows live at chat.customDisplay.windows
-            -- (ARRAY); window 1 is the primary (editbox fallback owner) and
-            -- can never be deleted. The selector lives HERE, next to the
-            -- Add/Delete buttons it drives — the Chat Tabs page (a different
-            -- settings surface) has its own "Editing window" copy of the same
-            -- selection; both write the shared selectedWindowIndex upvalue.
             local Display = ns.QUI and ns.QUI.Chat and ns.QUI.Chat.DisplayLayer
             local TabManager = ns.QUI and ns.QUI.Chat and ns.QUI.Chat.TabManager
             local windowsCfg = (TabManager and TabManager.GetWindowsConfig and TabManager.GetWindowsConfig()) or {}
@@ -344,13 +265,9 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             local winSelector
             winSelector = GUI:CreateFormDropdown(card.frame, nil, winOpts, "_selected", winSelTable, function()
                 local newValue = winSelTable._selected or 1
-                -- Idempotency guard: CreateFormDropdown's SetValue fires
-                -- onChange on every click without checking value-changed.
                 if newValue == selectedWindowIndex then return end
                 selectedWindowIndex = newValue
                 selectedCustomDisplayTabIndex = 1
-                -- Structural: Delete Window's enabled state and the Chat Tabs
-                -- editor both depend on the selection.
                 NotifyProviderFor(winSelector, { structural = true })
             end, { description = ns.L["Which window Delete Window removes — and which window's tabs the Chat Tabs page edits."] })
             card.AddRow(row(card.frame, ns.L["Selected window"], winSelector))
@@ -384,8 +301,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             card.AddRow(row(card.frame, ns.L["Add window"], addWinBtn), row(card.frame, ns.L["Delete selected window"], delWinBtn))
         end)
 
-        -- Chat Font: master toggle gating a family / size / outline trio. OFF
-        -- inherits the global font + Blizzard-native window size (legacy look).
         CreateChatSection("chatFont", ns.L["Chat Font"], FORM_ROW * 3 + 8, function(card)
             if not chat.font then chat.font = {} end
             local fontList = {}
@@ -428,14 +343,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             card.AddRow(row(card.frame, ns.L["Font Outline"], outlineW))
         end)
 
-        -- Custom Display Tabs (Phase 5)
-        -- User-defined tabs on the QUI custom display. Each tab stores a
-        -- SET-shaped entry: { name, groups = {KEY=true}, channels = {Name=true},
-        -- invert = false } that feeds TabManager.BuildFilter directly.
-        -- The array lives at db.profile.chat.customDisplay.windows[i].tabs.
-        --
-        -- Structural rebuilds (Add/Delete via NotifyProviderFor) re-enter this
-        -- block so every generator closure always reads the live array length.
         if ShouldRenderSection("customDisplayTabs") then
         CreateChatCustomSection("customDisplayTabs", ns.L["Chat Tabs"], function(body)
             if not chat.customDisplay then chat.customDisplay = {} end
@@ -459,7 +366,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             local sy = -4
             local GAP = 8
 
-            -- Standard chat groups for the groups card.
             local TabFilters = ns.QUI and ns.QUI.Chat and ns.QUI.Chat.TabFilters
             local rawGroups = (TabFilters and TabFilters.GetStandardGroups and TabFilters.GetStandardGroups()) or {
                 "SAY", "EMOTE", "YELL",
@@ -479,23 +385,10 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 end
             end
 
-            -- Returns the currently selected tab entry (or nil when no tabs).
             local function curTab()
                 return tabs[selectedCustomDisplayTabIndex]
             end
 
-            -- Set-shaped binding. Both groups and channels pass
-            -- explicitFalse=true and persist false (not nil) on uncheck:
-            -- "user deselected this" must survive in storage. Channels need
-            -- it or a fully-unchecked list is identical to a never-curated
-            -- one and the CHANNEL-group default fallback resurrects
-            -- Trade/Services; groups need it or the GUILD_DISCORD->GUILD
-            -- family fallback (TabManager GROUP_FAMILY_FALLBACK) cannot tell
-            -- "user unchecked GUILD_DISCORD" from "tab predates the group"
-            -- and would resurrect the Discord stream through the tab's GUILD
-            -- verdict. "Leave all unchecked = no constraint" is preserved:
-            -- TabManager's NormalizeSet drops false-valued keys, so a groups
-            -- table holding only falses still reads as unconstrained.
             local function makeSetBinding(getSet, explicitFalse)
                 return MarkTransientOptionsBinding(setmetatable({}, {
                     __index = function(_, k)
@@ -508,10 +401,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                         if v then
                             s[k] = true
                         elseif explicitFalse then
-                            -- NOT `explicitFalse and false or nil`: that
-                            -- and-or collapses to nil for every input (the
-                            -- classic false-middle trap) and silently broke
-                            -- deselect persistence.
                             s[k] = false
                         else
                             s[k] = nil
@@ -520,9 +409,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 }))
             end
 
-            -- Dynamic tab-name options for the selector dropdown.
-            -- Only called when #tabs > 0 (the dropdown is inside the
-            -- `if #tabs > 0` guard below), so no placeholder is needed.
             local function tabOptions()
                 local opts = {}
                 for i = 1, #tabs do
@@ -534,11 +420,8 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 return opts
             end
 
-            -- Selector + Add/Delete card. Add is always visible; selector and
-            -- delete render once there is at least one tab.
             local selectorCard = ns.QUI_Options.CreateSettingsCardGroup(body, sy)
 
-            -- Window selector: shown when more than one window exists.
             if #windowsCfg > 1 then
                 local function windowOptions()
                     return BuildWindowOptions(windowsCfg)
@@ -555,7 +438,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 selectorCard.AddRow(row(selectorCard.frame, ns.L["Editing window"], winSelector))
             end
 
-            -- Add / Delete buttons are always present.
             local addBtn, deleteBtn
             addBtn = GUI:CreateButton(selectorCard.frame, ns.L["Add Tab"], 100, 22, function()
                 local newIdx = #tabs + 1
@@ -578,17 +460,10 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 local frameSelector
                 frameSelector = GUI:CreateFormDropdown(selectorCard.frame, nil, tabOptions(), "_selected", selectorTable, function()
                     local newValue = selectorTable._selected or 1
-                    -- Idempotency guard: CreateFormDropdown's SetValue fires
-                    -- onChange on every click without checking value-changed.
                     if newValue == selectedCustomDisplayTabIndex then return end
                     local IsCL = TabManager and TabManager.IsCombatLogTab
                     local wasCombatLog = IsCL and IsCL(tabs[selectedCustomDisplayTabIndex]) or false
                     selectedCustomDisplayTabIndex = newValue
-                    -- The combat-log tab renders a note instead of the
-                    -- group/channel editors, so crossing into or out of it
-                    -- needs a structural rebuild — a soft refresh would leave
-                    -- the wrong editor set on screen (and let filter edits
-                    -- land on the combat-log entry).
                     local nowCombatLog = IsCL and IsCL(tabs[newValue]) or false
                     if wasCombatLog ~= nowCombatLog then
                         NotifyProviderFor(frameSelector, { structural = true })
@@ -603,11 +478,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 deleteBtn = GUI:CreateButton(selectorCard.frame, ns.L["Delete Tab"], 100, 22, function()
                     if #tabs <= 1 then return end
                     local doomed = tabs[selectedCustomDisplayTabIndex]
-                    -- Deleting the combat-log tab must also turn the feature
-                    -- flag off, or ReconcileCombatLogTab re-appends the tab on
-                    -- the next GetWindowsConfig. (The "Show Combat Log Tab"
-                    -- checkbox above re-reads the flag on the structural
-                    -- rebuild, so the two stay in sync.)
                     if TabManager and TabManager.IsCombatLogTab and TabManager.IsCombatLogTab(doomed) then
                         chat.customDisplay.combatLogTab = false
                     end
@@ -628,7 +498,7 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                     local j = i + delta
                     if not tabs[i] or not tabs[j] then return end
                     tabs[i], tabs[j] = tabs[j], tabs[i]
-                    selectedCustomDisplayTabIndex = j  -- selection follows the moved tab
+                    selectedCustomDisplayTabIndex = j
                     Refresh()
                     NotifyProviderFor(moveUpBtn, { structural = true })
                 end
@@ -652,14 +522,8 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             selectorCard.Finalize()
             sy = sy - selectorCard.frame:GetHeight() - GAP
 
-            -- The remainder (name, groups, channels) only renders when a tab
-            -- exists and is selected.
             local ct = curTab()
             if ct then
-                -- Name input card. Bound via a dynamic proxy that routes reads
-                -- and writes to the CURRENT selection (curTab()) rather than
-                -- the tab captured at build time — after a soft selector change
-                -- the widget must display/write the new tab's name, not the old one.
                 local nameBinding = MarkTransientOptionsBinding(setmetatable({}, {
                     __index = function(_, k)
                         local t = curTab()
@@ -672,9 +536,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 }))
                 local nameCard = ns.QUI_Options.CreateSettingsCardGroup(body, sy)
                 local nameEdit = GUI:CreateFormEditBox(nameCard.frame, nil, "name", nameBinding, function()
-                    -- Refresh rebuilds the tab-bar (and everything else) via
-                    -- Fallback.Apply; the explicit TabUI.Rebuild() call is
-                    -- redundant here since Refresh already triggers it.
                     Refresh()
                 end, {
                     maxLetters = 64, live = false,
@@ -685,12 +546,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 nameCard.Finalize()
                 sy = sy - nameCard.frame:GetHeight() - GAP
 
-                -- Combat-log tab: QUI message filtering never applies (the
-                -- tab embeds Blizzard's ChatFrame2; its content is governed
-                -- by Blizzard's combat-log quick filters). Rename/Move/Delete
-                -- above stay available; the group/channel editors are
-                -- replaced with an explanatory note so filter edits cannot
-                -- land on the combat-log entry.
                 if TabManager and TabManager.IsCombatLogTab and TabManager.IsCombatLogTab(ct) then
                     local note = GUI:CreateLabel(body,
                         ns.L["This tab embeds Blizzard's Combat Log. QUI message-group and channel filters do not apply to it — right-click the Combat Log tab in the chat window to configure Blizzard's combat-log filters."],
@@ -703,9 +558,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                     return math.abs(sy) + 4
                 end
 
-                -- Message groups card: two-column checkboxes bound via
-                -- makeSetBinding writing explicit false into ct.groups on
-                -- uncheck (see the makeSetBinding comment for why).
                 ns.QUI_Options.CreateAccentDotLabel(body, ns.L["Message groups"], sy)
                 sy = sy - 30
 
@@ -719,9 +571,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 local function makeGroupCheckbox(groupKey)
                     local desc = ns.L["Include %s messages on this custom tab. Leave all unchecked to show all groups."]:format(groupKey)
                     if groupKey == "GUILD_DISCORD" then
-                        -- Family-fallback semantics (TabManager
-                        -- GROUP_FAMILY_FALLBACK): a tab saved before this
-                        -- group existed follows GUILD until the user decides.
                         desc = ns.L["Include Discord guild-chat messages on this custom tab. Tabs saved before this option existed follow their GUILD setting until you check or uncheck this box; after that, this box alone decides."]
                     end
                     local cb = GUI:CreateFormCheckbox(groupsCard.frame, nil, groupKey, groupsBinding, Refresh,
@@ -741,16 +590,9 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 groupsCard.Finalize()
                 sy = sy - groupsCard.frame:GetHeight() - GAP
 
-                -- Channels card: union of live joined channels and the tab's
-                -- stored channel names so a stored-but-not-joined channel name
-                -- does not silently disappear from the UI.
                 ns.QUI_Options.CreateAccentDotLabel(body, ns.L["Channels (current join list)"], sy)
                 sy = sy - 30
 
-                -- Collect live channel names: the channel registry resolves
-                -- community identifiers to display names and tracks the same
-                -- channel list the capture pipeline tags entries with, so the
-                -- checkboxes here match what the filter compares against.
                 local liveChannels = {}
                 local Reg = ns.QUI and ns.QUI.Chat and ns.QUI.Chat.ChannelRegistry
                 if Reg and Reg.AllNames then
@@ -759,12 +601,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                     liveChannels = CollectJoinedChannelNames()
                 end
 
-                -- Union live channels with EVERY tab's stored names so soft selector
-                -- changes never hide a stored-but-unjoined channel row.
-                -- Rows are built once at structural-build time; re-rendering them
-                -- on a soft selector change would require a full structural rebuild.
-                -- Computing the union over all tabs' stored names is cheaper and
-                -- ensures every channel reachable from any tab is always visible.
                 local channelSeen = {}
                 local allChannels = {}
                 for _, n in ipairs(liveChannels) do
@@ -798,7 +634,7 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                         if not t then return nil end
                         if type(t.channels) ~= "table" then t.channels = {} end
                         return t.channels
-                    end, true) -- explicitFalse: deselects persist as false
+                    end, true)
                     local channelsCard = ns.QUI_Options.CreateSettingsCardGroup(body, sy)
                     local function makeChannelCheckbox(channelName)
                         local cb = GUI:CreateFormCheckbox(channelsCard.frame, nil, channelName, channelsBinding, Refresh,
@@ -824,10 +660,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         end, 200)
         end
 
-        -- Whisper Tabs
-        -- Behavior toggles for runtime conversation tabs (whisper-to-person
-        -- tabs that are opened on demand and never persisted). The toggles
-        -- themselves are stored at chat.customDisplay.whisperTabs.
         CreateChatSection("whisperTabs", ns.L["Whisper Tabs"], FORM_ROW * 4 + 8, function(card)
             if not chat.customDisplay.whisperTabs then
                 chat.customDisplay.whisperTabs = {
@@ -861,23 +693,13 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             card.AddRow(row(card.frame, ns.L["Auto-tabs open in"], target))
         end)
 
-        -- Intro Message
         CreateChatSection("introMessage", ns.L["Intro Message"], 2 * FORM_ROW + 8, function(card)
             local w = GUI:CreateFormCheckbox(card.frame, nil, "showIntroMessage", chat, nil, { description = ns.L["Display the QUI reminder/intro tips in chat when you log in."] })
             card.AddRow(row(card.frame, ns.L["Show Login Message"], w))
         end)
 
-        -- Default Tab
-        -- Rendered as a custom block (placeCustom) because RebuildDefaultTab
-        -- emits a dynamic, equal-width column distributor for per-spec mode
-        -- that does not fit the V3 paired-row pattern. The block lives just
-        -- below an accent-dot header but outside any card chrome.
         CreateChatCustomSection("defaultTab", ns.L["Default Tab"], function(body)
             local function BuildTabOptions()
-                -- Default-tab activation targets window 1 (the primary window
-                -- that is always present and owns the editbox fallback). Read
-                -- its tab list via GetWindowTabs so we respect the multi-window
-                -- storage layout instead of the legacy flat customDisplay.tabs.
                 local TabManager = ns.QUI and ns.QUI.Chat and ns.QUI.Chat.TabManager
                 local tabs = (TabManager and TabManager.GetWindowTabs and TabManager.GetWindowTabs(1))
                     or {}
@@ -911,7 +733,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             local finalHeight = FORM_ROW
 
             local function RebuildDefaultTab()
-                -- Destroy previous container (clears children AND regions)
                 if container then
                     container:Hide()
                     container:SetParent(nil)
@@ -927,7 +748,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 local tabOptions = BuildTabOptions()
 
                 if chat.defaultTabPerSpec then
-                    -- Per-spec mode: all spec dropdowns tiled on one row
                     local specs = {}
                     local numSpecs = GetNumSpecializations and GetNumSpecializations() or 0
                     for s = 1, numSpecs do
@@ -947,7 +767,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                         rowFrame:SetPoint("RIGHT", container, "RIGHT", 0, 0)
                         rowFrame:SetHeight(FORM_ROW)
 
-                        -- Create equal-width column frames by chaining anchors
                         local columns = {}
                         for idx = 1, count do
                             local col = CreateFrame("Frame", nil, rowFrame)
@@ -960,7 +779,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                             end
                             columns[idx] = col
                         end
-                        -- Distribute column widths evenly via OnSizeChanged
                         local function DistributeColumns(w)
                             local colW = (w - GAP * (count - 1)) / count
                             for idx = 1, count do
@@ -973,13 +791,11 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                             if w and w > 0 then DistributeColumns(w) end
                         end)
 
-                        -- Place a dropdown inside each column with compact label offset
                         for idx, spec in ipairs(specs) do
                             local dd = GUI:CreateFormDropdown(columns[idx], spec.name, tabOptions, spec.id, chat.defaultTabBySpec, Refresh, { description = ns.L["Chat tab to switch to when this spec is active, on login, reload, or spec change."] })
                             dd:ClearAllPoints()
                             dd:SetPoint("TOPLEFT", 0, 0)
                             dd:SetPoint("RIGHT", columns[idx], "RIGHT", 0, 0)
-                            -- Tighten label-to-dropdown gap (default is 180px)
                             local btn = select(1, dd:GetChildren())
                             if btn then
                                 btn:ClearAllPoints()
@@ -1028,7 +844,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             return finalHeight
         end, 3 * FORM_ROW + 8)
 
-        -- Chat Background
         if chat.glass then
             CreateChatSection("chatBackground", ns.L["Chat Background"], 3 * FORM_ROW + 8, function(card)
                 local bgAlphaSlider, bgColorPicker
@@ -1049,7 +864,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             end)
         end
 
-        -- Input Box Background
         if chat.editBox then
             CreateChatSection("inputBoxBackground", ns.L["Input Box Background"], 5 * FORM_ROW + 8, function(card)
                 local inputAlphaSlider, inputColorPicker, inputPositionCheckbox
@@ -1072,7 +886,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             end)
         end
 
-        -- Chat Border Color
         if ns.QUI_BorderControl then
             if chat.chatBorderColorSource == nil then chat.chatBorderColorSource = "inherit" end
             if chat.chatBorderColor == nil then chat.chatBorderColor = {0, 0, 0, 1} end
@@ -1085,10 +898,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             end)
         end
 
-        -- Message History
-        -- In-memory Up/Down arrow recall during a session. Renders first on
-        -- the History tab so the simpler arrow-recall toggle leads, with the
-        -- persistent-across-/reload variant (Command History) following.
         CreateChatSection("messageHistory", ns.L["Message History"], 2 * FORM_ROW + 8, function(card)
             if not chat.messageHistory then
                 chat.messageHistory = { enabled = true, maxHistory = 50 }
@@ -1097,11 +906,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             card.AddRow(row(card.frame, ns.L["Enable Message History"], w))
         end)
 
-        -- Command History (Phase C)
-        -- Persistent Up/Down arrow recall. Settings live on the profile;
-        -- the captured entries are per-character at
-        -- db.char.chat.editboxHistory.entries (initialized lazily by
-        -- editbox_history.lua's getStore on first capture or recall).
         CreateChatSection("commandHistory", ns.L["Command History"], 4 * FORM_ROW + 8, function(card)
             if not chat.editboxHistory then
                 chat.editboxHistory = {
@@ -1136,7 +940,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             UpdateCommandHistoryStates()
         end)
 
-        -- Message Fade
         if chat.fade then
             CreateChatSection("messageFade", ns.L["Message Fade"], 2 * FORM_ROW + 8, function(card)
                 local fadeDelaySlider
@@ -1153,7 +956,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             end)
         end
 
-        -- URL Detection
         if chat.urls then
             CreateChatSection("urlDetection", ns.L["URL Detection"], 2 * FORM_ROW + 8, function(card)
                 local w = GUI:CreateFormCheckbox(card.frame, nil, "enabled", chat.urls, Refresh, { description = ns.L["Detect URLs in chat and click them to open a copy dialog."] })
@@ -1161,7 +963,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             end)
         end
 
-        -- Chat Hyperlinks (Phase D)
         if not chat.hyperlinks then
             chat.hyperlinks = { coordinates = true, friendlyURLs = false }
         end
@@ -1174,23 +975,8 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         end)
 
         if ShouldRenderSection("buttonBar") then
-        -- Button Bar (Phase F)
-        -- Per-frame custom button bar. The editor below selects which chat
-        -- frame to configure, and the runtime reconciles whatever frameIDs
-        -- appear in db.profile.chat.buttonBars.
-        --
-        -- Storage: db.profile.chat.buttonBars[<frameID>] = {
-        --   enabled, position, offsetX, offsetY, buttonSpacing, hideInCombat,
-        --   buttons = { { id, visible }, ... }, customButtons = { ... }
-        -- }
-        --
         if not chat.buttonBars then chat.buttonBars = {} end
 
-        -- Multi-frame button bar editor. Frame-selector dropdown writes to
-        -- selectedButtonBarFrame and triggers structural rebuild so add/remove
-        -- and per-frame switch always re-enter this builder. Rendered as a
-        -- stack of CreateSettingsCardGroup cards so the dual-column layout
-        -- matches the rest of QUI's chat settings.
         CreateChatCustomSection("buttonBar", ns.L["Button Bar"], function(body)
             local frameOptions = buildFrameOptions()
             local validSelection = false
@@ -1203,7 +989,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             local sy = -4
             local GAP = 8
 
-            -- Selector card (Editing frame dropdown).
             local selectorCard = ns.QUI_Options.CreateSettingsCardGroup(body, sy)
             local frameSelector
             frameSelector = GUI:CreateFormDropdown(selectorCard.frame, nil, frameOptions, "_selected", selectorTable, function()
@@ -1224,9 +1009,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 return math.abs(sy) + 24
             end
 
-            -- Lazily initialise the entry with built-in defaults so toggles
-            -- below have something to bind to. The bar stays disabled until
-            -- the user flips the master toggle.
             local entry = BB.InitFrameDefaults(selectedButtonBarFrame)
             if not entry then return math.abs(sy) + 4 end
 
@@ -1253,7 +1035,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 end
             end
 
-            -- Basics card: master/combat toggles + position + offsets + spacing.
             local positionOptions = {
                 { value = "outside_left",  text = ns.L["Outside left (vertical strip)"] },
                 { value = "outside_right", text = ns.L["Outside right (vertical strip)"] },
@@ -1285,33 +1066,8 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             basicsCard.Finalize()
             sy = sy - basicsCard.frame:GetHeight() - GAP
 
-            -- Built-in buttons subheader + paired card. Each entry in
-            -- entry.buttons is { id, visible }; the proxy maps each builtin
-            -- key to the visible flag, creating a record on first toggle.
-            TrackBarRegion(ns.QUI_Options.CreateAccentDotLabel(body, ns.L["Built-in buttons"], sy))
+            TrackBarRegion(ns.QUI_Options.CreateAccentDotLabel(body, ns.L["Buttons"], sy))
             sy = sy - 30
-
-            local function findOrCreate(id)
-                for i = 1, #entry.buttons do
-                    if entry.buttons[i] and entry.buttons[i].id == id then
-                        return entry.buttons[i]
-                    end
-                end
-                local rec = { id = id, visible = false }
-                entry.buttons[#entry.buttons + 1] = rec
-                return rec
-            end
-
-            local builtinProxy = MarkTransientOptionsBinding(setmetatable({}, {
-                __index = function(_, id)
-                    local rec = findOrCreate(id)
-                    return rec.visible and true or false
-                end,
-                __newindex = function(_, id, v)
-                    local rec = findOrCreate(id)
-                    rec.visible = v and true or false
-                end,
-            }))
 
             local labels = {
                 qui_options = ns.L["QUI options (/qui)"],
@@ -1322,69 +1078,105 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 guild       = ns.L["Guild frame"],
                 reload      = ns.L["Reload UI"],
             }
-            local builtinOrder = BB.GetBuiltinOrder()
-            local builtinCard = ns.QUI_Options.CreateSettingsCardGroup(body, sy)
-            local function makeBuiltinCheckbox(id)
-                return TrackBarControl(GUI:CreateFormCheckbox(builtinCard.frame, nil, id, builtinProxy, Refresh,
-                    { description = ns.L["Show the '%s' button on this chat frame's button bar."]:format(labels[id] or id) }))
+
+            local expanded = buttonBarExpanded[selectedButtonBarFrame]
+            if not expanded then
+                expanded = {}
+                buttonBarExpanded[selectedButtonBarFrame] = expanded
             end
-            for i = 1, #builtinOrder, 2 do
-                local id1, id2 = builtinOrder[i], builtinOrder[i + 1]
-                local cellL = row(builtinCard.frame, labels[id1] or id1, makeBuiltinCheckbox(id1))
-                local cellR
-                if id2 then
-                    cellR = row(builtinCard.frame, labels[id2] or id2, makeBuiltinCheckbox(id2))
+
+            local function itemKey(item)
+                if BB.IsCustomItem(item) then
+                    return item
                 end
-                builtinCard.AddRow(cellL, cellR)
+                return item.id
             end
-            builtinCard.Finalize()
-            sy = sy - builtinCard.frame:GetHeight() - GAP
 
-            -- Custom slash-command buttons subheader. Each custom button gets
-            -- its own card with [Label | Slash command] + [Icon path | Remove].
-            -- Add/Remove trigger structural rebuilds so this loop re-runs.
-            TrackBarRegion(ns.QUI_Options.CreateAccentDotLabel(body, ns.L["Custom slash-command buttons"], sy))
-            sy = sy - 30
-
-            for idx = 1, #entry.customButtons do
-                local cb = entry.customButtons[idx]
-                if type(cb) ~= "table" then
-                    cb = { label = "", slashCommand = "", icon = "" }
-                    entry.customButtons[idx] = cb
+            local function itemLabel(item)
+                if BB.IsCustomItem(item) then
+                    local text = (item.label ~= "" and item.label)
+                        or (item.slashCommand ~= "" and item.slashCommand)
+                        or ns.L["Custom button"]
+                    local renders = item.visible ~= false
+                        and item.slashCommand ~= ""
+                        and (item.label ~= "" or item.icon ~= "")
+                    return text, not renders
                 end
-                if cb.icon == nil then cb.icon = "" end
+                return labels[item.id] or tostring(item.id), not item.visible
+            end
 
-                TrackBarRegion(ns.QUI_Options.CreateAccentDotLabel(body, ns.L["Button"] .. " " .. idx, sy))
-                sy = sy - 30
+            local function itemToggleBinding(item)
+                local name = BB.IsCustomItem(item)
+                    and ((item.label ~= "" and item.label)
+                        or (item.slashCommand ~= "" and item.slashCommand)
+                        or ns.L["Custom button"])
+                    or (labels[item.id] or tostring(item.id))
+                return item, "visible",
+                    ns.L["Show the '%s' button on this chat frame's button bar."]:format(name)
+            end
 
-                local btnCard = ns.QUI_Options.CreateSettingsCardGroup(body, sy)
-                local labelEdit = TrackBarControl(GUI:CreateFormEditBox(btnCard.frame, nil, "label", cb, Refresh,
-                    { description = ns.L["Text shown on the button when no icon is set."] }))
-                local slashEdit = TrackBarControl(GUI:CreateFormEditBox(btnCard.frame, nil, "slashCommand", cb, Refresh,
-                    { description = ns.L["Slash command to run on click — e.g. /target Boss, /readycheck. Must include the leading slash."] }))
-                btnCard.AddRow(row(btnCard.frame, ns.L["Label"], labelEdit), row(btnCard.frame, ns.L["Slash command"], slashEdit))
+            local function afterMutation()
+                Refresh()
+                NotifyProviderFor(enabledCheckbox, { structural = true })
+            end
 
-                local iconEdit = TrackBarControl(GUI:CreateFormEditBox(btnCard.frame, nil, "icon", cb, Refresh,
-                    { description = ns.L["Texture path for an icon-style button — e.g. Interface/Icons/Spell_Holy_HolyBolt or any registered AddOn texture path. Leave blank to render as a text button."] }))
-                local removeBtn
-                removeBtn = TrackBarControl(GUI:CreateButton(btnCard.frame, ns.L["Remove button"] .. " " .. idx, 160, 22, function()
-                    table.remove(entry.customButtons, idx)
+            local listFrame, listHeight = ns.QUI_ReorderList.Build(body, sy, {
+                items    = entry.items,
+                identify = itemKey,
+                getLabel = itemLabel,
+                onChange = afterMutation,
+                expanded = expanded,
+                onControl = TrackBarControl,
+                hasDetail = BB.IsCustomItem,
+                GUI = GUI,
+                getToggleBinding = itemToggleBinding,
+                onToggle = function()
                     Refresh()
-                    NotifyProviderFor(removeBtn, { structural = true })
-                end))
-                GUI:AttachTooltip(removeBtn,
-                    ns.L["Remove this custom button from the chat button bar. Its label, slash command, and icon are discarded."],
-                    ns.L["Remove Button"])
-                btnCard.AddRow(row(btnCard.frame, ns.L["Icon path (optional)"], iconEdit), row(btnCard.frame, ns.L["Remove"], removeBtn))
-                btnCard.Finalize()
-                sy = sy - btnCard.frame:GetHeight() - GAP
-            end
+                end,
+                hintText  = ns.L["Drag a row (or use the arrows) to reorder. Click a row to edit it."],
+                emptyText = ns.L["No buttons on this bar yet. Add one below."],
+                moveUpTooltip   = ns.L["Move this button one slot earlier in the bar. The bar draws items in this list's order."],
+                moveDownTooltip = ns.L["Move this button one slot later in the bar. The bar draws items in this list's order."],
+                removeTooltip   = ns.L["Remove this custom button from the chat button bar. Its label, slash command, and icon are discarded."],
+                getTooltip = function(item)
+                    if BB.IsCustomItem(item) then
+                        return (item.slashCommand ~= "" and item.slashCommand) or ns.L["Custom button"],
+                            ns.L["Drag to reorder, or use the arrows."]
+                    end
+                    return labels[item.id] or tostring(item.id), ns.L["Drag to reorder, or use the arrows."]
+                end,
+                canRemove = BB.IsCustomItem,
+                onRemove = function(item, index)
+                    if not BB.IsCustomItem(item) then return end
+                    expanded[item] = nil
+                    table.remove(entry.items, index)
+                    afterMutation()
+                end,
+                buildDetail = function(container, item)
+                    if not BB.IsCustomItem(item) then return 0 end
+                    local card = ns.QUI_Options.CreateSettingsCardGroup(container, 0)
+                    local labelEdit = TrackBarControl(GUI:CreateFormEditBox(card.frame, nil, "label", item, afterMutation,
+                        { description = ns.L["Text shown on the button when no icon is set."] }))
+                    local slashEdit = TrackBarControl(GUI:CreateFormEditBox(card.frame, nil, "slashCommand", item, afterMutation,
+                        { description = ns.L["Slash command to run on click — e.g. /target Boss, /readycheck. Must include the leading slash."] }))
+                    card.AddRow(row(card.frame, ns.L["Label"], labelEdit), row(card.frame, ns.L["Slash command"], slashEdit))
 
-            -- Add button card.
+                    local iconEdit = TrackBarControl(GUI:CreateFormEditBox(card.frame, nil, "icon", item, afterMutation,
+                        { description = ns.L["Texture path for an icon-style button — e.g. Interface/Icons/Spell_Holy_HolyBolt or any registered AddOn texture path. Leave blank to render as a text button."] }))
+                    card.AddRow(row(card.frame, ns.L["Icon path (optional)"], iconEdit))
+                    card.Finalize()
+                    return card.frame:GetHeight()
+                end,
+            })
+            TrackBarRegion(listFrame)
+            sy = sy - listHeight - GAP
+
             local addCard = ns.QUI_Options.CreateSettingsCardGroup(body, sy)
             local addBtn
             addBtn = TrackBarControl(GUI:CreateButton(addCard.frame, ns.L["Add custom button"], 200, 24, function()
-                entry.customButtons[#entry.customButtons + 1] = { label = "", slashCommand = "", icon = "" }
+                local fresh = { kind = "custom", label = "", slashCommand = "", icon = "", visible = true }
+                entry.items[#entry.items + 1] = fresh
+                expanded[fresh] = true
                 Refresh()
                 NotifyProviderFor(addBtn, { structural = true })
             end))
@@ -1401,7 +1193,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         end, 500)
         end
 
-        -- Timestamps
         CreateChatSection("timestamps", ns.L["Timestamps"], 4 * FORM_ROW + 8, function(card)
             if not chat.timestamps then chat.timestamps = {enabled = false, format = "24h", color = {0.6, 0.6, 0.6}} end
             local formatDropdown, timestampColorPicker
@@ -1425,7 +1216,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             UpdateTimestampStates()
         end)
 
-        -- Message Modifiers (Phase A)
         CreateChatSection("messageModifiers", ns.L["Message Modifiers"], 4 * FORM_ROW + 8, function(card)
             if not chat.modifiers then chat.modifiers = {} end
             if not chat.modifiers.classColors then
@@ -1467,7 +1257,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             UpdateMessageModifierStates()
         end)
 
-        -- Keyword Alert (Phase A.1)
         CreateChatSection("keywordAlert", ns.L["Keyword Alert"], 9 * FORM_ROW + 8, function(card)
             if not chat.modifiers then chat.modifiers = {} end
             if not chat.modifiers.keywordAlert then
@@ -1512,11 +1301,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
 
             local highlightColorPicker = TrackKeywordControl(GUI:CreateFormColorPicker(card.frame, nil, "highlightColor", ka, Refresh, nil, { description = ns.L["Color used to wrap matched keywords in chat output."] }))
 
-            -- Sound dropdown via LSM if available, else a text input fallback.
-            -- Architectural note: when LSM is loaded the sound list is the same
-            -- one used by Timestamps / New Message Sound (U.GetSoundList());
-            -- when not loaded we surface a text input so users can still paste
-            -- a literal "Sound\\Interface\\Foo.ogg" path.
             local soundWidget
             local LSM = LibStub and LibStub("LibSharedMedia-3.0", true)
             if LSM and U.GetSoundList then
@@ -1530,15 +1314,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             end
             card.AddRow(row(card.frame, ns.L["Highlight Color"], highlightColorPicker), row(card.frame, ns.L["Alert Sound"], soundWidget))
 
-            -- Custom keywords list. The settings framework does not currently
-            -- expose a native list-editor widget here, so the chosen trade-off
-            -- is a comma-separated text input fronted by a metatable proxy.
-            -- The proxy bidirectionally syncs ka.keywords (array of strings)
-            -- with a "keywordsText" field so CreateFormEditBox sees a regular
-            -- string DB key. Empty tokens are dropped on write; whitespace is
-            -- trimmed. A user keyword that contains a comma is therefore not
-            -- representable in this UI — acceptable since chat keywords are
-            -- almost always single words / short phrases without commas.
             local function joinKeywords(list)
                 if type(list) ~= "table" then return "" end
                 local parts = {}
@@ -1579,7 +1354,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             UpdateKeywordAlertStates()
         end)
 
-        -- Redundant Text Cleanup (Phase A.2)
         CreateChatSection("redundantTextCleanup", ns.L["Redundant Text Cleanup"], 7 * FORM_ROW + 8, function(card)
             if not chat.modifiers then chat.modifiers = {} end
             if not chat.modifiers.redundantText then
@@ -1625,27 +1399,11 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             UpdateCleanupPatternStates()
         end)
 
-        -- Persistent Message History (Phase B)
-        -- The "Advanced: per-channel retention" disclosure described in the plan
-        -- is implemented inline as a labelled section inside the main tile body
-        -- rather than as a nested CreateTileCollapsible. CreateCollapsible doesn't
-        -- expose a nested-tile primitive, and the inline form keeps every control
-        -- visible and reachable without extra clicks. Per-channel override toggles
-        -- and sliders sit at the bottom of the tile, after a divider label.
-        --
-        -- Excluded-channels checkbox list: the CreateChatSection call below needs
-        -- a fixed body height set at build time, so the joined/stale channel
-        -- snapshots are computed here in the outer scope and used both for the
-        -- height calc and inside the body closure. CreateChatSection bodies are
-        -- rebuilt on structural NotifyProviderFor pulses, so a join/leave during
-        -- a session refreshes the list on next reopen.
         local excludedJoinedSnapshot, excludedStaleSnapshot = {}, {}
         do
             local histLocal = (type(chat.history) == "table") and chat.history or nil
             local storedSet = (histLocal and type(histLocal.excludedChannels) == "table")
                               and histLocal.excludedChannels or {}
-            -- Channel-list walk for the history exclusion controls (joined,
-            -- non-header channel names; see CollectJoinedChannelNames).
             local joinedSet = {}
             for _, name in ipairs(CollectJoinedChannelNames()) do
                 excludedJoinedSnapshot[#excludedJoinedSnapshot + 1] = name
@@ -1662,16 +1420,13 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         end
         local persistentHistoryListRows
         if #excludedJoinedSnapshot == 0 then
-            persistentHistoryListRows = 1  -- empty-state placeholder line
+            persistentHistoryListRows = 1
         else
             persistentHistoryListRows = #excludedJoinedSnapshot
         end
         if #excludedStaleSnapshot > 0 then
             persistentHistoryListRows = persistentHistoryListRows + 1 + #excludedStaleSnapshot
         end
-        -- Base 22 rows covered the old design (which spent 2 rows on editbox + button);
-        -- subtract those, add the live list. Floor at the original 22*FORM_ROW + 12 so
-        -- a small list never shrinks the section below its prior visual footprint.
         local persistentHistorySectionHeight = (22 + math.max(0, persistentHistoryListRows - 2)) * FORM_ROW + 12
 
         CreateChatCustomSection("persistentMessageHistory", ns.L["Persistent Message History"], function(body)
@@ -1723,7 +1478,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 end
             end
 
-            -- Main settings card: paired rows of master toggle + sliders/toggles.
             local mainCard = ns.QUI_Options.CreateSettingsCardGroup(body, sy)
             local historyEnabledCheckbox = GUI:CreateFormCheckbox(mainCard.frame, nil, "enabled", hist, function()
                 Refresh()
@@ -1741,7 +1495,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             mainCard.Finalize()
             sy = sy - mainCard.frame:GetHeight() - GAP
 
-            -- Clear actions card. Each action as its own row with help in desc.
             local clearCard = ns.QUI_Options.CreateSettingsCardGroup(body, sy)
             local clearBtn = GUI:CreateButton(clearCard.frame, ns.L["Clear history now"], 180, 24, function()
                 GUI:ShowConfirmation({
@@ -1779,11 +1532,9 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                             local characters, entries = ns.QUI.Chat.History.ClearAllCharacters()
                             if DEFAULT_CHAT_FRAME then
                                 DEFAULT_CHAT_FRAME:AddMessage(string.format(
-                                    "|cff34D399[QUI]|r " .. ns.L["Cleared this character now (%d character%s, %d entr%s). Other characters will clear on their next login."],
+                                    "|cff34D399[QUI]|r " .. ns.L["Cleared this character now (%d characters, %d entries). Other characters will clear on their next login."],
                                     characters or 0,
-                                    characters == 1 and "" or "s",
-                                    entries or 0,
-                                    entries == 1 and "y" or "ies"
+                                    entries or 0
                                 ), 1, 1, 1)
                             end
                         end
@@ -1797,11 +1548,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             clearCard.Finalize()
             sy = sy - clearCard.frame:GetHeight() - GAP
 
-            -- Advanced: per-channel retention overrides.
-            -- Each chat-type group below gets its own paired row of [override
-            -- toggle | days slider]. When the toggle is on, the override-days
-            -- value is written into hist.perChannelRetention[<key>]; when off,
-            -- the entry is removed (nil = use default).
             TrackPersistentHistoryRegion(ns.QUI_Options.CreateAccentDotLabel(body, ns.L["Advanced: per-channel retention overrides"], sy))
             sy = sy - 30
 
@@ -1811,9 +1557,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             advancedHelp:SetJustifyH("LEFT")
             sy = sy - 20
 
-            -- Channel-type groups exposed for override. Keys map to the chat
-            -- types described in the design spec; storage uses the same key
-            -- string so pruneExpired can look them up directly via entry.c.
             local CHANNEL_GROUPS = {
                 { key = "GUILD",         label = ns.L["Guild"] },
                 { key = "OFFICER",       label = ns.L["Officer"] },
@@ -1827,11 +1570,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 { key = "CHANNEL",       label = ns.L["Numbered / custom channels"] },
             }
 
-            -- Proxy table per group: __index returns true if override exists,
-            -- and the slider key returns the saved value (or default 7).
-            -- __newindex toggles or sets accordingly. This lets the standard
-            -- CreateFormCheckbox / CreateFormSlider widgets read/write a map
-            -- entry transparently.
             local function makeGroupProxy(groupKey)
                 return MarkTransientOptionsBinding(setmetatable({}, {
                     __index = function(_, k)
@@ -1874,7 +1612,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             overrideCard.Finalize()
             sy = sy - overrideCard.frame:GetHeight() - GAP
 
-            -- Reset overrides card.
             local resetCard = ns.QUI_Options.CreateSettingsCardGroup(body, sy)
             local resetBtn
             resetBtn = TrackPersistentHistoryControl(GUI:CreateButton(resetCard.frame, ns.L["Reset all overrides"], 180, 24, function()
@@ -1889,15 +1626,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             resetCard.Finalize()
             sy = sy - resetCard.frame:GetHeight() - GAP
 
-            -- Excluded channels.
-            -- Renders one toggle per channel name, paired 2-up. The "Currently
-            -- joined" group comes from a GetChannelList() snapshot taken when
-            -- the section was built (see excludedJoinedSnapshot above); names
-            -- previously excluded but no longer in the join list appear under
-            -- "Stored but not joined" so they remain manageable. Storage:
-            -- hist.excludedChannels is a set keyed by channel name, with nil
-            -- for not-excluded — the proxy below mirrors toggle state to set
-            -- membership and never writes a literal false.
             TrackPersistentHistoryRegion(ns.QUI_Options.CreateAccentDotLabel(body, ns.L["Excluded channels"], sy))
             sy = sy - 30
 
@@ -1974,20 +1702,15 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             return computedHeight
         end, persistentHistorySectionHeight)
 
-        -- Channel Colors
-        -- Per-channel color overrides via ns.QUI.Chat.ChannelColors. The
-        -- dropdown lists every editable built-in chat type and every joined
-        -- custom channel; the swatch + reset row act on the current selection.
         CreateChatCustomSection("channelColors", ns.L["Channel Colors"], function(body)
             local sy = -4
             local CC = ns.QUI and ns.QUI.Chat and ns.QUI.Chat.ChannelColors
 
-            -- Session-only selection state (not persisted to SV).
             local selected = {
                 current = (CC and CC.BUILTIN_KEYS and CC.BUILTIN_KEYS[1]) or "SAY",
             }
 
-            local UpdateRow  -- forward declaration; assigned below.
+            local UpdateRow
 
             local function buildOptions()
                 local out = {}
@@ -2028,9 +1751,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             )
             sy = P(dropdown, body, sy)
 
-            -- Swatch + reset row (custom horizontal layout — CreateColorPicker
-            -- is hard-bound to a single dbKey/dbTable, but our key changes
-            -- with the dropdown selection, so we wire the swatch by hand).
             local swatchRow = CreateFrame("Frame", nil, body)
             swatchRow:SetHeight(FORM_ROW)
             swatchRow:SetPoint("TOPLEFT", 0, sy)
@@ -2101,10 +1821,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                         if UpdateRow then UpdateRow() end
                     end,
                 }
-                -- Bump the picker above the QUI settings window strata (it
-                -- otherwise opens behind), and use the hide-then-reopen
-                -- dance if it's already shown so ShowUIPanel's toggle logic
-                -- doesn't turn our second Setup call into a close.
                 local function OpenPicker()
                     ColorPickerFrame:SetupColorPickerAndShow(info)
                     ColorPickerFrame:SetFrameStrata("TOOLTIP")
@@ -2137,7 +1853,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             return computedHeight
         end, 4 * FORM_ROW + 8)
 
-        -- Copy Button
         CreateChatSection("copyButton", ns.L["Copy Button"], 2 * FORM_ROW + 8, function(card)
             local copyButtonOptions = {
                 {value = "always", text = ns.L["Always Visible"]},
@@ -2148,7 +1863,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             card.AddRow(row(card.frame, ns.L["Copy Button"], copyButtonDropdown))
         end)
 
-        -- New Message Sound
         CreateChatCustomSection("newMessageSound", ns.L["New Message Sound"], function(body)
             local sy = -4
             if not chat.newMessageSound then
@@ -2208,10 +1922,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 return opts
             end
 
-            -- In V3 there's no collapsible "section" wrapper around body; the
-            -- body IS the custom-block container. Dynamic add/remove already
-            -- triggers a structural NotifyProviderFor, which recreates the
-            -- panel — so initial height is the only quantity we need here.
             local lastTotalHeight = 0
 
             local function RebuildSoundEntries()

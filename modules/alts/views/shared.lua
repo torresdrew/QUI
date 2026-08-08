@@ -1,9 +1,3 @@
----------------------------------------------------------------------------
--- QUI Alts — shared view helpers.
--- Font/outline/fontstring and class-color helpers that were previously
--- copy-pasted verbatim across every alts/views/*.lua file. Loaded before the
--- view files (see QUI_Alts.toc) so each view can capture these as locals.
----------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 local UIKit = ns.UIKit
@@ -11,9 +5,6 @@ local UIKit = ns.UIKit
 local Shared = {}
 ns.AltsViewShared = Shared
 
--- Width/height of the thin scroll track and the px a scrolled view reserves on
--- its scrolling axis so cells never sit under the bar (chat scrollbar_custom.lua
--- visual: 8px track, 6% white bg, accent thumb at 55%).
 Shared.SCROLLBAR_W = 8
 Shared.SCROLLBAR_RESERVE = 12
 
@@ -25,8 +16,6 @@ local function CJKFont(fs, p, s, f)
     end
 end
 
---- Class token → r,g,b. RAID_CLASS_COLORS read directly (chat sender-recolor
---- precedent; routing through the CUSTOM-aware helper would drift here too).
 function Shared.ClassColor(classToken)
     local c = classToken and RAID_CLASS_COLORS and RAID_CLASS_COLORS[classToken]
     if c then return c.r, c.g, c.b end
@@ -50,20 +39,6 @@ function Shared.MakeFS(parent, size)
     return fs
 end
 
---- Pooled list-row button shared by the alts views: a WHITE8x8 background that
---- flips to 8% white on hover. Every view built this same Button + _bg + hover
---- flip by hand; this is the one copy. The caller adds the cells / OnClick /
---- RegisterForClicks on the returned button and positions it in its render pass.
----
----   opts.height     row height (SetHeight); omit to leave it unset
----   opts.hoverAlpha hover background alpha (default 0.08)
----   opts.hoverGuard optional predicate(self); when present the hover flip (and
----                   the onEnter hook) only run while it returns truthy — covers
----                   reputations' group rows and the filter popup's header rows
----   opts.onEnter    optional extra run after the flip (e.g. a tooltip)
----   opts.onLeave    optional extra run after the flip-back (e.g. tooltip hide)
----
---- Returns the Button with `._bg` assigned.
 function Shared.CreateRow(parent, opts)
     opts = opts or {}
     local r = CreateFrame("Button", nil, parent)
@@ -88,21 +63,7 @@ function Shared.CreateRow(parent, opts)
     return r
 end
 
----------------------------------------------------------------------------
--- Scroll bar (thin track + draggable accent thumb). The alts views all scroll
--- a pooled row/column list by an integer offset via the mouse wheel; this adds
--- the matching visible bar so overflow is discoverable and draggable. Style
--- mirrors the custom chat scrollbar (8px track, 6% white track, accent thumb).
---
---   opts.orientation  "vertical" (default) | "horizontal"
---   opts.onScroll     function(newOffset) — fired on track click / drag with a
---                     clamped integer offset; the caller applies it + re-renders
---
--- The caller anchors `sb.track` (insets differ per view), then calls
---   sb:Update(total, visible, offset)
--- at the end of every render pass. Update hides the track when it all fits.
----------------------------------------------------------------------------
-local liveBars = {}  -- all created bars, for accent restyle
+local liveBars = {}
 
 local MIN_THUMB = 16
 
@@ -159,14 +120,12 @@ function Shared.CreateScrollBar(parent, opts)
             local h = track:GetHeight() or 1
             local th = math.max(MIN_THUMB, math.min(h, h * (self._visible / self._total)))
             thumb:ClearAllPoints()
-            -- top of track = offset 0; thumb slides down as the offset grows
             thumb:SetPoint("TOPLEFT", track, "TOPLEFT", 0, -(h - th) * frac)
             thumb:SetPoint("TOPRIGHT", track, "TOPRIGHT", 0, -(h - th) * frac)
             thumb:SetHeight(th)
         end
     end
 
-    -- click + drag to jump (QUI-owned UIParent chain → plain scale guards).
     local function JumpToCursor()
         local maxOff = MaxOff()
         if maxOff <= 0 then return end
@@ -199,8 +158,6 @@ function Shared.CreateScrollBar(parent, opts)
     return sb
 end
 
---- Re-tint every live scroll thumb to the current theme accent (skin-refresh
---- path; creation-time color otherwise goes stale until /reload).
 function Shared.RestyleScrollBars()
     for _, sb in ipairs(liveBars) do sb:Paint() end
 end

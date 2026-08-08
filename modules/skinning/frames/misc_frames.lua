@@ -1,19 +1,5 @@
----------------------------------------------------------------------------
--- MISC STANDARD-TEMPLATE FRAMES (opt-in, default OFF)
---
--- A grouped home for everyday frames that inherit a standard Blizzard chrome
--- template (ButtonFrameTemplate / PortraitFrameTemplate), so each only needs the
--- shared SkinButtonFrameTemplate + font treatment:
---   - DressUpFrame        (ButtonFrameTemplateMinimizable, Blizzard_UIPanels_Game)
---   - TradeFrame          (ButtonFrameTemplate,            Blizzard_UIPanels_Game)
---   - ItemUpgradeFrame    (PortraitFrameTemplate,          LOD Blizzard_ItemUpgradeUI)
---   - ItemSocketingFrame  (ButtonFrameTemplate,            LOD Blizzard_ItemSocketingUI)
----------------------------------------------------------------------------
-
 local addonName, ns = ...
 
--- Master skinning gate (skinning.enabled): disabled + /reload installs no QUI
--- skin hooks for this file. Default ON; reload-required. See core/uikit.lua.
 if ns.IsSkinningEnabled and not ns.IsSkinningEnabled() then return end
 local SkinBase = ns.SkinBase
 local GetCore = ns.Helpers.GetCore
@@ -27,7 +13,7 @@ end
 local function SkinStandardFrame(frame, settingKey)
     if not IsSettingEnabled(settingKey) then return end
     if not frame or SkinBase.IsSkinned(frame) then return end
-    SkinBase.SkinWindow(frame) -- chrome + backdrop + close (static-text face from global font-object override)
+    SkinBase.SkinWindow(frame)
     SkinBase.MarkSkinned(frame)
 end
 
@@ -49,7 +35,6 @@ register("skinSocket", function() return _G.ItemSocketingFrame end)
 register("skinTabard", function() return _G.TabardFrame end)
 register("skinGuildRegistrar", function() return _G.GuildRegistrarFrame end)
 
--- DressUp / Trade / Tabard / GuildRegistrar ship in always-loaded Blizzard_UIPanels_Game.
 SkinBase.OnAddOnLoaded("Blizzard_UIPanels_Game", function()
     SkinStandardFrame(_G.DressUpFrame, "skinDressUp")
     SkinStandardFrame(_G.TradeFrame, "skinTrade")
@@ -65,10 +50,6 @@ SkinBase.OnAddOnLoaded("Blizzard_ItemSocketingUI", function()
     SkinStandardFrame(_G.ItemSocketingFrame, "skinSocket")
 end, 0)
 
--- Mirror timers (breath / fatigue / exhaustion HUD bars) — flat themed fill via
--- SkinStatusBar on each timer's .StatusBar. Hook MirrorTimerMixin:Setup (self is
--- the timer) so every timer created/reused on demand is skinned; the setting is
--- checked live inside the hook. Idempotent (SkinStatusBar guards on IsStyled).
 SkinBase.OnAddOnLoaded("Blizzard_MirrorTimer", function()
     if _G.MirrorTimerMixin and _G.MirrorTimerMixin.Setup
         and not SkinBase.GetFrameData(_G.MirrorTimerMixin, "qMirrorHooked") then

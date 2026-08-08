@@ -1,22 +1,3 @@
---[[
-    QUI Options V2 — Auras hub, Setup Wizard sub-page (5-step guided flow).
-
-    In-section step state (no modal, no new frame lifecycle, no taint): a step
-    rail + Back/Next drive which pane renders; RerenderSection rebuilds the page
-    on every step/selection change. DEFERRED COMMIT -- steps 2-4 only mutate
-    ctx.state; nothing is written to the profile until Review -> Apply.
-
-    Steps (dynamic per role/selection, via W.WizardSteps):
-      1 Role        detect + confirm
-      2 Surfaces    party/raid, player, target, focus (pre-checked, un-check)
-      3 Party auras full party buff/debuff intent menu (skipped if party off)
-      4 Place HoTs  Browse-flow HoTs + corner/display placement (healer + party)
-      5 Review      warn-if-customized, per-surface summary, Apply
-
-    All seeding reuses the pure core (core/aura_wizard.lua) + the existing
-    tracked-aura Browse popup (ns.QUI_AuraSpellList). No curated spell list.
-]]
-
 local ADDON_NAME, ns = ...
 local QUI = QUI
 local GUI = QUI.GUI
@@ -75,12 +56,8 @@ local function RoleLabel(role)
     return ns.L["DPS"]
 end
 
--- Live-writes only helper (Util only exports ShallowCopy).
 local function ensure(t, k) t[k] = t[k] or {}; return t[k] end
 
--- Short muted descriptor of what a surface gets for the role (Step 2 sub-label).
--- Party is the primary tuning surface; player/target derive from RoleDefaults;
--- focus is opt-in (mirrors target only once checked+applied), shown "off" here.
 local INTENT_SHORT = {
     mine         = ns.L["mine"],
     defensives   = ns.L["defensives"],
@@ -104,9 +81,6 @@ local function SurfaceDescriptor(role, kind)
     return joinShort(keys) or ns.L["off"]
 end
 
--- Seed all wizard state from a role: default-on surfaces + party intent
--- pre-checks (from MATRIX via RoleDefaults) + cleared HoT staging. Called on
--- first render and whenever the role changes.
 local function SeedFromRole(ctx, role)
     local d = W.RoleDefaults(role)
     ctx.state.wizardSurfaces = {
@@ -117,16 +91,12 @@ local function SeedFromRole(ctx, role)
     }
     ctx.state.wizardPartyBuffs = {}
     for _, k in ipairs(d.groupParty.buffs) do ctx.state.wizardPartyBuffs[k] = true end
-    -- The shipped party default enables the defensives strip; the party
-    -- checkboxes are declarative (unchecked = disabled on Apply), so it must
-    -- start checked or a default wizard run would silently turn it off.
     ctx.state.wizardPartyBuffs.defensives = true
     ctx.state.wizardPartyDebuffs = {}
     for _, k in ipairs(d.groupParty.debuffs) do ctx.state.wizardPartyDebuffs[k] = true end
     ctx.state.wizardHoTs = {}
 end
 
--- Collect the checked intent keys (menu order preserved) for a party polarity.
 local function CheckedKeys(menu, checkedMap)
     local out = {}
     for _, entry in ipairs(menu) do
@@ -135,10 +105,6 @@ local function CheckedKeys(menu, checkedMap)
     return out
 end
 
--- ============================ commit (Review -> Apply) ====================
--- Mirrors the old page's batched, replace-warned seeding, extended for the
--- per-surface selections + staged HoTs. Writes to each surface's spec-active
--- bucket (party spec-override aware; unit frames always "*").
 local function DoApply(ctx, skipSet)
     skipSet = skipSet or {}
     local db = _G.QUI and _G.QUI.db and _G.QUI.db.profile
@@ -165,7 +131,6 @@ local function DoApply(ctx, skipSet)
         if kind == "party" then touched.group = true else touched.unit = true end
     end
 
-    -- Party (with staged HoTs + full intent selections).
     if surfaces.party and not skipSet.party then
         local partyAuras = ensure(ensure(ensure(db, "quiGroupFrames"), "party"), "auras")
         local partyKey = "*"
@@ -175,23 +140,18 @@ local function DoApply(ctx, skipSet)
         end
         local buffKeys = CheckedKeys(W.PARTY_BUFF_INTENTS, ctx.state.wizardPartyBuffs)
         local debuffKeys = CheckedKeys(W.PARTY_DEBUFF_INTENTS, ctx.state.wizardPartyDebuffs)
-        -- explicit: the party menus are a full declarative selection —
-        -- unchecked intents (including uncheck-all) disable their strips.
         seed("party", partyAuras, buffKeys, debuffKeys, partyDefaultFn, partyKey, true)
         partyAuras.elements[partyKey] = W.CommitTrackedHoTs(partyAuras.elements[partyKey], ctx.state.wizardHoTs)
     end
 
-    -- Player (buffs only).
     if surfaces.player and not skipSet.player then
         local playerAuras = ensure(ensure(ensure(db, "quiUnitFrames"), "player"), "auras")
         seed("player", playerAuras, d.player and d.player.buffs, nil, unitDefaultFn, "*")
     end
-    -- Target (debuffs only).
     if surfaces.target and not skipSet.target then
         local targetAuras = ensure(ensure(ensure(db, "quiUnitFrames"), "target"), "auras")
         seed("target", targetAuras, nil, d.target and d.target.debuffs, unitDefaultFn, "*")
     end
-    -- Focus (mirrors Target debuffs).
     if surfaces.focus and not skipSet.focus then
         local focusAuras = ensure(ensure(ensure(db, "quiUnitFrames"), "focus"), "auras")
         seed("focus", focusAuras, nil, W.FocusDefaults(role).debuffs, unitDefaultFn, "*")
@@ -202,11 +162,6 @@ local function DoApply(ctx, skipSet)
     return ns.L["Applied!"]
 end
 
--- Ordered list (subset of the CHECKED surfaces, SURFACE_ROWS order) of
--- surfaces whose active bucket already diverges from its shipped default --
--- drives the Review warn bar / replace prompt for EVERY surface (party,
--- player, target, focus), not just party. Guards nil db/stores: a missing
--- store is never reported as customized.
 local function CustomizedSurfaces(ctx)
     local out = {}
     local db = _G.QUI and _G.QUI.db and _G.QUI.db.profile
@@ -244,16 +199,11 @@ local function CustomizedSurfaces(ctx)
     return out
 end
 
--- { a, b, c } -> { a=true, b=true, c=true }; used both for O(1) membership
--- tests in the review pane and as DoApply's skipSet for "keep mine".
 local function ListToSet(list)
     local set = {}
     for _, k in ipairs(list) do set[k] = true end
     return set
 end
-
--- ============================ per-step panes =============================
--- Each returns the new y. `nav(step)` sets ctx.state.wizardStep and rerenders.
 
 local function StepRole(host, ctx, y, C)
     local detected = (type(W.PlayerRole) == "function" and W.PlayerRole()) or "DAMAGER"
@@ -363,7 +313,6 @@ local function StepPlaceHoTs(host, ctx, y, C)
 
     local staged = ctx.state.wizardHoTs
 
-    -- Manual Spell-ID input + Add + Browse (mirrors the editor's manual row).
     local addRow = CreateFrame("Frame", nil, host)
     addRow:SetPoint("TOPLEFT", host, "TOPLEFT", 0, -y)
     addRow:SetHeight(24)
@@ -386,8 +335,6 @@ local function StepPlaceHoTs(host, ctx, y, C)
     local addBtn = GUI:CreateButton(addRow, ns.L["Add"], 50, 20, commitManual)
     addBtn:SetPoint("LEFT", input, "RIGHT", 8, 0)
 
-    -- Browse popup: reuse the tracked-aura flow with the spec-default presets.
-    -- Staging map is the source of truth; commit is deferred to Review.
     if SpellList and SpellList.ToggleBrowsePopup then
         local browseOpts = {
             title = ns.L["Add HoTs"],
@@ -407,7 +354,6 @@ local function StepPlaceHoTs(host, ctx, y, C)
     end
     y = y + 28
 
-    -- One row per staged HoT: name/id + corner dropdown + display dropdown + remove.
     local ids = {}
     for spellID in pairs(staged) do ids[#ids + 1] = spellID end
     table.sort(ids)
@@ -444,7 +390,6 @@ local function StepPlaceHoTs(host, ctx, y, C)
         end
     end
 
-    -- Live preview: a mock party frame reflecting the staged HoT placements.
     y = y + 8
     local pvLabel = GUI:CreateLabel(host, ns.L["Live preview"], 11, C.textMuted)
     pvLabel:SetPoint("TOPLEFT", host, "TOPLEFT", 0, -y); y = y + 16
@@ -459,13 +404,6 @@ local function StepPlaceHoTs(host, ctx, y, C)
     pname:SetPoint("LEFT", pv, "LEFT", 8, 0)
 
     local PV_PALETTE = { { 0.39, 0.77, 0.42 }, { 0.56, 0.82, 0.44 }, { 0.31, 0.68, 0.35 }, { 0.48, 0.82, 0.63 } }
-    -- Per-corner stacking, mirroring W.CommitTrackedHoTs: the 2nd+ indicator
-    -- on a corner steps sideways toward the center (bars step down instead —
-    -- they're wide), so same-corner HoTs stay distinguishable instead of
-    -- drawing on top of each other. Borders: the runtime has ONE shared
-    -- border overlay per frame (last active element wins), so the preview
-    -- draws a single border too — nesting several would promise a display
-    -- the runtime can't produce.
     local cornerX, cornerY = {}, {}
     local borderColor, borderCount = nil, 0
     for idx, spellID in ipairs(ids) do
@@ -474,8 +412,6 @@ local function StepPlaceHoTs(host, ctx, y, C)
         local dt = cfg.displayType or "icon"
         local col = PV_PALETTE[((idx - 1) % #PV_PALETTE) + 1]
         if dt == "border" then
-            -- Last staged border wins, matching the runtime's last-writer
-            -- overlay ownership when several border auras are active at once.
             borderColor = col
             borderCount = borderCount + 1
         else
@@ -564,8 +500,6 @@ local function StepReview(host, ctx, y, C)
     ctx.state._wizardStatus = GUI:CreateLabel(host, "", 12, C.accent)
     ctx.state._wizardStatus:SetPoint("TOPLEFT", host, "TOPLEFT", 0, -(y + 40))
 
-    -- Apply (confirms via StaticPopup when anything is customized) + (when
-    -- anything is customized) "Keep mine, skip customized".
     local applyBtn = GUI:CreateButton(host, ns.L["Apply Setup"], 160, 28, function()
         if #customList > 0 then
             StaticPopupDialogs["QUI_AURA_WIZARD_REPLACE"] = {
@@ -604,12 +538,10 @@ local STEP_BUILDERS = {
     placeHoTs = StepPlaceHoTs, review = StepReview,
 }
 
--- =============================== page build =============================
 local function BuildAurasWizardContent(host, ctx, section)
     local C = GUI.Colors or {}
     ctx._sectionId = section.id
 
-    -- Init/repair state.
     if ctx.state.wizardRole == nil then
         ctx.state.wizardRole = (type(W.PlayerRole) == "function" and W.PlayerRole()) or "DAMAGER"
         SeedFromRole(ctx, ctx.state.wizardRole)
@@ -618,11 +550,7 @@ local function BuildAurasWizardContent(host, ctx, section)
     if type(ctx.state.wizardHoTs) ~= "table" then ctx.state.wizardHoTs = {} end
     if type(ctx.state.wizardStep) ~= "number" then ctx.state.wizardStep = 1 end
 
-    -- Browse-popup scope: opened only while on Place HoTs (that pane calls
-    -- RefreshBrowsePopup, marking the scope kept); any other render closes it.
     if SpellList and SpellList.BeginBrowseScope then SpellList.BeginBrowseScope(BROWSE_PREFIX) end
-    -- Leaving the whole page while the popup is open (no rerender fires the
-    -- scope end) is covered by an OnHide close, re-armed each render.
     if host.SetScript then
         host:SetScript("OnHide", function()
             if SpellList and SpellList.CloseBrowsePopup then SpellList.CloseBrowsePopup(BROWSE_PREFIX) end
@@ -636,7 +564,6 @@ local function BuildAurasWizardContent(host, ctx, section)
 
     local y = 0
 
-    -- Step rail: one pill per live step; past steps clickable-back.
     local railRow = CreateFrame("Frame", nil, host)
     railRow:SetPoint("TOPLEFT", host, "TOPLEFT", 0, -y)
     railRow:SetHeight(24)
@@ -645,9 +572,6 @@ local function BuildAurasWizardContent(host, ctx, section)
         local isCurrent = (i == ctx.state.wizardStep)
         local text = tostring(i) .. ". " .. (STEP_LABELS[key] or key)
         local btn = GUI:CreateButton(railRow, text, 116, 24, function()
-            -- Any step is reachable from the rail (forward or back): every
-            -- step's state is pre-seeded (SeedFromRole) and each pane reads live
-            -- ctx.state, so there is no half-filled step to guard against.
             if i ~= ctx.state.wizardStep then
                 ctx.state.wizardStep = i
                 if type(ctx.RerenderSection) == "function" then ctx:RerenderSection(section.id) end
@@ -659,13 +583,10 @@ local function BuildAurasWizardContent(host, ctx, section)
     railRow:SetWidth(math.max(rx, 1))
     y = y + 24 + 16
 
-    -- Current pane.
     local builder = STEP_BUILDERS[currentKey]
     if builder then y = builder(host, ctx, y, C) end
     y = y + 8
 
-    -- Nav: Back (all but first) + Continue (all but review; review shows Apply
-    -- inside its pane, not here).
     local navRow = CreateFrame("Frame", nil, host)
     navRow:SetPoint("TOPLEFT", host, "TOPLEFT", 0, -y)
     navRow:SetPoint("RIGHT", host, "RIGHT", 0, 0)

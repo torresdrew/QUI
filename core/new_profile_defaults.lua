@@ -28,10 +28,6 @@ local ADDON_NAME, ns = ...
 local decodedSeed
 
 local function LoadStarterEntry()
-    -- Prefer the memoized QUI.imports proxy (shared with the Profiles-tab
-    -- preset UI; it frees the loader closure after first access). The
-    -- headless harness has no init.lua proxy — fall back to the raw loader
-    -- without freeing it.
     if QUI and QUI.imports then
         local entry = QUI.imports.StarterProfile
         if entry ~= nil then return entry end
@@ -57,10 +53,8 @@ local function DecodeSeed()
         return nil, "Starter Profile import string missing"
     end
 
-    -- Same chain as profile_io's DeserializeProfileImportPayload:
-    -- strip prefix -> DecodeForPrint -> DecompressDeflate -> Deserialize.
     str = str:gsub("%s+", "")
-    local prefix = str:match("^([A-Z][A-Z0-9]*%d):")
+    local prefix = str:match("^([A-Za-z][A-Za-z0-9]*%d):")
     if prefix then
         str = str:sub(#prefix + 2)
     end
@@ -82,15 +76,10 @@ local function DecodeSeed()
     return payload
 end
 
--- Decode-once accessor. Tooling and tests read the seed through this; the
--- decoded table is shared and must be treated as read-only (DeepApply below
--- only reads it — profiles get their own copies).
 function ns.GetNewProfileSeed()
     if decodedSeed == nil then
         local seed, err = DecodeSeed()
         if not seed then
-            -- Fail loud, not fatal: the new profile keeps AceDB's legacy
-            -- defaults instead of blocking login inside the OnNewProfile hook.
             local report = ("QUI: Starter Profile seed decode failed (%s); new profiles keep legacy defaults"):format(err or "?")
             if geterrorhandler then
                 geterrorhandler()(report)
@@ -105,10 +94,6 @@ function ns.GetNewProfileSeed()
     return decodedSeed or nil
 end
 
--- Deep-overwrite the seed onto a freshly-created profile table. AceDB has
--- already filled it with legacy defaults via copyDefaults; we overwrite the
--- curated keys on top. Called from the OnNewProfile hook BEFORE the new
--- profile is first read, so the first reader sees seeded values (no reload).
 local function DeepApply(dst, src)
     for k, v in pairs(src) do
         if type(v) == "table" then

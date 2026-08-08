@@ -963,6 +963,7 @@ return {
           yOffset = -150
         },
         configPanelAlpha = 0.96999999999999997,
+        configPanelHeight = 850,
         configPanelScale = 1,
         configPanelWidth = 750,
         cooldownEffects = {
@@ -2852,6 +2853,7 @@ return {
             openOnMouseover = true,
             padding = 6,
             showTooltip = true,
+            toggleIcon = "qui",
             toggleOffsetX = 0,
             toggleOffsetY = 0
           },
@@ -3044,250 +3046,1759 @@ return {
           showTimer = true
         },
         nameplates = {
-          absorbs = {
-            color = {
-              [1] = 1,
-              [2] = 1,
-              [3] = 1
-            },
-            enabled = true,
-            opacity = 0.29999999999999999
-          },
-          auras = {
-            buffs = {
-              allowList = {},
-              blockList = {},
-              enabled = true,
-              growth = "RIGHT",
-              limit = 4,
-              offsetX = 0,
-              offsetY = 50,
-              point = "BOTTOM",
-              relativePoint = "TOP",
-              size = 24,
-              spacing = 2,
-              textSize = 12
-            },
-            cc = {
-              allowList = {},
-              blockList = {},
-              enabled = true,
-              growth = "LEFT",
-              limit = 3,
-              offsetX = -4,
-              offsetY = 0,
-              point = "RIGHT",
-              relativePoint = "LEFT",
-              size = 24,
-              spacing = 2,
-              textSize = 12
-            },
-            debuffs = {
-              allowList = {},
-              blockList = {},
-              enabled = true,
-              growth = "RIGHT",
-              limit = 5,
-              offsetX = 0,
-              offsetY = 20,
-              point = "BOTTOM",
-              relativePoint = "TOP",
-              size = 26,
-              spacing = 2,
-              textSize = 11
-            },
-            dispelBorders = true,
-            duration = {
-              decimals = false,
-              enabled = true,
-              offsetX = 0,
-              offsetY = 0,
-              point = "CENTER",
-              size = 12
-            },
-            enableDungeon = true,
-            enableRaid = true,
-            enableWorld = true,
-            enabled = true,
-            importantList = {},
-            importantScale = 1.3,
-            mineOnly = true,
-            pandemicGlow = true
-          },
-          castbar = {
-            enabled = true,
-            gap = 0,
-            height = 17,
-            interruptedHoldTime = 1,
-            kickTick = true,
-            liftOverlay = false,
-            nameSize = 10,
-            showIcon = true,
-            showSpellName = true,
-            showTimer = true,
-            timerSize = 10
-          },
-          colors = {
-            castInterrupted = {
-              [1] = 0.80000000000000004,
-              [2] = 0,
-              [3] = 0
-            },
-            castInterruptible = {
-              [1] = 0.69999999999999996,
-              [2] = 0.40000000000000002,
-              [3] = 0.90000000000000002
-            },
-            castUninterruptible = {
-              [1] = 0.45000000000000001,
-              [2] = 0.45000000000000001,
-              [3] = 0.45000000000000001
-            },
-            classColorEnemyPlayers = true,
-            dpsHasAggro = {
-              [1] = 1,
-              [2] = 0.5,
-              [3] = 0
-            },
-            dpsNearAggro = {
-              [1] = 0.81000000000000005,
-              [2] = 0.71999999999999997,
-              [3] = 0.19
-            },
-            execute = {
-              [1] = 1,
-              [2] = 0.10000000000000001,
-              [3] = 0.10000000000000001
-            },
-            executeEnabled = false,
-            executeThreshold = 35,
-            focus = {
-              [1] = 0.050999999999999997,
-              [2] = 0.81999999999999995,
-              [3] = 0.62
-            },
-            focusEnabled = true,
-            friendly = {
-              [1] = 0.314,
-              [2] = 0.80000000000000004,
-              [3] = 0.40799999999999997
-            },
-            hostile = {
-              [1] = 0.39000000000000001,
-              [2] = 0.11,
-              [3] = 0.089999999999999997
-            },
-            neutral = {
-              [1] = 0.81000000000000005,
-              [2] = 0.71999999999999997,
-              [3] = 0.19
-            },
-            offTankAggro = {
-              [1] = 0.188,
-              [2] = 0.76100000000000001,
-              [3] = 0.81200000000000006
-            },
-            oocDarken = true,
-            oocDarkenFactor = 0.75,
-            quest = {
-              [1] = 1,
-              [2] = 0.81999999999999995,
-              [3] = 0
-            },
-            questEnabled = true,
-            tankHasAggro = {
-              [1] = 0.050000000000000003,
-              [2] = 0.81999999999999995,
-              [3] = 0.62
-            },
-            tankNoAggro = {
-              [1] = 1,
-              [2] = 0.22,
-              [3] = 0.17000000000000001
-            },
-            tapped = {
-              [1] = 0.5,
-              [2] = 0.5,
-              [3] = 0.5
-            },
-            target = {
-              [1] = 1,
-              [2] = 1,
-              [3] = 1
-            },
-            targetEnabled = false,
-            threatEnabled = true
-          },
           cvars = {
+            clickthroughEnemy = false,
+            clickthroughFriendly = false,
             hitboxScaleX = 100,
             hitboxScaleY = 100,
             hitboxVisualizer = false,
             maxDistance = 60,
+            showEnemies = true,
+            showEnemyGuardians = true,
+            showEnemyMinions = true,
+            showEnemyMinus = true,
+            showEnemyPets = true,
+            showEnemyTotems = true,
+            showFriendlyGuardians = true,
+            showFriendlyMinions = true,
+            showFriendlyPets = true,
+            showFriendlyTotems = true,
             stackingEnemy = true,
             stackingFriendly = false,
             stackingSpacing = 1
           },
           enabled = false,
+          fading = {
+            nonTargetAlpha = 1,
+            occludedAlphaMult = 0.40000000000000002
+          },
           friendly = {
-            barHeight = 12,
-            barWidth = 150,
-            classColorNames = true,
-            mode = "nameonly",
-            nameSize = 12,
-            showInInstances = false,
-            showInWorld = true
-          },
-          health = {
-            bgAlpha = 1,
-            bgColor = {
-              [1] = 0.12,
-              [2] = 0.12,
-              [3] = 0.12
-            },
-            borderSize = 1,
-            height = 24,
-            texture = "Quazii",
-            width = 210
-          },
-          healthText = {
             enabled = true,
-            hidePercentSymbol = false,
-            justify = "RIGHT",
-            offsetX = -2,
-            offsetY = 0,
-            point = "RIGHT",
-            relativePoint = "RIGHT",
-            size = 10,
-            style = "percent"
+            showInInstances = "never",
+            showInWorld = true,
+            showNPCs = true
           },
-          highlight = {
-            mouseover = true,
-            mouseoverAlpha = 0.29999999999999999,
-            targetGlow = true,
-            targetGlowAlpha = 1,
-            targetGlowColor = {
-              [1] = 0.41199999999999998,
-              [2] = 0.66700000000000004,
-              [3] = 1
-            }
+          layout = {
+            targetScale = 1,
+            verticalOffset = 0
           },
-          name = {
-            classColorPlayers = true,
-            enabled = true,
-            justify = "CENTER",
-            offsetX = 0,
-            offsetY = 4,
-            point = "BOTTOM",
-            relativePoint = "TOP",
-            size = 11
-          },
-          raidMarker = {
-            enabled = true,
-            position = "TOPRIGHT",
-            size = 24
+          simplified = {
+            scale = 1
           },
           specAutoSwitch = false,
-          specPresets = {}
+          specPresets = {},
+          types = {
+            bossElite = {
+              absorbs = {
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                opacity = 0.29999999999999999,
+                showText = false,
+                textSize = 9
+              },
+              auras = {
+                elements = {},
+                enableDungeon = true,
+                enableRaid = true,
+                enableWorld = true,
+                enabled = true
+              },
+              castbar = {
+                castTargetSize = 9,
+                enabled = true,
+                gap = 0,
+                height = 17,
+                interruptReadyTint = false,
+                interruptedHoldTime = 1,
+                kickTick = true,
+                liftOverlay = false,
+                nameSize = 10,
+                showCastTarget = false,
+                showIcon = true,
+                showSpellName = true,
+                showTimer = true,
+                texture = "",
+                timerSize = 10
+              },
+              colors = {
+                castChannel = {
+                  [1] = 0.34999999999999998,
+                  [2] = 0.59999999999999998,
+                  [3] = 0.90000000000000002
+                },
+                castEmpowered = {
+                  [1] = 0.90000000000000002,
+                  [2] = 0.55000000000000004,
+                  [3] = 0.14999999999999999
+                },
+                castImportant = {
+                  [1] = 1,
+                  [2] = 0.25,
+                  [3] = 0.25
+                },
+                castImportantEnabled = false,
+                castInterruptReady = {
+                  [1] = 0.29999999999999999,
+                  [2] = 0.84999999999999998,
+                  [3] = 0.40000000000000002
+                },
+                castInterrupted = {
+                  [1] = 0.80000000000000004,
+                  [2] = 0,
+                  [3] = 0
+                },
+                castInterruptible = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.40000000000000002,
+                  [3] = 0.90000000000000002
+                },
+                castUninterruptible = {
+                  [1] = 0.45000000000000001,
+                  [2] = 0.45000000000000001,
+                  [3] = 0.45000000000000001
+                },
+                classColorEnemyPlayers = true,
+                dpsHasAggro = {
+                  [1] = 1,
+                  [2] = 0.5,
+                  [3] = 0
+                },
+                dpsNearAggro = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                execute = {
+                  [1] = 1,
+                  [2] = 0.10000000000000001,
+                  [3] = 0.10000000000000001
+                },
+                executeAuto = true,
+                executeEnabled = false,
+                executeThreshold = 35,
+                focus = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                focusEnabled = true,
+                friendly = {
+                  [1] = 0.314,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.40799999999999997
+                },
+                hostile = {
+                  [1] = 0.39000000000000001,
+                  [2] = 0.11,
+                  [3] = 0.089999999999999997
+                },
+                neutral = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                offTankAggro = {
+                  [1] = 0.188,
+                  [2] = 0.76100000000000001,
+                  [3] = 0.81200000000000006
+                },
+                oocDarken = true,
+                oocDarkenFactor = 0.75,
+                quest = {
+                  [1] = 1,
+                  [2] = 0.81999999999999995,
+                  [3] = 0
+                },
+                questEnabled = true,
+                tankHasAggro = {
+                  [1] = 0.050000000000000003,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                tankNoAggro = {
+                  [1] = 1,
+                  [2] = 0.22,
+                  [3] = 0.17000000000000001
+                },
+                tapped = {
+                  [1] = 0.5,
+                  [2] = 0.5,
+                  [3] = 0.5
+                },
+                target = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetEnabled = false,
+                threatEnabled = true,
+                threatInstancesOnly = true
+              },
+              font = {
+                face = "",
+                outline = "OUTLINE"
+              },
+              healPrediction = {
+                color = {
+                  [1] = 0.25,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.25
+                },
+                enabled = false,
+                opacity = 0.40000000000000002
+              },
+              health = {
+                bgAlpha = 1,
+                bgColor = {
+                  [1] = 0.12,
+                  [2] = 0.12,
+                  [3] = 0.12
+                },
+                borderColor = {
+                  [1] = 0,
+                  [2] = 0,
+                  [3] = 0
+                },
+                borderSize = 1,
+                height = 24,
+                smooth = false,
+                texture = "Quazii",
+                width = 210
+              },
+              healthText = {
+                bothFormat = "bar",
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                hidePercentSymbol = false,
+                justify = "RIGHT",
+                offsetX = -2,
+                offsetY = 0,
+                point = "RIGHT",
+                precision = 0,
+                relativePoint = "RIGHT",
+                size = 10,
+                style = "percent"
+              },
+              highlight = {
+                focusGlow = false,
+                focusGlowAlpha = 1,
+                focusGlowColor = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                mouseover = true,
+                mouseoverAlpha = 0.29999999999999999,
+                mouseoverColor = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetGlow = true,
+                targetGlowAlpha = 1,
+                targetGlowColor = {
+                  [1] = 0.41199999999999998,
+                  [2] = 0.66700000000000004,
+                  [3] = 1
+                },
+                targetStyle = "wash"
+              },
+              level = {
+                classificationSize = 14,
+                enabled = false,
+                offsetX = 2,
+                offsetY = 0,
+                point = "LEFT",
+                relativePoint = "RIGHT",
+                showClassification = false,
+                size = 9
+              },
+              name = {
+                classColorPlayers = true,
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                justify = "CENTER",
+                offsetX = 0,
+                offsetY = 4,
+                point = "BOTTOM",
+                relativePoint = "TOP",
+                size = 11,
+                truncateLength = 28
+              },
+              npcTitle = {
+                color = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.69999999999999996,
+                  [3] = 0.69999999999999996
+                },
+                enabled = false,
+                size = 9
+              },
+              power = {
+                enabled = false,
+                offsetY = -2,
+                size = 10,
+                spacing = 3
+              },
+              powerBar = {
+                enabled = false,
+                height = 6,
+                manaOnly = true
+              },
+              pvpIcon = {
+                enabled = true,
+                size = 20
+              },
+              questIcon = {
+                enabled = false,
+                position = "LEFT",
+                size = 18
+              },
+              raidMarker = {
+                enabled = true,
+                position = "TOPRIGHT",
+                size = 24
+              },
+              renderMode = "bars"
+            },
+            enemyNPC = {
+              absorbs = {
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                opacity = 0.29999999999999999,
+                showText = false,
+                textSize = 9
+              },
+              auras = {
+                elements = {},
+                enableDungeon = true,
+                enableRaid = true,
+                enableWorld = true,
+                enabled = true
+              },
+              castbar = {
+                castTargetSize = 9,
+                enabled = true,
+                gap = 0,
+                height = 17,
+                interruptReadyTint = false,
+                interruptedHoldTime = 1,
+                kickTick = true,
+                liftOverlay = false,
+                nameSize = 10,
+                showCastTarget = false,
+                showIcon = true,
+                showSpellName = true,
+                showTimer = true,
+                texture = "",
+                timerSize = 10
+              },
+              colors = {
+                castChannel = {
+                  [1] = 0.34999999999999998,
+                  [2] = 0.59999999999999998,
+                  [3] = 0.90000000000000002
+                },
+                castEmpowered = {
+                  [1] = 0.90000000000000002,
+                  [2] = 0.55000000000000004,
+                  [3] = 0.14999999999999999
+                },
+                castImportant = {
+                  [1] = 1,
+                  [2] = 0.25,
+                  [3] = 0.25
+                },
+                castImportantEnabled = false,
+                castInterruptReady = {
+                  [1] = 0.29999999999999999,
+                  [2] = 0.84999999999999998,
+                  [3] = 0.40000000000000002
+                },
+                castInterrupted = {
+                  [1] = 0.80000000000000004,
+                  [2] = 0,
+                  [3] = 0
+                },
+                castInterruptible = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.40000000000000002,
+                  [3] = 0.90000000000000002
+                },
+                castUninterruptible = {
+                  [1] = 0.45000000000000001,
+                  [2] = 0.45000000000000001,
+                  [3] = 0.45000000000000001
+                },
+                classColorEnemyPlayers = true,
+                dpsHasAggro = {
+                  [1] = 1,
+                  [2] = 0.5,
+                  [3] = 0
+                },
+                dpsNearAggro = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                execute = {
+                  [1] = 1,
+                  [2] = 0.10000000000000001,
+                  [3] = 0.10000000000000001
+                },
+                executeAuto = true,
+                executeEnabled = false,
+                executeThreshold = 35,
+                focus = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                focusEnabled = true,
+                friendly = {
+                  [1] = 0.314,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.40799999999999997
+                },
+                hostile = {
+                  [1] = 0.39000000000000001,
+                  [2] = 0.11,
+                  [3] = 0.089999999999999997
+                },
+                neutral = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                offTankAggro = {
+                  [1] = 0.188,
+                  [2] = 0.76100000000000001,
+                  [3] = 0.81200000000000006
+                },
+                oocDarken = true,
+                oocDarkenFactor = 0.75,
+                quest = {
+                  [1] = 1,
+                  [2] = 0.81999999999999995,
+                  [3] = 0
+                },
+                questEnabled = true,
+                tankHasAggro = {
+                  [1] = 0.050000000000000003,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                tankNoAggro = {
+                  [1] = 1,
+                  [2] = 0.22,
+                  [3] = 0.17000000000000001
+                },
+                tapped = {
+                  [1] = 0.5,
+                  [2] = 0.5,
+                  [3] = 0.5
+                },
+                target = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetEnabled = false,
+                threatEnabled = true,
+                threatInstancesOnly = true
+              },
+              font = {
+                face = "",
+                outline = "OUTLINE"
+              },
+              healPrediction = {
+                color = {
+                  [1] = 0.25,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.25
+                },
+                enabled = false,
+                opacity = 0.40000000000000002
+              },
+              health = {
+                bgAlpha = 1,
+                bgColor = {
+                  [1] = 0.12,
+                  [2] = 0.12,
+                  [3] = 0.12
+                },
+                borderColor = {
+                  [1] = 0,
+                  [2] = 0,
+                  [3] = 0
+                },
+                borderSize = 1,
+                height = 24,
+                smooth = false,
+                texture = "Quazii",
+                width = 210
+              },
+              healthText = {
+                bothFormat = "bar",
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                hidePercentSymbol = false,
+                justify = "RIGHT",
+                offsetX = -2,
+                offsetY = 0,
+                point = "RIGHT",
+                precision = 0,
+                relativePoint = "RIGHT",
+                size = 10,
+                style = "percent"
+              },
+              highlight = {
+                focusGlow = false,
+                focusGlowAlpha = 1,
+                focusGlowColor = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                mouseover = true,
+                mouseoverAlpha = 0.29999999999999999,
+                mouseoverColor = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetGlow = true,
+                targetGlowAlpha = 1,
+                targetGlowColor = {
+                  [1] = 0.41199999999999998,
+                  [2] = 0.66700000000000004,
+                  [3] = 1
+                },
+                targetStyle = "wash"
+              },
+              level = {
+                classificationSize = 14,
+                enabled = false,
+                offsetX = 2,
+                offsetY = 0,
+                point = "LEFT",
+                relativePoint = "RIGHT",
+                showClassification = false,
+                size = 9
+              },
+              name = {
+                classColorPlayers = true,
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                justify = "CENTER",
+                offsetX = 0,
+                offsetY = 4,
+                point = "BOTTOM",
+                relativePoint = "TOP",
+                size = 11,
+                truncateLength = 28
+              },
+              npcTitle = {
+                color = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.69999999999999996,
+                  [3] = 0.69999999999999996
+                },
+                enabled = false,
+                size = 9
+              },
+              power = {
+                enabled = false,
+                offsetY = -2,
+                size = 10,
+                spacing = 3
+              },
+              powerBar = {
+                enabled = false,
+                height = 6,
+                manaOnly = true
+              },
+              pvpIcon = {
+                enabled = true,
+                size = 20
+              },
+              questIcon = {
+                enabled = false,
+                position = "LEFT",
+                size = 18
+              },
+              raidMarker = {
+                enabled = true,
+                position = "TOPRIGHT",
+                size = 24
+              },
+              renderMode = "bars"
+            },
+            enemyPlayer = {
+              absorbs = {
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                opacity = 0.29999999999999999,
+                showText = false,
+                textSize = 9
+              },
+              auras = {
+                elements = {},
+                enableDungeon = true,
+                enableRaid = true,
+                enableWorld = true,
+                enabled = true
+              },
+              castbar = {
+                castTargetSize = 9,
+                enabled = true,
+                gap = 0,
+                height = 17,
+                interruptReadyTint = false,
+                interruptedHoldTime = 1,
+                kickTick = true,
+                liftOverlay = false,
+                nameSize = 10,
+                showCastTarget = false,
+                showIcon = true,
+                showSpellName = true,
+                showTimer = true,
+                texture = "",
+                timerSize = 10
+              },
+              colors = {
+                castChannel = {
+                  [1] = 0.34999999999999998,
+                  [2] = 0.59999999999999998,
+                  [3] = 0.90000000000000002
+                },
+                castEmpowered = {
+                  [1] = 0.90000000000000002,
+                  [2] = 0.55000000000000004,
+                  [3] = 0.14999999999999999
+                },
+                castImportant = {
+                  [1] = 1,
+                  [2] = 0.25,
+                  [3] = 0.25
+                },
+                castImportantEnabled = false,
+                castInterruptReady = {
+                  [1] = 0.29999999999999999,
+                  [2] = 0.84999999999999998,
+                  [3] = 0.40000000000000002
+                },
+                castInterrupted = {
+                  [1] = 0.80000000000000004,
+                  [2] = 0,
+                  [3] = 0
+                },
+                castInterruptible = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.40000000000000002,
+                  [3] = 0.90000000000000002
+                },
+                castUninterruptible = {
+                  [1] = 0.45000000000000001,
+                  [2] = 0.45000000000000001,
+                  [3] = 0.45000000000000001
+                },
+                classColorEnemyPlayers = true,
+                dpsHasAggro = {
+                  [1] = 1,
+                  [2] = 0.5,
+                  [3] = 0
+                },
+                dpsNearAggro = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                execute = {
+                  [1] = 1,
+                  [2] = 0.10000000000000001,
+                  [3] = 0.10000000000000001
+                },
+                executeAuto = true,
+                executeEnabled = false,
+                executeThreshold = 35,
+                focus = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                focusEnabled = true,
+                friendly = {
+                  [1] = 0.314,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.40799999999999997
+                },
+                hostile = {
+                  [1] = 0.39000000000000001,
+                  [2] = 0.11,
+                  [3] = 0.089999999999999997
+                },
+                neutral = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                offTankAggro = {
+                  [1] = 0.188,
+                  [2] = 0.76100000000000001,
+                  [3] = 0.81200000000000006
+                },
+                oocDarken = true,
+                oocDarkenFactor = 0.75,
+                quest = {
+                  [1] = 1,
+                  [2] = 0.81999999999999995,
+                  [3] = 0
+                },
+                questEnabled = true,
+                tankHasAggro = {
+                  [1] = 0.050000000000000003,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                tankNoAggro = {
+                  [1] = 1,
+                  [2] = 0.22,
+                  [3] = 0.17000000000000001
+                },
+                tapped = {
+                  [1] = 0.5,
+                  [2] = 0.5,
+                  [3] = 0.5
+                },
+                target = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetEnabled = false,
+                threatEnabled = true,
+                threatInstancesOnly = true
+              },
+              font = {
+                face = "",
+                outline = "OUTLINE"
+              },
+              healPrediction = {
+                color = {
+                  [1] = 0.25,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.25
+                },
+                enabled = false,
+                opacity = 0.40000000000000002
+              },
+              health = {
+                bgAlpha = 1,
+                bgColor = {
+                  [1] = 0.12,
+                  [2] = 0.12,
+                  [3] = 0.12
+                },
+                borderColor = {
+                  [1] = 0,
+                  [2] = 0,
+                  [3] = 0
+                },
+                borderSize = 1,
+                height = 24,
+                smooth = false,
+                texture = "Quazii",
+                width = 210
+              },
+              healthText = {
+                bothFormat = "bar",
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                hidePercentSymbol = false,
+                justify = "RIGHT",
+                offsetX = -2,
+                offsetY = 0,
+                point = "RIGHT",
+                precision = 0,
+                relativePoint = "RIGHT",
+                size = 10,
+                style = "percent"
+              },
+              highlight = {
+                focusGlow = false,
+                focusGlowAlpha = 1,
+                focusGlowColor = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                mouseover = true,
+                mouseoverAlpha = 0.29999999999999999,
+                mouseoverColor = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetGlow = true,
+                targetGlowAlpha = 1,
+                targetGlowColor = {
+                  [1] = 0.41199999999999998,
+                  [2] = 0.66700000000000004,
+                  [3] = 1
+                },
+                targetStyle = "wash"
+              },
+              level = {
+                classificationSize = 14,
+                enabled = false,
+                offsetX = 2,
+                offsetY = 0,
+                point = "LEFT",
+                relativePoint = "RIGHT",
+                showClassification = false,
+                size = 9
+              },
+              name = {
+                classColorPlayers = true,
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                justify = "CENTER",
+                offsetX = 0,
+                offsetY = 4,
+                point = "BOTTOM",
+                relativePoint = "TOP",
+                size = 11,
+                truncateLength = 28
+              },
+              npcTitle = {
+                color = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.69999999999999996,
+                  [3] = 0.69999999999999996
+                },
+                enabled = false,
+                size = 9
+              },
+              power = {
+                enabled = false,
+                offsetY = -2,
+                size = 10,
+                spacing = 3
+              },
+              powerBar = {
+                enabled = false,
+                height = 6,
+                manaOnly = true
+              },
+              pvpIcon = {
+                enabled = true,
+                size = 20
+              },
+              questIcon = {
+                enabled = false,
+                position = "LEFT",
+                size = 18
+              },
+              raidMarker = {
+                enabled = true,
+                position = "TOPRIGHT",
+                size = 24
+              },
+              renderMode = "bars"
+            },
+            friendly = {
+              absorbs = {
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                opacity = 0.29999999999999999,
+                showText = false,
+                textSize = 9
+              },
+              auras = {
+                elements = {},
+                enableDungeon = true,
+                enableRaid = true,
+                enableWorld = true,
+                enabled = true
+              },
+              castbar = {
+                castTargetSize = 9,
+                enabled = true,
+                gap = 0,
+                height = 17,
+                interruptReadyTint = false,
+                interruptedHoldTime = 1,
+                kickTick = true,
+                liftOverlay = false,
+                nameSize = 10,
+                showCastTarget = false,
+                showIcon = true,
+                showSpellName = true,
+                showTimer = true,
+                texture = "",
+                timerSize = 10
+              },
+              colors = {
+                castChannel = {
+                  [1] = 0.34999999999999998,
+                  [2] = 0.59999999999999998,
+                  [3] = 0.90000000000000002
+                },
+                castEmpowered = {
+                  [1] = 0.90000000000000002,
+                  [2] = 0.55000000000000004,
+                  [3] = 0.14999999999999999
+                },
+                castImportant = {
+                  [1] = 1,
+                  [2] = 0.25,
+                  [3] = 0.25
+                },
+                castImportantEnabled = false,
+                castInterruptReady = {
+                  [1] = 0.29999999999999999,
+                  [2] = 0.84999999999999998,
+                  [3] = 0.40000000000000002
+                },
+                castInterrupted = {
+                  [1] = 0.80000000000000004,
+                  [2] = 0,
+                  [3] = 0
+                },
+                castInterruptible = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.40000000000000002,
+                  [3] = 0.90000000000000002
+                },
+                castUninterruptible = {
+                  [1] = 0.45000000000000001,
+                  [2] = 0.45000000000000001,
+                  [3] = 0.45000000000000001
+                },
+                classColorEnemyPlayers = true,
+                dpsHasAggro = {
+                  [1] = 1,
+                  [2] = 0.5,
+                  [3] = 0
+                },
+                dpsNearAggro = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                execute = {
+                  [1] = 1,
+                  [2] = 0.10000000000000001,
+                  [3] = 0.10000000000000001
+                },
+                executeAuto = true,
+                executeEnabled = false,
+                executeThreshold = 35,
+                focus = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                focusEnabled = true,
+                friendly = {
+                  [1] = 0.314,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.40799999999999997
+                },
+                hostile = {
+                  [1] = 0.39000000000000001,
+                  [2] = 0.11,
+                  [3] = 0.089999999999999997
+                },
+                neutral = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                offTankAggro = {
+                  [1] = 0.188,
+                  [2] = 0.76100000000000001,
+                  [3] = 0.81200000000000006
+                },
+                oocDarken = true,
+                oocDarkenFactor = 0.75,
+                quest = {
+                  [1] = 1,
+                  [2] = 0.81999999999999995,
+                  [3] = 0
+                },
+                questEnabled = true,
+                tankHasAggro = {
+                  [1] = 0.050000000000000003,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                tankNoAggro = {
+                  [1] = 1,
+                  [2] = 0.22,
+                  [3] = 0.17000000000000001
+                },
+                tapped = {
+                  [1] = 0.5,
+                  [2] = 0.5,
+                  [3] = 0.5
+                },
+                target = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetEnabled = false,
+                threatEnabled = true,
+                threatInstancesOnly = true
+              },
+              font = {
+                face = "",
+                outline = "OUTLINE"
+              },
+              healPrediction = {
+                color = {
+                  [1] = 0.25,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.25
+                },
+                enabled = false,
+                opacity = 0.40000000000000002
+              },
+              health = {
+                bgAlpha = 1,
+                bgColor = {
+                  [1] = 0.12,
+                  [2] = 0.12,
+                  [3] = 0.12
+                },
+                borderColor = {
+                  [1] = 0,
+                  [2] = 0,
+                  [3] = 0
+                },
+                borderSize = 1,
+                height = 24,
+                smooth = false,
+                texture = "Quazii",
+                width = 210
+              },
+              healthText = {
+                bothFormat = "bar",
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                hidePercentSymbol = false,
+                justify = "RIGHT",
+                offsetX = -2,
+                offsetY = 0,
+                point = "RIGHT",
+                precision = 0,
+                relativePoint = "RIGHT",
+                size = 10,
+                style = "percent"
+              },
+              highlight = {
+                focusGlow = false,
+                focusGlowAlpha = 1,
+                focusGlowColor = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                mouseover = true,
+                mouseoverAlpha = 0.29999999999999999,
+                mouseoverColor = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetGlow = true,
+                targetGlowAlpha = 1,
+                targetGlowColor = {
+                  [1] = 0.41199999999999998,
+                  [2] = 0.66700000000000004,
+                  [3] = 1
+                },
+                targetStyle = "wash"
+              },
+              level = {
+                classificationSize = 14,
+                enabled = false,
+                offsetX = 2,
+                offsetY = 0,
+                point = "LEFT",
+                relativePoint = "RIGHT",
+                showClassification = false,
+                size = 9
+              },
+              name = {
+                classColorPlayers = true,
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                justify = "CENTER",
+                offsetX = 0,
+                offsetY = 4,
+                point = "BOTTOM",
+                relativePoint = "TOP",
+                size = 11,
+                truncateLength = 28
+              },
+              npcTitle = {
+                color = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.69999999999999996,
+                  [3] = 0.69999999999999996
+                },
+                enabled = false,
+                size = 9
+              },
+              power = {
+                enabled = false,
+                offsetY = -2,
+                size = 10,
+                spacing = 3
+              },
+              powerBar = {
+                enabled = false,
+                height = 6,
+                manaOnly = true
+              },
+              pvpIcon = {
+                enabled = true,
+                size = 20
+              },
+              questIcon = {
+                enabled = false,
+                position = "LEFT",
+                size = 18
+              },
+              raidMarker = {
+                enabled = true,
+                position = "TOPRIGHT",
+                size = 24
+              },
+              renderMode = "nameonly"
+            },
+            minorTrivial = {
+              absorbs = {
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                opacity = 0.29999999999999999,
+                showText = false,
+                textSize = 9
+              },
+              auras = {
+                elements = {},
+                enableDungeon = true,
+                enableRaid = true,
+                enableWorld = true,
+                enabled = true
+              },
+              castbar = {
+                castTargetSize = 9,
+                enabled = true,
+                gap = 0,
+                height = 17,
+                interruptReadyTint = false,
+                interruptedHoldTime = 1,
+                kickTick = true,
+                liftOverlay = false,
+                nameSize = 10,
+                showCastTarget = false,
+                showIcon = true,
+                showSpellName = true,
+                showTimer = true,
+                texture = "",
+                timerSize = 10
+              },
+              colors = {
+                castChannel = {
+                  [1] = 0.34999999999999998,
+                  [2] = 0.59999999999999998,
+                  [3] = 0.90000000000000002
+                },
+                castEmpowered = {
+                  [1] = 0.90000000000000002,
+                  [2] = 0.55000000000000004,
+                  [3] = 0.14999999999999999
+                },
+                castImportant = {
+                  [1] = 1,
+                  [2] = 0.25,
+                  [3] = 0.25
+                },
+                castImportantEnabled = false,
+                castInterruptReady = {
+                  [1] = 0.29999999999999999,
+                  [2] = 0.84999999999999998,
+                  [3] = 0.40000000000000002
+                },
+                castInterrupted = {
+                  [1] = 0.80000000000000004,
+                  [2] = 0,
+                  [3] = 0
+                },
+                castInterruptible = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.40000000000000002,
+                  [3] = 0.90000000000000002
+                },
+                castUninterruptible = {
+                  [1] = 0.45000000000000001,
+                  [2] = 0.45000000000000001,
+                  [3] = 0.45000000000000001
+                },
+                classColorEnemyPlayers = true,
+                dpsHasAggro = {
+                  [1] = 1,
+                  [2] = 0.5,
+                  [3] = 0
+                },
+                dpsNearAggro = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                execute = {
+                  [1] = 1,
+                  [2] = 0.10000000000000001,
+                  [3] = 0.10000000000000001
+                },
+                executeAuto = true,
+                executeEnabled = false,
+                executeThreshold = 35,
+                focus = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                focusEnabled = true,
+                friendly = {
+                  [1] = 0.314,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.40799999999999997
+                },
+                hostile = {
+                  [1] = 0.39000000000000001,
+                  [2] = 0.11,
+                  [3] = 0.089999999999999997
+                },
+                neutral = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                offTankAggro = {
+                  [1] = 0.188,
+                  [2] = 0.76100000000000001,
+                  [3] = 0.81200000000000006
+                },
+                oocDarken = true,
+                oocDarkenFactor = 0.75,
+                quest = {
+                  [1] = 1,
+                  [2] = 0.81999999999999995,
+                  [3] = 0
+                },
+                questEnabled = true,
+                tankHasAggro = {
+                  [1] = 0.050000000000000003,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                tankNoAggro = {
+                  [1] = 1,
+                  [2] = 0.22,
+                  [3] = 0.17000000000000001
+                },
+                tapped = {
+                  [1] = 0.5,
+                  [2] = 0.5,
+                  [3] = 0.5
+                },
+                target = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetEnabled = false,
+                threatEnabled = true,
+                threatInstancesOnly = true
+              },
+              font = {
+                face = "",
+                outline = "OUTLINE"
+              },
+              healPrediction = {
+                color = {
+                  [1] = 0.25,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.25
+                },
+                enabled = false,
+                opacity = 0.40000000000000002
+              },
+              health = {
+                bgAlpha = 1,
+                bgColor = {
+                  [1] = 0.12,
+                  [2] = 0.12,
+                  [3] = 0.12
+                },
+                borderColor = {
+                  [1] = 0,
+                  [2] = 0,
+                  [3] = 0
+                },
+                borderSize = 1,
+                height = 24,
+                smooth = false,
+                texture = "Quazii",
+                width = 210
+              },
+              healthText = {
+                bothFormat = "bar",
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                hidePercentSymbol = false,
+                justify = "RIGHT",
+                offsetX = -2,
+                offsetY = 0,
+                point = "RIGHT",
+                precision = 0,
+                relativePoint = "RIGHT",
+                size = 10,
+                style = "percent"
+              },
+              highlight = {
+                focusGlow = false,
+                focusGlowAlpha = 1,
+                focusGlowColor = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                mouseover = true,
+                mouseoverAlpha = 0.29999999999999999,
+                mouseoverColor = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetGlow = true,
+                targetGlowAlpha = 1,
+                targetGlowColor = {
+                  [1] = 0.41199999999999998,
+                  [2] = 0.66700000000000004,
+                  [3] = 1
+                },
+                targetStyle = "wash"
+              },
+              level = {
+                classificationSize = 14,
+                enabled = false,
+                offsetX = 2,
+                offsetY = 0,
+                point = "LEFT",
+                relativePoint = "RIGHT",
+                showClassification = false,
+                size = 9
+              },
+              name = {
+                classColorPlayers = true,
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                justify = "CENTER",
+                offsetX = 0,
+                offsetY = 4,
+                point = "BOTTOM",
+                relativePoint = "TOP",
+                size = 11,
+                truncateLength = 28
+              },
+              npcTitle = {
+                color = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.69999999999999996,
+                  [3] = 0.69999999999999996
+                },
+                enabled = false,
+                size = 9
+              },
+              power = {
+                enabled = false,
+                offsetY = -2,
+                size = 10,
+                spacing = 3
+              },
+              powerBar = {
+                enabled = false,
+                height = 6,
+                manaOnly = true
+              },
+              pvpIcon = {
+                enabled = true,
+                size = 20
+              },
+              questIcon = {
+                enabled = false,
+                position = "LEFT",
+                size = 18
+              },
+              raidMarker = {
+                enabled = true,
+                position = "TOPRIGHT",
+                size = 24
+              },
+              renderMode = "bars"
+            },
+            petMinion = {
+              absorbs = {
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                opacity = 0.29999999999999999,
+                showText = false,
+                textSize = 9
+              },
+              auras = {
+                elements = {},
+                enableDungeon = true,
+                enableRaid = true,
+                enableWorld = true,
+                enabled = true
+              },
+              castbar = {
+                castTargetSize = 9,
+                enabled = true,
+                gap = 0,
+                height = 17,
+                interruptReadyTint = false,
+                interruptedHoldTime = 1,
+                kickTick = true,
+                liftOverlay = false,
+                nameSize = 10,
+                showCastTarget = false,
+                showIcon = true,
+                showSpellName = true,
+                showTimer = true,
+                texture = "",
+                timerSize = 10
+              },
+              colors = {
+                castChannel = {
+                  [1] = 0.34999999999999998,
+                  [2] = 0.59999999999999998,
+                  [3] = 0.90000000000000002
+                },
+                castEmpowered = {
+                  [1] = 0.90000000000000002,
+                  [2] = 0.55000000000000004,
+                  [3] = 0.14999999999999999
+                },
+                castImportant = {
+                  [1] = 1,
+                  [2] = 0.25,
+                  [3] = 0.25
+                },
+                castImportantEnabled = false,
+                castInterruptReady = {
+                  [1] = 0.29999999999999999,
+                  [2] = 0.84999999999999998,
+                  [3] = 0.40000000000000002
+                },
+                castInterrupted = {
+                  [1] = 0.80000000000000004,
+                  [2] = 0,
+                  [3] = 0
+                },
+                castInterruptible = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.40000000000000002,
+                  [3] = 0.90000000000000002
+                },
+                castUninterruptible = {
+                  [1] = 0.45000000000000001,
+                  [2] = 0.45000000000000001,
+                  [3] = 0.45000000000000001
+                },
+                classColorEnemyPlayers = true,
+                dpsHasAggro = {
+                  [1] = 1,
+                  [2] = 0.5,
+                  [3] = 0
+                },
+                dpsNearAggro = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                execute = {
+                  [1] = 1,
+                  [2] = 0.10000000000000001,
+                  [3] = 0.10000000000000001
+                },
+                executeAuto = true,
+                executeEnabled = false,
+                executeThreshold = 35,
+                focus = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                focusEnabled = true,
+                friendly = {
+                  [1] = 0.314,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.40799999999999997
+                },
+                hostile = {
+                  [1] = 0.39000000000000001,
+                  [2] = 0.11,
+                  [3] = 0.089999999999999997
+                },
+                neutral = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                offTankAggro = {
+                  [1] = 0.188,
+                  [2] = 0.76100000000000001,
+                  [3] = 0.81200000000000006
+                },
+                oocDarken = true,
+                oocDarkenFactor = 0.75,
+                quest = {
+                  [1] = 1,
+                  [2] = 0.81999999999999995,
+                  [3] = 0
+                },
+                questEnabled = true,
+                tankHasAggro = {
+                  [1] = 0.050000000000000003,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                tankNoAggro = {
+                  [1] = 1,
+                  [2] = 0.22,
+                  [3] = 0.17000000000000001
+                },
+                tapped = {
+                  [1] = 0.5,
+                  [2] = 0.5,
+                  [3] = 0.5
+                },
+                target = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetEnabled = false,
+                threatEnabled = true,
+                threatInstancesOnly = true
+              },
+              font = {
+                face = "",
+                outline = "OUTLINE"
+              },
+              healPrediction = {
+                color = {
+                  [1] = 0.25,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.25
+                },
+                enabled = false,
+                opacity = 0.40000000000000002
+              },
+              health = {
+                bgAlpha = 1,
+                bgColor = {
+                  [1] = 0.12,
+                  [2] = 0.12,
+                  [3] = 0.12
+                },
+                borderColor = {
+                  [1] = 0,
+                  [2] = 0,
+                  [3] = 0
+                },
+                borderSize = 1,
+                height = 24,
+                smooth = false,
+                texture = "Quazii",
+                width = 210
+              },
+              healthText = {
+                bothFormat = "bar",
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                hidePercentSymbol = false,
+                justify = "RIGHT",
+                offsetX = -2,
+                offsetY = 0,
+                point = "RIGHT",
+                precision = 0,
+                relativePoint = "RIGHT",
+                size = 10,
+                style = "percent"
+              },
+              highlight = {
+                focusGlow = false,
+                focusGlowAlpha = 1,
+                focusGlowColor = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                mouseover = true,
+                mouseoverAlpha = 0.29999999999999999,
+                mouseoverColor = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetGlow = true,
+                targetGlowAlpha = 1,
+                targetGlowColor = {
+                  [1] = 0.41199999999999998,
+                  [2] = 0.66700000000000004,
+                  [3] = 1
+                },
+                targetStyle = "wash"
+              },
+              level = {
+                classificationSize = 14,
+                enabled = false,
+                offsetX = 2,
+                offsetY = 0,
+                point = "LEFT",
+                relativePoint = "RIGHT",
+                showClassification = false,
+                size = 9
+              },
+              name = {
+                classColorPlayers = true,
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                justify = "CENTER",
+                offsetX = 0,
+                offsetY = 4,
+                point = "BOTTOM",
+                relativePoint = "TOP",
+                size = 11,
+                truncateLength = 28
+              },
+              npcTitle = {
+                color = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.69999999999999996,
+                  [3] = 0.69999999999999996
+                },
+                enabled = false,
+                size = 9
+              },
+              power = {
+                enabled = false,
+                offsetY = -2,
+                size = 10,
+                spacing = 3
+              },
+              powerBar = {
+                enabled = false,
+                height = 6,
+                manaOnly = true
+              },
+              pvpIcon = {
+                enabled = true,
+                size = 20
+              },
+              questIcon = {
+                enabled = false,
+                position = "LEFT",
+                size = 18
+              },
+              raidMarker = {
+                enabled = true,
+                position = "TOPRIGHT",
+                size = 24
+              },
+              renderMode = "bars"
+            }
+          }
         },
         ncdm = {
           _snapshotVersion = 0,
@@ -6761,7 +8272,7 @@ return {
       Default = {
         _defaultsVersion = 3,
         _needsLateAbImport = true,
-        _schemaVersion = 59,
+        _schemaVersion = 60,
         damageMeter = {
           appearance = {
             global = {

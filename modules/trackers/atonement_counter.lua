@@ -1,7 +1,3 @@
----------------------------------------------------------------------------
--- QUI Atonement Counter
--- Displays the number of active player-cast Atonements in the current group.
----------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local QUI = ns.QUI or {}
 ns.QUI = QUI
@@ -69,8 +65,6 @@ local refreshQueued = false
 local refreshFrame = CreateFrame("Frame")
 refreshFrame:Hide()
 
--- Probe order: IsSecretValue FIRST — `value == nil` on a secret value is
--- itself the throw (comparisons on secrets error before the probe would run).
 local function SafeBoolean(value)
     if IsSecretValue(value) or value == nil then
         return nil
@@ -201,8 +195,6 @@ end
 local function ScanAuraListForAtonement(unit, auraList, filteredToPlayer)
     if IsSecretValue(auraList) or not auraList then return false end
     for _, auraData in ipairs(auraList) do
-        -- List elements carry no readability guarantee — probe before the
-        -- matcher truth-tests them.
         if not IsSecretValue(auraData) and AuraMatchesAtonement(auraData) then
             if filteredToPlayer or AuraBelongsToPlayer(auraData, unit) then
                 return true
@@ -217,11 +209,6 @@ local function UnitHasPlayerAtonement(unit)
         return false
     end
 
-    -- Fast path by spell ID, then verify the source so another Disc Priest
-    -- does not count toward the player's total.
-    -- 12.1: GetAuraDataBySpellID was removed; GetUnitAuraBySpellID is the
-    -- surviving spell-ID getter (does not throw). Guard against a secret result
-    -- before reading its fields.
     if C_UnitAuras and C_UnitAuras.GetUnitAuraBySpellID then
         local ok, auraData = pcall(C_UnitAuras.GetUnitAuraBySpellID, unit, ATONEMENT_SPELL_ID)
         if ok and not IsSecretValue(auraData) and auraData
@@ -233,16 +220,12 @@ local function UnitHasPlayerAtonement(unit)
     local spellName = GetAtonementSpellName()
     if spellName and C_UnitAuras and C_UnitAuras.GetAuraDataBySpellName then
         local ok, auraData = pcall(C_UnitAuras.GetAuraDataBySpellName, unit, spellName, PLAYER_HELPFUL_FILTER)
-        -- Probe before the truth-test: the getter is SecretWhenUnitAuraRestricted,
-        -- and `auraData and` on a secret result is itself the throw.
         if ok and not IsSecretValue(auraData) and auraData and AuraMatchesAtonement(auraData) then
             return true
         end
     end
 
     if C_UnitAuras and C_UnitAuras.GetUnitAuras then
-        -- maxCount omitted (nilable, UnitAuraDocumentation): a literal 40 cap
-        -- silently dropped aura 41+ on heavy raid aura sets.
         local ok, helpfulAuras = pcall(C_UnitAuras.GetUnitAuras, unit, PLAYER_HELPFUL_FILTER)
         if ok and not IsSecretValue(helpfulAuras) and helpfulAuras
             and ScanAuraListForAtonement(unit, helpfulAuras, true) then
@@ -251,10 +234,6 @@ local function UnitHasPlayerAtonement(unit)
     end
 
     if AuraUtil and AuraUtil.ForEachAura then
-        -- ForEachAura is index/slot-based (12.1 RequiresUnitAuraAccess) and throws while
-        -- auras are secret. The GetUnitAuras fast-paths above are pcall-guarded for the
-        -- same reason; wrap this one too so a restricted-combat scan degrades to false
-        -- instead of erroring the UNIT_AURA handler.
         local found = false
         local ok = pcall(AuraUtil.ForEachAura, unit, PLAYER_HELPFUL_FILTER, nil, function(auraData)
             if AuraMatchesAtonement(auraData) then
@@ -267,10 +246,7 @@ local function UnitHasPlayerAtonement(unit)
         end
     end
 
-    -- Last resort: some builds may not support PLAYER filtering on point queries,
-    -- so scan all helpful auras and verify the source manually.
     if C_UnitAuras and C_UnitAuras.GetUnitAuras then
-        -- maxCount omitted (nilable): same 40-cap truncation class as above.
         local ok, helpfulAuras = pcall(C_UnitAuras.GetUnitAuras, unit, HELPFUL_FILTER)
         if ok and not IsSecretValue(helpfulAuras) and helpfulAuras
             and ScanAuraListForAtonement(unit, helpfulAuras, false) then
@@ -278,10 +254,6 @@ local function UnitHasPlayerAtonement(unit)
         end
     end
 
-    -- Nothing found. Under aura restriction every query above degrades to
-    -- nil/false, so "not found" is ambiguous — return nil (unknown) instead
-    -- of a definitive false; the caller then retains its last count rather
-    -- than overwriting the display with zero. Unrestricted, absence is real.
     if C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret() then
         return nil
     end
@@ -289,9 +261,6 @@ local function UnitHasPlayerAtonement(unit)
     return false
 end
 
--- Returns count plus an `unknown` flag: true when at least one unit scan
--- was ambiguous (aura restriction degraded the queries), so the count is a
--- floor, not a definitive total.
 local function CountActiveAtonements()
     if not IsDisciplinePriest() then
         return 0, false
@@ -519,9 +488,6 @@ local function UpdateCounterDisplay()
     else
         local count, unknown = CountActiveAtonements()
         if unknown and count == 0 and (CounterState.count or 0) > 0 then
-            -- Restricted scan saw nothing readable: retain the last known
-            -- count instead of flashing zero. The PLAYER_REGEN_ENABLED
-            -- refresh recounts definitively once restriction lifts.
         else
             CounterState.count = count
         end
@@ -576,10 +542,6 @@ end
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
--- UNIT_AURA: subscribe to centralized dispatcher instead of global RegisterEvent.
--- Avoids duplicate Lua dispatch for every unit aura event in raids.
--- Roster filter handles player/party/raid membership at the dispatcher level,
--- so we skip target/focus/boss/nameplate/arena/mouseover events entirely.
 ns.AuraEvents:Subscribe("roster", function(unit)
     if not IsDisciplinePriest() then return end
     QueueRefresh()
@@ -600,18 +562,16 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
     QueueRefresh()
 end)
 
--- LOD catch-up: first PEW already fired before this module loads.
--- ns.WhenLoggedIn is nil only in the headless test harness.
 if ns.WhenLoggedIn then ns.WhenLoggedIn(QueueRefresh) end
 
 local function SetupDebugInstrumentation()
     ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
     ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "AtonementCounter", frame = eventFrame }
 end
-if ns.DebugRegister then -- gate contract: core/debug_gate.lua
+if ns.DebugRegister then
     ns.DebugRegister(SetupDebugInstrumentation)
 else
-    SetupDebugInstrumentation() -- standalone test harness: no gate, run eagerly
+    SetupDebugInstrumentation()
 end
 
 _G.QUI_RefreshAtonementCounter = RefreshAtonementCounter

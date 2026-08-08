@@ -1866,6 +1866,10 @@ C_BehavioralMessaging = {}
 ---@param ... any
 function C_BehavioralMessaging.SendNotificationReceipt(dbId, openTimeSeconds, readTimeSeconds, ...) end
 
+C_Browser = {}
+---@param ... any
+function C_Browser.CloseFullscreenBrowser(...) end
+
 C_CVar = {}
 ---@param ... any
 ---@return boolean loaded
@@ -5432,6 +5436,9 @@ function C_DelvesUI.GetWorldTierDifficultyForActivePlayer(...) end
 function C_DelvesUI.HasActiveDelve(...) end
 ---@param ... any
 ---@return boolean result
+function C_DelvesUI.HasActiveLFGLair(...) end
+---@param ... any
+---@return boolean result
 function C_DelvesUI.HasActiveLair(...) end
 ---@param tier? number
 ---@param ... any
@@ -5442,6 +5449,9 @@ function C_DelvesUI.IsDelveEntranceTierEnabled(tier, ...) end
 ---@param ... any
 ---@return boolean result
 function C_DelvesUI.IsEligibleForActiveDelveRewards(unit, ...) end
+---@param ... any
+---@return boolean result
+function C_DelvesUI.IsInLair(...) end
 ---@param traitTreeID? number
 ---@param ... any
 ---@return boolean isForCompanion
@@ -7235,6 +7245,11 @@ function C_HousingBasicMode.StartPlacingNewDecor(catalogEntryVariantID, ...) end
 function C_HousingBasicMode.StartPlacingPreviewDecor(decorRecordID, bundleCatalogShopProductID, ...) end
 
 C_HousingBlueprint = {}
+--- Returns true if the specific room is allowed to be exported
+---@param roomGUID? string
+---@param ... any
+---@return boolean canExport
+function C_HousingBlueprint.CanExportRoom(roomGUID, ...) end
 --- Returns true if the player's current location is a valid place to attempt to export a specific kind of blueprint
 ---@param type? any
 ---@param ... any
@@ -7939,6 +7954,11 @@ function C_HousingLayout.MoveLayoutCamera(direction, isPressed, ...) end
 ---@param roomGUID? string
 ---@param ... any
 function C_HousingLayout.RemoveRoom(roomGUID, ...) end
+--- Returns true of the provided roomGUID is a stairwell. Returns false if roomGUID is invalid
+---@param roomGUID? string
+---@param ... any
+---@return boolean hasStairs
+function C_HousingLayout.RoomHasStairs(roomGUID, ...) end
 --- Rotates either the currently dragged or currently selected room, if either exist
 ---@param isLeft? boolean
 ---@param ... any

@@ -97,8 +97,8 @@ assert(mappedCount > 0, "at least one mapped event must appear in counts with co
 -- skip branch, which is ~0 but present). The real gate is that no adapter
 -- method was called for it — checked indirectly by the callback probe below.
 -- A._lastUnmappedCount increments for each skipped event.
-assert(A._lastUnmappedCount == nil or A._lastUnmappedCount >= 0,
-    "unmapped count must be non-negative")
+assert(type(A._lastUnmappedCount) == "number" and A._lastUnmappedCount >= 1,
+    "the replayed ZZZ_UNMAPPED_GF event must be counted as skipped")
 
 -- 6. PROVE a real group-frame function ran on UNIT_AURA:
 --    opts.onCallback("RenderIcon") must fire >= 1 time after UNIT_AURA dispatch,

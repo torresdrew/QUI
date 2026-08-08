@@ -1,15 +1,9 @@
----------------------------------------------------------------------------
--- QUI XP Tracker
--- Displays experience progress, rested XP, XP/hour rate, time-to-level
----------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local QUI = ns.QUI or {}
 ns.QUI = QUI
 local Helpers = ns.Helpers
 local UIKit = ns.UIKit
 
--- CJK-safe font setter: preserves the roman font and only adds CJK fallback
--- members where available, degrading to plain SetFont otherwise.
 local function CJKFont(fs, p, s, f)
     if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
         ns.Helpers.ApplyFontWithFallback(fs, p, s, f)
@@ -18,35 +12,24 @@ local function CJKFont(fs, p, s, f)
     end
 end
 
----------------------------------------------------------------------------
--- State tracking
----------------------------------------------------------------------------
 local XPTrackerState = {
     frame = nil,
     isPreviewMode = false,
     ticker = nil,
     tickCount = 0,
     startupScheduled = false,
-    -- Session tracking
     sessionStartTime = 0,
-    totalSessionXP = 0,       -- Monotonic across level-ups
+    totalSessionXP = 0,
     levelStartTime = 0,
     lastKnownXP = 0,
     lastKnownLevel = 0,
-    -- Ring buffer for XP/hour (10-min window, samples every 5 ticks = 10s)
-    samples = {},             -- {time, totalXP} pairs
-    maxSampleAge = 600,       -- 10 minutes in seconds
+    samples = {},
+    maxSampleAge = 600,
     sessionInitialized = false,
 }
 
----------------------------------------------------------------------------
--- Get settings from database
----------------------------------------------------------------------------
 local GetSettings = Helpers.CreateDBGetter("xpTracker")
 
----------------------------------------------------------------------------
--- Format helpers
----------------------------------------------------------------------------
 local function FormatXP(value)
     if value >= 1000000 then
         return string.format("%.1fM", value / 1000000)
@@ -81,15 +64,10 @@ local function RoundNearest(value)
     return math.ceil(value - 0.5)
 end
 
----------------------------------------------------------------------------
--- Max-level detection (multiple fallbacks for API changes across patches)
----------------------------------------------------------------------------
 local function IsAtMaxLevel()
-    -- Method 1: Direct Blizzard API
     if IsPlayerAtEffectiveLevelCap and IsPlayerAtEffectiveLevelCap() then
         return true
     end
-    -- Method 2: Compare player level to expansion cap
     local level = UnitLevel("player") or 0
     if level > 0 then
         local maxLevel = (GetMaxLevelForPlayerExpansion and GetMaxLevelForPlayerExpansion())
@@ -98,7 +76,6 @@ local function IsAtMaxLevel()
             return true
         end
     end
-    -- Method 3: No XP to earn (type-check guards against secret values)
     local rawMax = UnitXPMax("player")
     if type(rawMax) == "number" and rawMax <= 0 then
         return true
@@ -106,14 +83,10 @@ local function IsAtMaxLevel()
     return false
 end
 
----------------------------------------------------------------------------
--- XP Rate calculation (ring buffer)
----------------------------------------------------------------------------
 local function RecordSample()
     local now = GetTime()
     local samples = XPTrackerState.samples
 
-    -- Prune old samples beyond the window
     local cutoff = now - XPTrackerState.maxSampleAge
     local firstValid = #samples + 1
     for i = 1, #samples do
@@ -131,7 +104,6 @@ local function RecordSample()
         samples = XPTrackerState.samples
     end
 
-    -- Add new sample
     samples[#samples + 1] = {now, XPTrackerState.totalSessionXP}
 end
 
@@ -148,9 +120,6 @@ local function GetXPPerHour()
     return (xpDelta / timeDelta) * 3600
 end
 
----------------------------------------------------------------------------
--- Text visibility (for hide-until-hover mode)
----------------------------------------------------------------------------
 local UpdateDetailsDirection
 
 local function SetTextVisible(frame, visible)
@@ -205,9 +174,6 @@ UpdateDetailsDirection = function(frame)
     end
 end
 
----------------------------------------------------------------------------
--- Create the XP tracker frame
----------------------------------------------------------------------------
 local function CreateFrame_XPTracker()
     if XPTrackerState.frame then return end
 
@@ -229,7 +195,6 @@ local function CreateFrame_XPTracker()
 
     local bcR, bcG, bcB, bcA = Helpers.GetSkinBorderColor(settings, "")
 
-    -- Details panel (separate from anchor frame so anchoring always targets the bar)
     local detailsFrame = CreateFrame("Frame", nil, frame, "BackdropTemplate")
     detailsFrame:SetHeight(detailsHeight)
     detailsFrame:SetFrameStrata("MEDIUM")
@@ -243,13 +208,11 @@ local function CreateFrame_XPTracker()
     frame.detailsFrame = detailsFrame
     UpdateDetailsDirection(frame)
 
-    -- Font settings
     local fontPath, fontOutline = Helpers.GetGeneralFontSettings()
     local headerFontSize = settings.headerFontSize or 12
     local fontSize = settings.fontSize or 11
     local headerLineHeight = settings.headerLineHeight or 18
 
-    -- Header: "Experience" left, "Level X" right
     local headerLeft = detailsFrame:CreateFontString(nil, "OVERLAY")
     CJKFont(headerLeft, fontPath, headerFontSize, fontOutline)
     headerLeft:SetTextColor(0.9, 0.9, 0.9, 1)
@@ -259,16 +222,14 @@ local function CreateFrame_XPTracker()
 
     local headerRight = detailsFrame:CreateFontString(nil, "OVERLAY")
     CJKFont(headerRight, fontPath, headerFontSize, fontOutline)
-    headerRight:SetTextColor(1.0, 0.82, 0.0, 1) -- Gold
+    headerRight:SetTextColor(1.0, 0.82, 0.0, 1)
     headerRight:SetPoint("TOPRIGHT", detailsFrame, "TOPRIGHT", -6, -5)
     headerRight:SetText(ns.L["Level 1"])
     frame.headerRight = headerRight
 
-    -- Stat lines
     local lineY = -(5 + headerLineHeight)
     local lineSpacing = settings.lineHeight or 14
 
-    -- Line 1: Completed / Rested
     local line1 = detailsFrame:CreateFontString(nil, "OVERLAY")
     CJKFont(line1, fontPath, fontSize, fontOutline)
     line1:SetTextColor(0.8, 0.8, 0.8, 1)
@@ -278,7 +239,6 @@ local function CreateFrame_XPTracker()
     line1:SetWordWrap(false)
     frame.line1 = line1
 
-    -- Line 2: XP/hour + Leveling in
     local line2 = detailsFrame:CreateFontString(nil, "OVERLAY")
     CJKFont(line2, fontPath, fontSize, fontOutline)
     line2:SetTextColor(0.8, 0.8, 0.8, 1)
@@ -288,7 +248,6 @@ local function CreateFrame_XPTracker()
     line2:SetWordWrap(false)
     frame.line2 = line2
 
-    -- Line 3: Level time / Session time
     local line3 = detailsFrame:CreateFontString(nil, "OVERLAY")
     CJKFont(line3, fontPath, fontSize, fontOutline)
     line3:SetTextColor(0.8, 0.8, 0.8, 1)
@@ -298,18 +257,15 @@ local function CreateFrame_XPTracker()
     line3:SetWordWrap(false)
     frame.line3 = line3
 
-    -- XP Bar container
     local barContainer = CreateFrame("Frame", nil, frame)
     barContainer:SetAllPoints(frame)
     frame.barContainer = barContainer
 
-    -- Bar background
     local barBG = barContainer:CreateTexture(nil, "BACKGROUND")
     barBG:SetAllPoints(barContainer)
     barBG:SetColorTexture(0, 0, 0, 0.5)
     frame.barBG = barBG
 
-    -- XP StatusBar
     local xpBar = CreateFrame("StatusBar", nil, barContainer)
     xpBar:SetAllPoints(barContainer)
     xpBar:SetMinMaxValues(0, 1)
@@ -328,7 +284,6 @@ local function CreateFrame_XPTracker()
     xpBar:SetStatusBarColor(barColor[1], barColor[2], barColor[3], barColor[4] or 1)
     frame.xpBar = xpBar
 
-    -- Rested overlay (texture, not a second bar)
     local restedOverlay = barContainer:CreateTexture(nil, "ARTWORK", nil, 1)
     restedOverlay:SetPoint("LEFT", xpBar:GetStatusBarTexture(), "RIGHT", 0, 0)
     restedOverlay:SetHeight(barHeight)
@@ -343,7 +298,6 @@ local function CreateFrame_XPTracker()
     restedOverlay:SetVertexColor(restedColor[1], restedColor[2], restedColor[3], restedColor[4] or 0.5)
     frame.restedOverlay = restedOverlay
 
-    -- Bar text overlay (parented to xpBar so it draws above the bar fill)
     local barText = xpBar:CreateFontString(nil, "OVERLAY")
     CJKFont(barText, fontPath, fontSize - 1, fontOutline)
     barText:SetTextColor(1, 1, 1, 1)
@@ -351,7 +305,6 @@ local function CreateFrame_XPTracker()
     barText:SetJustifyH("CENTER")
     frame.barText = barText
 
-    -- Hover to reveal text (keep details visible while hovering either bar or details panel)
     local function UpdateHoverVisibility()
         local s = GetSettings()
         if not s then return end
@@ -371,7 +324,6 @@ local function CreateFrame_XPTracker()
         C_Timer.After(0, UpdateHoverVisibility)
     end)
 
-    -- Dragging support
     frame:SetMovable(not settings.locked)
     frame:EnableMouse(true)
     frame:RegisterForDrag("LeftButton")
@@ -384,11 +336,8 @@ local function CreateFrame_XPTracker()
     end)
     frame:SetScript("OnDragStop", function(self)
         self:StopMovingOrSizing()
-        -- Save position back to DB
         local s = GetSettings()
         if s then
-            -- Always save center-relative offsets so reload positioning is stable
-            -- regardless of which anchor point WoW uses during drag movement.
             local cx, cy = self:GetCenter()
             local ux, uy = UIParent:GetCenter()
             if cx and cy and ux and uy then
@@ -402,7 +351,6 @@ local function CreateFrame_XPTracker()
                 end
             end
 
-            -- Normalize to CENTER anchor now to match reload restoration path.
             self:ClearAllPoints()
             self:SetPoint("CENTER", UIParent, "CENTER", s.offsetX or 0, s.offsetY or 0)
         end
@@ -413,9 +361,6 @@ local function CreateFrame_XPTracker()
     XPTrackerState.frame = frame
 end
 
----------------------------------------------------------------------------
--- Update display with current XP data
----------------------------------------------------------------------------
 local function UpdateDisplay()
     local frame = XPTrackerState.frame
     if not frame then return end
@@ -431,7 +376,6 @@ local function UpdateDisplay()
     local currentXP, maxXP, exhaustion, level, isAtCap, isXPDisabled
 
     if isPreview then
-        -- Fake data for preview
         currentXP = 11000
         maxXP = 13000
         exhaustion = 1260
@@ -444,7 +388,6 @@ local function UpdateDisplay()
         isAtCap = IsAtMaxLevel()
         isXPDisabled = IsXPUserDisabled and IsXPUserDisabled() or false
 
-        -- Auto-hide at max level
         if isAtCap or isXPDisabled then
             frame:Hide()
             return
@@ -457,24 +400,20 @@ local function UpdateDisplay()
     local percent = fraction * 100
     local remaining = maxXP - currentXP
 
-    -- Rested
     local restedPercent = 0
     if exhaustion and exhaustion > 0 and maxXP > 0 then
         restedPercent = (exhaustion / maxXP) * 100
     end
 
-    -- Header
     frame.headerLeft:SetText(ns.L["Experience"])
     frame.headerRight:SetText(ns.L["Level "] .. level)
 
-    -- Line 1: Completed / Rested
     local line1Text = ns.L["Completed: "] .. FormatPercent(percent)
     if restedPercent > 0 then
         line1Text = line1Text .. ns.L["  |  Rested: "] .. FormatPercent(restedPercent)
     end
     frame.line1:SetText(line1Text)
 
-    -- XP rate and time-to-level
     local xpPerHour
     if isPreview then
         xpPerHour = 45000
@@ -482,7 +421,6 @@ local function UpdateDisplay()
         xpPerHour = GetXPPerHour()
     end
 
-    -- Line 2: XP/hour + Leveling in
     local line2Text
     if xpPerHour > 0 then
         local secondsToLevel = (remaining / xpPerHour) * 3600
@@ -492,7 +430,6 @@ local function UpdateDisplay()
     end
     frame.line2:SetText(line2Text)
 
-    -- Line 3: Level time / Session time
     local now = GetTime()
     local levelTime, sessionTime
     if isPreview then
@@ -504,17 +441,14 @@ local function UpdateDisplay()
     end
     frame.line3:SetText(ns.L["Level: "] .. FormatDuration(levelTime) .. ns.L["  |  Session: "] .. FormatDuration(sessionTime))
 
-    -- XP Bar
     frame.xpBar:SetMinMaxValues(0, 1)
     frame.xpBar:SetValue(fraction)
 
-    -- Rested overlay width
     local showRested = settings.showRested ~= false
     if showRested and exhaustion and exhaustion > 0 then
         local barWidth = frame.barContainer:GetWidth()
         if barWidth <= 0 then barWidth = frame:GetWidth() end
         local restedFraction = exhaustion / maxXP
-        -- Clamp so rested doesn't extend past the bar end
         local maxRestedWidth = barWidth * (1 - fraction)
         local restedWidth = math.min(barWidth * restedFraction, maxRestedWidth)
         if restedWidth > 0 then
@@ -527,7 +461,6 @@ local function UpdateDisplay()
         frame.restedOverlay:Hide()
     end
 
-    -- Bar text
     local showBarText = settings.showBarText ~= false
     if showBarText then
         local barTextStr = FormatXP(currentXP) .. "/" .. FormatXP(maxXP)
@@ -543,7 +476,6 @@ local function UpdateDisplay()
 
     frame:Show()
 
-    -- Apply text visibility for hide-until-hover mode
     if settings.hideTextUntilHover then
         local isHover = frame:IsMouseOver() or (frame.detailsFrame and frame.detailsFrame:IsMouseOver())
         SetTextVisible(frame, isHover)
@@ -552,9 +484,6 @@ local function UpdateDisplay()
     end
 end
 
----------------------------------------------------------------------------
--- Update appearance from settings (without changing data)
----------------------------------------------------------------------------
 local function UpdateAppearance()
     if not XPTrackerState.frame then
         CreateFrame_XPTracker()
@@ -573,7 +502,6 @@ local function UpdateAppearance()
     local detailsHeight = math.max(0, height - barFrameHeight)
     frame:SetSize(width, barFrameHeight)
 
-    -- Position
     if not (_G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("xpTracker")) then
         frame:ClearAllPoints()
         frame:SetPoint("CENTER", UIParent, "CENTER", settings.offsetX or 0, settings.offsetY or 150)
@@ -581,7 +509,6 @@ local function UpdateAppearance()
 
     local bcR, bcG, bcB, bcA = Helpers.GetSkinBorderColor(settings, "")
 
-    -- Details panel appearance/size
     local bg = settings.backdropColor or {0.05, 0.05, 0.07, 0.85}
     frame.detailsFrame:SetWidth(width)
     frame.detailsFrame:SetHeight(detailsHeight)
@@ -590,7 +517,6 @@ local function UpdateAppearance()
     UIKit.UpdateBorderLines(frame.detailsFrame, 1, bcR, bcG, bcB, bcA)
     UpdateDetailsDirection(frame)
 
-    -- Font
     local fontPath, fontOutline = Helpers.GetGeneralFontSettings()
     local fontSize = settings.fontSize or 11
 
@@ -602,7 +528,6 @@ local function UpdateAppearance()
     CJKFont(frame.line3, fontPath, fontSize, fontOutline)
     CJKFont(frame.barText, fontPath, fontSize - 1, fontOutline)
 
-    -- Line height (reposition stat lines)
     local headerLineHeight = settings.headerLineHeight or 18
     local lineSpacing = settings.lineHeight or 14
     local lineY = -(5 + headerLineHeight)
@@ -616,10 +541,8 @@ local function UpdateAppearance()
     frame.line3:SetPoint("TOPLEFT", frame.detailsFrame, "TOPLEFT", 6, lineY - lineSpacing * 2)
     frame.line3:SetPoint("RIGHT", frame.detailsFrame, "RIGHT", -6, 0)
 
-    -- Bar height
     frame.restedOverlay:SetHeight(barHeight)
 
-    -- Bar texture
     local LSM = ns.LSM
     local texturePath
     if LSM then
@@ -630,15 +553,12 @@ local function UpdateAppearance()
         frame.restedOverlay:SetTexture(texturePath)
     end
 
-    -- Bar color
     local barColor = settings.barColor or {0.2, 0.5, 1.0, 1}
     frame.xpBar:SetStatusBarColor(barColor[1], barColor[2], barColor[3], barColor[4] or 1)
 
-    -- Rested color
     local restedColor = settings.restedColor or {1.0, 0.7, 0.1, 0.5}
     frame.restedOverlay:SetVertexColor(restedColor[1], restedColor[2], restedColor[3], restedColor[4] or 0.5)
 
-    -- Movable state
     frame:SetMovable(not settings.locked)
 
     if settings.hideTextUntilHover then
@@ -649,9 +569,6 @@ local function UpdateAppearance()
     end
 end
 
----------------------------------------------------------------------------
--- Ticker callback (every 2 seconds)
----------------------------------------------------------------------------
 local function OnTick()
     if not XPTrackerState.frame then return end
 
@@ -661,7 +578,6 @@ local function OnTick()
 
     XPTrackerState.tickCount = XPTrackerState.tickCount + 1
 
-    -- Record sample every 5 ticks (10 seconds)
     if XPTrackerState.tickCount % 5 == 0 then
         RecordSample()
     end
@@ -669,9 +585,6 @@ local function OnTick()
     UpdateDisplay()
 end
 
----------------------------------------------------------------------------
--- Handle XP gain events
----------------------------------------------------------------------------
 local function OnXPUpdate()
     if XPTrackerState.isPreviewMode then return end
     if not XPTrackerState.sessionInitialized then return end
@@ -679,7 +592,6 @@ local function OnXPUpdate()
     local currentXP = UnitXP("player") or 0
     local currentLevel = UnitLevel("player") or 1
 
-    -- Track XP delta
     if currentLevel == XPTrackerState.lastKnownLevel then
         local delta = currentXP - XPTrackerState.lastKnownXP
         if delta > 0 then
@@ -690,35 +602,25 @@ local function OnXPUpdate()
     XPTrackerState.lastKnownXP = currentXP
     XPTrackerState.lastKnownLevel = currentLevel
 
-    -- Record a sample immediately on XP gain for responsiveness
     RecordSample()
 
     UpdateDisplay()
 end
 
----------------------------------------------------------------------------
--- Handle level-up
----------------------------------------------------------------------------
 local function OnLevelUp(newLevel)
     if XPTrackerState.isPreviewMode then return end
     if not XPTrackerState.sessionInitialized then return end
-
-    -- PLAYER_XP_UPDATE fires before PLAYER_LEVEL_UP, so XP delta is already tracked
 
     XPTrackerState.levelStartTime = GetTime()
     XPTrackerState.lastKnownXP = UnitXP("player") or 0
     XPTrackerState.lastKnownLevel = newLevel or UnitLevel("player") or 1
 
-    -- Clear ring buffer on level-up for fresh rate calculation
     XPTrackerState.samples = {}
     RecordSample()
 
     UpdateDisplay()
 end
 
----------------------------------------------------------------------------
--- Initialize session tracking
----------------------------------------------------------------------------
 local function InitializeSession()
     local now = GetTime()
     local currentXP = UnitXP("player") or 0
@@ -736,9 +638,6 @@ local function InitializeSession()
     RecordSample()
 end
 
----------------------------------------------------------------------------
--- Start/stop ticker
----------------------------------------------------------------------------
 local function StartTicker()
     if XPTrackerState.ticker then return end
     XPTrackerState.ticker = C_Timer.NewTicker(2, OnTick)
@@ -751,9 +650,6 @@ local function StopTicker()
     end
 end
 
----------------------------------------------------------------------------
--- Refresh (called when settings change)
----------------------------------------------------------------------------
 local function RefreshXPTracker()
     local settings = GetSettings()
 
@@ -775,9 +671,6 @@ local function RefreshXPTracker()
     UpdateDisplay()
 end
 
----------------------------------------------------------------------------
--- Toggle preview mode
----------------------------------------------------------------------------
 local function TogglePreview(enable)
     CreateFrame_XPTracker()
     if not XPTrackerState.frame then return end
@@ -792,7 +685,6 @@ local function TogglePreview(enable)
     else
         local settings = GetSettings()
         if settings and settings.enabled then
-            -- Check if at max level
             if IsAtMaxLevel() or (IsXPUserDisabled and IsXPUserDisabled()) then
                 XPTrackerState.frame:Hide()
             else
@@ -826,7 +718,6 @@ local function InitializeXPTrackerStartup()
         end
     end
 
-    -- Force one immediate details/layout pass right after init.
     if XPTrackerState.frame then
         UpdateDetailsDirection(XPTrackerState.frame)
     end
@@ -841,9 +732,6 @@ local function ScheduleXPTrackerStartup()
     end)
 end
 
----------------------------------------------------------------------------
--- Event handler
----------------------------------------------------------------------------
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
@@ -871,9 +759,6 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     end
 end)
 
----------------------------------------------------------------------------
--- Global exports
----------------------------------------------------------------------------
 _G.QUI_RefreshXPTracker = RefreshXPTracker
 _G.QUI_ToggleXPTrackerPreview = TogglePreview
 

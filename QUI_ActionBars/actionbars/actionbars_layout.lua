@@ -4,13 +4,8 @@ env.ADDON_NAME = ADDON_NAME
 env.ns = ns
 env.SetChunkEnv(1, env)
 
----------------------------------------------------------------------------
--- LAYOUT ENGINE
----------------------------------------------------------------------------
+---@diagnostic disable: lowercase-global -- SetChunkEnv installs a setfenv
 
--- Grid placement: map a zero-based button index to its (col, row) cell.
--- Vertical bars fill column-major (down each column); horizontal bars fill
--- row-major (across each row). Shared by the secure and non-secure paths.
 local function ComputeGridColRow(idx, isVertical, numCols, numRows)
     if isVertical then
         return math.floor(idx / numRows), idx % numRows
@@ -18,7 +13,6 @@ local function ComputeGridColRow(idx, isVertical, numCols, numRows)
     return idx % numCols, math.floor(idx / numCols)
 end
 
--- Read layout settings from ownedLayout DB (fully independent of Blizzard Edit Mode)
 function GetOwnedLayout(barKey)
     local barDB = GetBarSettings(barKey)
     local profile = nil
@@ -125,20 +119,6 @@ do
     end
 end
 
--- Blizzard anchors HelpOpenWebTicketButton (the round icon shown while a
--- support ticket is open) to the edge button of its own MicroMenu via
--- GetEdgeButton(). With the micro buttons reclaimed into QUI's container
--- that returns nil, and Blizzard's SetPoint("CENTER", nil, ...) drops the
--- icon at screen center. Re-anchor it to the character micro button (its
--- parent), above or below the bar depending on which half of the screen
--- the bar sits in — mirroring Blizzard's keep-it-on-screen intent.
---
--- The button must keep exactly ONE anchor point, on CENTER: Blizzard's
--- UpdateHelpTicketButtonAnchor replaces the CENTER point in place. Any
--- other point (or ClearAllPoints + TOP/BOTTOM) makes Blizzard's secure
--- SetPoint ADD a second point, bridging QUI's anchor family with the
--- screen family — Edit Mode's secure layout pass blocks that with
--- "SetPoint would result in anchor family connection" warnings on zone-in.
 AnchorHelpTicketButton = function()
     if ActionBarsOwned._microOwnedByUI then return end
     local ticketBtn = _G.HelpOpenWebTicketButton
@@ -157,10 +137,6 @@ AnchorHelpTicketButton = function()
     elseif mode == "below" then
         anchorAbove = false
     else
-        -- Auto: keep the icon on-screen by flipping to whichever side
-        -- faces screen center. GetCenter can return secret values in
-        -- combat — reuse the last out-of-combat side decision (default:
-        -- icon above the bar).
         anchorAbove = ActionBarsOwned._helpTicketAnchorAbove
         if not InCombatLockdown() then
             local _, cy = charBtn:GetCenter()
@@ -174,7 +150,6 @@ AnchorHelpTicketButton = function()
         if anchorAbove == nil then anchorAbove = true end
     end
 
-    -- 21 = half the icon's 35px height + a 4px gap from the bar edge.
     if anchorAbove then
         ticketBtn:SetPoint("CENTER", charBtn, "TOP", offX, 21 + offY)
     else
@@ -191,9 +166,6 @@ LayoutNativeButtons = function(barKey)
 
     local orientation, columns, iconCount, growUp, growLeft, sizeOverride, spacingOverride, heightOverride = GetOwnedLayout(barKey)
 
-    -- Stance bar: clamp iconCount to actual form count so callers that bypass
-    -- UpdateStanceBarLayout() (settings refresh, edit mode exit, etc.) never
-    -- lay out more buttons than the player's class has stances.
     if barKey == "stance" and GetNumShapeshiftForms then
         local numForms = GetNumShapeshiftForms() or 0
         if numForms > 0 then
@@ -224,7 +196,6 @@ LayoutNativeButtons = function(barKey)
         end
     end
 
-    -- Desired visual button size from settings
     local desiredSize
     if sizeOverride and sizeOverride > 0 then
         desiredSize = sizeOverride
@@ -237,12 +208,6 @@ LayoutNativeButtons = function(barKey)
         end
     end
 
-    -- Buttons stay at their native frame size (45x45 for action bars, 30x30
-    -- for pet/stance). Per-button SetScale handles visual resize so Blizzard
-    -- overlays (proc glows, rotation assist) work at their expected dimensions.
-    -- Container stays at scale 1.0 so anchoring, positioning, and Layout Mode
-    -- all work correctly.
-    -- Cache naturalSize outside combat — GetWidth() returns secret values in combat.
     if not ActionBarsOwned.cachedNaturalSize then
         ActionBarsOwned.cachedNaturalSize = {}
     end
@@ -262,12 +227,6 @@ LayoutNativeButtons = function(barKey)
         spacing = settings and settings.buttonSpacing or 2
     end
 
-    -- Pixel-snap desiredSize and spacing to the container's physical pixel grid.
-    -- Without this, fractional physical-pixel button widths cause WoW's renderer
-    -- to round each button's edges independently, producing uneven gaps (e.g., a
-    -- visible 1-2px gap between buttons 7 and 8 but not other pairs).
-    -- Snapping at the source ensures step, btnScale, and all derived positions
-    -- are inherently pixel-aligned — no per-button corrections needed.
     local Core = GetCore()
     local px = Core and Core.GetPixelSize and Core:GetPixelSize(container) or nil
     if px and px > 0 then
@@ -275,9 +234,6 @@ LayoutNativeButtons = function(barKey)
         spacing = math.floor(spacing / px + 0.5) * px
     end
 
-    -- Rectangular button support: when buttonHeight is set (e.g. microbar 32×40),
-    -- use separate width/height for container sizing and y-step calculations.
-    -- btnScale stays width-based (WoW only supports a single SetScale value).
     local desiredHeight = desiredSize
     if heightOverride and heightOverride > 0 then
         desiredHeight = heightOverride
@@ -298,7 +254,6 @@ LayoutNativeButtons = function(barKey)
         numRows = math.ceil(numVisible / numCols)
     end
 
-    -- Determine the anchor point ONCE for this layout pass
     local anchor
     if growUp then
         anchor = growLeft and "BOTTOMRIGHT" or "BOTTOMLEFT"
@@ -306,22 +261,15 @@ LayoutNativeButtons = function(barKey)
         anchor = growLeft and "TOPRIGHT" or "TOPLEFT"
     end
 
-    -- Container size = visual grid size (scale 1.0, matches screen pixels)
     local groupWidth = numCols * desiredSize + math.max(0, numCols - 1) * spacing
     local groupHeight = numRows * desiredHeight + math.max(0, numRows - 1) * spacing
 
-    -- Compute absolute offsets from the container anchor for each button.
-    -- WoW multiplies SetPoint offsets by the child's scale, so divide by
-    -- btnScale to get correct screen positions.
     local xStep = (desiredSize + spacing) / btnScale
     local yStep = (desiredHeight + spacing) / btnScale
     local xDir = growLeft and -1 or 1
     local yDir = growUp and 1 or -1
 
     if SKINNABLE_BAR_KEYS[barKey] then
-        -- SECURE PATH: Encode positions as attributes, let the restricted
-        -- snippet call SetScale/SetPoint/Show/Hide on secure buttons — this
-        -- bypasses combat lockdown entirely (no pcall, no ADDON_ACTION_BLOCKED).
         local positions = {}
         for i = 1, numVisible do
             local idx = i - 1
@@ -334,7 +282,6 @@ LayoutNativeButtons = function(barKey)
 
         SecureLayoutBar(barKey, buttons, numVisible, anchor, btnScale, positions, groupWidth, groupHeight)
     else
-        -- NON-SECURE PATH: microbar, bags — direct Lua calls (not protected).
         for i, btn in ipairs(buttons) do
             if i <= numVisible then
                 btn:SetScale(btnScale)
@@ -351,8 +298,6 @@ LayoutNativeButtons = function(barKey)
         container:SetSize(groupWidth, groupHeight)
     end
 
-    -- HelpMicroButton / StoreMicroButton slot sharing: overlay Help on Store's
-    -- position so they share the same grid slot (only one is visible at a time).
     if barKey == "microbar" then
         local helpBtn = _G.HelpMicroButton
         local storeBtn = _G.StoreMicroButton
@@ -368,10 +313,6 @@ LayoutNativeButtons = function(barKey)
         AnchorHelpTicketButton()
     end
 
-    -- Suppress Blizzard's dirty flag so its Layout() doesn't override our
-    -- positioning on the next frame. SetPoint/SetSize calls above mark the
-    -- container dirty; clearing it prevents the built-in OnUpdate from
-    -- re-running Blizzard's default layout and stomping our grid.
     if container.MarkClean then
         container:MarkClean()
     end
@@ -386,21 +327,12 @@ LayoutNativeButtons = function(barKey)
     }
 end
 
----------------------------------------------------------------------------
--- CONTAINER POSITIONING
----------------------------------------------------------------------------
-
--- Legacy position helpers removed — frameAnchoring system handles positioning.
--- SaveContainerPosition / RestoreContainerPosition kept as no-ops for any
--- remaining callers; the edit overlay drag and bar init now rely on frameAnchoring.
 function SaveContainerPosition(barKey) end
 
 function RestoreContainerPosition(barKey)
     local container = ActionBarsOwned.containers[barKey]
     if not container then return false end
 
-    -- Fallback: copy Blizzard frame's position when no frameAnchoring override exists
-    -- Map internal bar keys to anchoring system keys where they differ
     local anchorKey = (barKey == "pet" and "petBar")
         or (barKey == "stance" and "stanceBar")
         or (barKey == "microbar" and "microMenu")
@@ -440,11 +372,6 @@ function RestoreContainerPosition(barKey)
     return false
 end
 
----------------------------------------------------------------------------
--- FADE SYSTEM
----------------------------------------------------------------------------
-
--- Alias the module-level table so both fade subsystems share one backing store.
 fadeState = ActionBarsOwned.fadeState
 
 function GetOwnedBarFadeState(barKey)
@@ -466,14 +393,6 @@ end
 
 IsInEditMode = Helpers.IsEditModeShown
 
--- Global HUD visibility (the "appearances" page) can hide all action bars
--- under location rules (skyriding / mounted / flying / in-vehicle). While a
--- hide rule is active, that system owns the bar alpha via SetOwnedBarAlpha.
--- The per-bar fade decisions below (alwaysShow, mouseover, force-show
--- contexts) must yield to it — otherwise per-bar refreshes triggered by
--- skyriding's own bar-page swaps pull alpha back to 1 and the bars flicker
--- show/hide. Returns true when the global system has decided the bars must
--- be hidden right now. No-ops (returns false) when CDM isn't loaded.
 local function GlobalVisibilityHidingBars()
     local fn = ns.ShouldHideActionBarsForVisibility
     return type(fn) == "function" and fn() == true
@@ -492,23 +411,14 @@ function SetOwnedBarAlpha(barKey, alpha)
             local state = GetFrameState(btn)
             local hidden = alpha <= 0 or state.hiddenEmpty
             if hidden then
-                -- Fully invisible: hide all QUI textures + effects so
-                -- ADD/MOD blend textures don't bleed through at alpha 0.
                 if not state.fadeHidden then
                     FadeHideTextures(state, btn)
                 end
             else
                 if state.fadeHidden then
                     FadeShowTextures(state, btn)
-                    -- Restore button-level alpha that
-                    -- UpdateEmptySlotVisibility may have set to 0.
                     btn:SetAlpha(1)
                 end
-                -- Container alpha handles BLEND textures (icon, backdrop,
-                -- border) via normal inheritance.  ADD/MOD textures ignore
-                -- parent alpha — hide them while fading, show at full alpha.
-                -- MOD blend fades toward white (not transparent), so
-                -- SetAlpha looks wrong; clean hide/show is better.
                 if alpha < 1 then
                     if state.gloss and state.gloss:IsShown() then
                         state.gloss:Hide(); state._fadeGloss = true
@@ -531,8 +441,6 @@ function SetOwnedBarAlpha(barKey, alpha)
     GetOwnedBarFadeState(barKey).currentAlpha = alpha
 end
 
--- Expose for HUD visibility system (hud_visibility.lua) so it can fade
--- bars through the proper path that hides MOD-blend textures.
 ActionBarsOwned.SetBarAlpha = SetOwnedBarAlpha
 
 fadeFrame = nil
@@ -647,7 +555,6 @@ function HookOwnedFrameForMouseover(frame, barKey)
 end
 
 function ActionBarsOwned:OnBarMouseEnter(barKey)
-    -- Global location-hide keeps bars hidden even on hover (skyriding/mounted).
     if GlobalVisibilityHidingBars() then return end
 
     local state = GetOwnedBarFadeState(barKey)
@@ -694,7 +601,6 @@ end
 function ActionBarsOwned:OnBarMouseLeave(barKey)
     if IsInEditMode() then return end
 
-    -- Global location-hide owns the alpha; don't re-show on mouse leave.
     if GlobalVisibilityHidingBars() then return end
 
     local state = GetOwnedBarFadeState(barKey)
@@ -716,7 +622,6 @@ function ActionBarsOwned:OnBarMouseLeave(barKey)
 
     if barSettings and barSettings.alwaysShow then return end
 
-    -- Pet/stance are held in combat too when linked, so the group stays whole.
     local heldInCombat = (barKey and barKey:match("^bar%d$"))
         or (fadeSettings and fadeSettings.linkBars1to8 and IsLinkedBar(barKey))
     if heldInCombat and InCombatLockdown() and fadeSettings and fadeSettings.alwaysShowInCombat then
@@ -822,8 +727,6 @@ function SetupOwnedBarMouseover(barKey)
         return
     end
 
-    -- Global location-hide (skyriding/mounted/flying) wins over per-bar
-    -- alwaysShow/force-show. Leave alpha to the global fade; don't force 1.
     if GlobalVisibilityHidingBars() then return end
 
     local barSettings = GetBarSettings(barKey)
@@ -856,13 +759,6 @@ function SetupOwnedBarMouseover(barKey)
         return
     end
 
-    -- Combat override: keep bars visible when alwaysShowInCombat is on.
-    -- Mirrors the guard in OnBarMouseLeave — without this, HUD visibility
-    -- refreshes (QUI_RefreshActionBarFade) reset alpha to fadeOutAlpha
-    -- even though the combat-enter handler just showed the bars. Linked
-    -- pet/stance are held too: UpdatePetBarVisibility re-runs this setup
-    -- on every PET_BAR_UPDATE* event, which would re-fade the pet bar
-    -- mid-combat while bars 1-8 stay shown.
     local heldInCombat = (barKey and barKey:match("^bar%d$"))
         or (fadeSettings and fadeSettings.linkBars1to8 and IsLinkedBar(barKey))
     if heldInCombat and InCombatLockdown() and fadeSettings and fadeSettings.alwaysShowInCombat then
@@ -875,7 +771,6 @@ function SetupOwnedBarMouseover(barKey)
         fadeOutAlpha = fadeSettings and fadeSettings.fadeOutAlpha or 0
     end
 
-    -- Hook container and buttons for mouseover detection
     local container = ActionBarsOwned.containers[barKey]
     if container then
         HookOwnedFrameForMouseover(container, barKey)
@@ -899,9 +794,3 @@ function SetupOwnedBarMouseover(barKey)
     state.isMouseOver = isMouseOver
     SetOwnedBarAlpha(barKey, isMouseOver and 1 or fadeOutAlpha)
 end
-
----------------------------------------------------------------------------
--- USABILITY POLLING
----------------------------------------------------------------------------
-
--- (Mirror usability polling and keybind methods removed — handled natively)

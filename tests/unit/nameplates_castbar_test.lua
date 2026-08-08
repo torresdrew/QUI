@@ -134,6 +134,21 @@ GetPlayerInfoByGUID = function(guid)
 end
 RAID_CLASS_COLORS = { MAGE = { r = 0.2, g = 0.6, b = 0.9, colorStr = "ff3fc7eb" } }
 
+local typeSettings = {
+    castbar = { enabled = true, height = 17, showTimer = true, interruptedHoldTime = 1.0 },
+    health = { width = 156, texture = nil, borderSize = 1 },
+    colors = {
+        castInterruptible = { 0.7, 0.4, 0.9 },
+        castUninterruptible = { 0.45, 0.45, 0.45 },
+        castInterrupted = { 0.8, 0, 0 },
+    },
+}
+
+local settings = {
+    enabled = true,
+    types = { enemyNPC = typeSettings },
+}
+
 local ns = {
     Helpers = {
         IsSecretValue = function(v) return secrets[v] == true end,
@@ -142,18 +157,7 @@ local ns = {
             return tonumber(v) or fallback or 0
         end,
         TruncateUTF8 = function(s) return s end,
-        GetModuleSettings = function()
-            return {
-                enabled = true,
-                castbar = { enabled = true, height = 17, showTimer = true, interruptedHoldTime = 1.0 },
-                health = { width = 156, texture = nil, borderSize = 1 },
-                colors = {
-                    castInterruptible = { 0.7, 0.4, 0.9 },
-                    castUninterruptible = { 0.45, 0.45, 0.45 },
-                    castInterrupted = { 0.8, 0, 0 },
-                },
-            }
-        end,
+        GetModuleSettings = function() return settings end,
     },
     UIKit = {
         CreateBackground = function(parent) return NewRegion(parent) end,
@@ -173,6 +177,7 @@ local ns = {
 assert(loadfile("core/safecall.lua"))("QUI", ns)
 assert(loadfile("core/cast_engine.lua"))("QUI", ns)
 assert(loadfile("QUI_Nameplates/nameplates/shared.lua"))("QUI_Nameplates", ns)
+assert(loadfile("QUI_Nameplates/nameplates/plate_type.lua"))("QUI_Nameplates", ns)
 assert(loadfile("QUI_Nameplates/nameplates/plate_castbar.lua"))("QUI_Nameplates", ns)
 
 local NP = ns.QUI_Nameplates
@@ -196,9 +201,10 @@ end
 local function NewPlate(unit)
     local plate = NewFrame(UIParent)
     plate.unit = unit
+    plate.npType = "enemyNPC"
     plate.healthBar = NewFrame(plate)
     NPCastbar.Build(plate)
-    NPCastbar.ApplyAppearance(plate, ns.Helpers.GetModuleSettings())
+    NPCastbar.ApplyAppearance(plate, typeSettings)
     NP.plates[unit] = plate
     return plate
 end
@@ -386,16 +392,15 @@ end)
 -- v1.1: lift overlay
 ---------------------------------------------------------------------------
 test("lift overlay: real bar reparented into a pinned high-strata container", function()
-    local settings = ns.Helpers.GetModuleSettings()
-    settings.castbar.liftOverlay = true
-    NPCastbar.ApplyAppearance(plate, settings)
+    typeSettings.castbar.liftOverlay = true
+    NPCastbar.ApplyAppearance(plate, typeSettings)
     local container = plate.npLiftContainer
     if not container then fail("lift container must exist") end
     if plate.castBar._parent ~= container then fail("the REAL castbar must reparent into the container") end
     if container._parent ~= UIParent then fail("container must parent to UIParent") end
 
-    settings.castbar.liftOverlay = false
-    NPCastbar.ApplyAppearance(plate, settings)
+    typeSettings.castbar.liftOverlay = false
+    NPCastbar.ApplyAppearance(plate, typeSettings)
     if plate.castBar._parent ~= plate then fail("disabling must reparent the castbar back onto the plate") end
     if container._shown then fail("disabled lift must hide the container") end
 end)

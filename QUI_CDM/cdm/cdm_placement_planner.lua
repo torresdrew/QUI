@@ -1,8 +1,3 @@
--- QUI_CDM/cdm/cdm_placement_planner.lua
--- Pure arbitration for logical CDM placements that resolve to shared native
--- Blizzard frames. One physical frame receives one deterministic native owner;
--- every other placement is classified for an owned mirror (or an explicit
--- unsupported/degraded mirror when no exact public timing carrier exists).
 local _, ns = ...
 
 local CDMPlacementPlanner = {}
@@ -55,8 +50,6 @@ local function CandidateLess(a, b)
     local aMirrorable = CDMPlacementPlanner.IsMirrorableEntry(a.entry)
     local bMirrorable = CDMPlacementPlanner.IsMirrorableEntry(b.entry)
     if aMirrorable ~= bMirrorable then
-        -- Item/equipment-style sources have no exact public opaque timing
-        -- carrier, so preserve their one exact native presentation first.
         return not aMirrorable
     end
 
@@ -71,8 +64,6 @@ local function CandidateLess(a, b)
     return tostring(a.placementKey or "") < tostring(b.placementKey or "")
 end
 
--- candidates: array of { containerKey, ordinal, entry, frame, placementKey? }.
--- Returns stable assignment records plus frame-indexed owner/consumer ledgers.
 function CDMPlacementPlanner.Plan(candidates)
     candidates = candidates or {}
     local byFrame = setmetatable({}, { __mode = "k" })

@@ -8,7 +8,7 @@ file:close()
 
 local startPos = assert(source:find("local function UpdateAbsorbs%(frame%)"),
     "UpdateAbsorbs should exist")
-local endPos = assert(source:find("%-%- Heal absorbs", startPos),
+local endPos = assert(source:find("local healAbsorbAmount = UnitGetTotalHealAbsorbs(unit)", startPos, true),
     "UpdateAbsorbs heal-absorb section should exist")
 local body = source:sub(startPos, endPos)
 

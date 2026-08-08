@@ -1,19 +1,3 @@
---[[
-    QUI Nameplates — lifecycle driver.
-
-    Owns: events, the plate pool (+ login prewarm), Blizzard art suppression,
-    the unit registry, two-phase SetUnit, token-swap self-heal, and recycle
-    hygiene. Loads LAST in the suite TOC — every satellite module table
-    exists by now.
-
-    Perf contract (plans/009-nameplates.md):
-    * pool + prewarm — a fresh pull never stacks CreateFrame spikes
-    * appearance generation — pooled respawns skip all static styling
-    * two-phase SetUnit — health paints synchronously, the rest one frame later
-    * module-level handlers — zero per-event closure allocation on hot paths
-    * O(1) registry — plates[unit], never a scan
-]]
-
 local ADDON_NAME, ns = ...
 local NP = ns.QUI_Nameplates
 if not NP then return end
@@ -29,7 +13,6 @@ local pcall = pcall
 local CreateFrame = CreateFrame
 local UnitExists = UnitExists
 local UnitIsUnit = UnitIsUnit
-local UnitCanAttack = UnitCanAttack
 local hooksecurefunc = hooksecurefunc
 
 local NPDriver = {}
@@ -37,25 +20,16 @@ NP.Driver = NPDriver
 
 local plates = NP.plates
 
----------------------------------------------------------------------------
--- HIDDEN PARENT + SUPPRESSION STATE
----------------------------------------------------------------------------
 local hiddenParent = CreateFrame("Frame", nil, UIParent)
 hiddenParent:Hide()
 
--- Blizzard UnitFrame → suppression record. Weak keys; NO custom properties
--- are ever written on Blizzard frames (taint) — external maps only.
--- record = { active = bool, alphaHooked = bool, children = { [frame] = originalParent } }
 local suppression = setmetatable({}, { __mode = "k" })
 local alphaLock = setmetatable({}, { __mode = "k" })
 
--- UnitFrame children reparented away while suppressed (12.0.7 tree,
--- Blizzard_NamePlates.xml; a structure test tracks these against the
--- vendored snapshot for early warning at patch bumps).
 local SUPPRESS_CHILD_KEYS = {
     "HealthBarsContainer",
-    "castBar",            -- 12.0: bare StatusBar child
-    "CastBarsContainer",  -- 12.1: container wrapping .castBar
+    "castBar",
+    "CastBarsContainer",
     "RaidTargetFrame",
     "ClassificationFrame",
     "AurasFrame",
@@ -95,17 +69,12 @@ local function SuppressBlizzardArt(base)
         end
     end
 
-    -- Blizzard castbar keeps ticking events while parked — silence it.
-    -- (12.0: unitFrame.castBar; 12.1: nested in CastBarsContainer)
     local castBar = unitFrame.castBar
         or (unitFrame.CastBarsContainer and unitFrame.CastBarsContainer.castBar)
     if castBar and castBar.UnregisterAllEvents then
         pcall(castBar.UnregisterAllEvents, castBar)
     end
 
-    -- Alpha-0 pin with re-entrancy lock; the hook is installed once per
-    -- UnitFrame and self-gates on record.active (recycled friendly plates
-    -- un-suppress without fighting the hook).
     if not record.alphaHooked then
         record.alphaHooked = true
         hooksecurefunc(unitFrame, "SetAlpha", PinAlphaZero)
@@ -128,19 +97,26 @@ local function RestoreBlizzardArt(base)
     local castBar = unitFrame.castBar
         or (unitFrame.CastBarsContainer and unitFrame.CastBarsContainer.castBar)
     if castBar and castBar.OnLoad == nil and castBar.RegisterEvent then
-        -- Event re-registration is owned by Blizzard's SetUnit on the next
-        -- acquire; nothing to redo here.
     end
     pcall(unitFrame.SetAlpha, unitFrame, 1)
 end
 NPDriver.RestoreBlizzardArt = RestoreBlizzardArt
 
----------------------------------------------------------------------------
--- UNIT STATE (plain, type-gated fields consumed by the color resolver)
----------------------------------------------------------------------------
--- All reads gate through NP.Plain: type() alone cannot detect secrets (a
--- secret boolean reports type "boolean" and errors on its first truthiness
--- test). Secret/unavailable readings leave the plain fallback.
+function NPDriver.StampRenderMode(plate)
+    local mode = NP.ResolveRenderMode(NP.GetTypeSettings(plate))
+    if plate.npType == "friendly" or plate.npReaction == "friendly" then
+        local settings = NP.GetSettings()
+        local friendly = type(settings) == "table" and settings.friendly or nil
+        if NP.Friendly.EffectiveMode() == "off" then
+            mode = "off"
+        elseif NP.Friendly.InstanceForcesNameOnly(friendly, NPExtras.GetContext()) then
+            mode = "nameonly"
+        end
+    end
+    plate.npRenderMode = mode
+    return mode
+end
+
 local function ComputeUnitState(plate)
     local unit = plate.unit
     if not unit then return end
@@ -169,16 +145,33 @@ local function ComputeUnitState(plate)
     ok, v = pcall(UnitIsTapDenied, unit)
     plate.npTapDenied = (ok and NP.Plain(v, "boolean")) or false
 
+    plate.npType = NP.PlateType.Resolve(unit)
+
     ok, v = pcall(UnitAffectingCombat, unit)
-    -- nil (secret/unavailable) deliberately disables OOC darkening.
     if ok then
         plate.npInCombat = NP.Plain(v, "boolean")
     else
         plate.npInCombat = nil
     end
 end
+NPDriver.ComputeUnitState = ComputeUnitState
 
--- Deferred (frame 2) state: quest scan + target/focus flags.
+function NPDriver.ApplySimplified(plate)
+    if not NP.SIMPLIFIED_AVAILABLE then return end
+    if not plate or not plate.unit then return end
+    local flag = NP.ResolveRenderMode(NP.GetTypeSettings(plate)) == "simplified"
+    pcall(C_NamePlateManager.SetNamePlateSimplified, plate.unit, flag)
+end
+
+function NPDriver.RefreshPlateType(plate)
+    if not plate or not plate.unit then return false end
+    local resolved = NP.PlateType.Resolve(plate.unit)
+    if resolved == plate.npType then return false end
+    plate.npType = resolved
+    NPDriver.ApplySimplified(plate)
+    return true
+end
+
 local function ComputeDeferredState(plate)
     local unit = plate.unit
     if not unit then return end
@@ -191,19 +184,27 @@ local function ComputeDeferredState(plate)
     plate.npIsFocus = (ok and NP.Plain(v, "boolean")) or false
 end
 
----------------------------------------------------------------------------
--- PER-PLATE EVENTS (module-level handler; no closures)
----------------------------------------------------------------------------
 local PLATE_UNIT_EVENTS = {
     "UNIT_HEALTH",
     "UNIT_MAXHEALTH",
     "UNIT_ABSORB_AMOUNT_CHANGED",
+    "UNIT_HEAL_PREDICTION",
+    "UNIT_CLASSIFICATION_CHANGED",
+    "UNIT_POWER_UPDATE",
+    "UNIT_MAXPOWER",
     "UNIT_NAME_UPDATE",
     "UNIT_THREAT_LIST_UPDATE",
-    "UNIT_FLAGS", -- attackability demotion watcher (duel ends, MC drops)
+    "UNIT_FLAGS",
 }
 
-local ClearUnit, ReleasePlate -- defined in the POOL section below
+local ClearUnit, ReleasePlate, ApplyPlateAppearance
+
+local function SyncPlateAppearanceType(plate)
+    if plate.npAppearanceType == plate.npType then return false end
+    ApplyPlateAppearance(plate, NP.GetSettings())
+    return true
+end
+NPDriver.SyncPlateAppearanceType = SyncPlateAppearanceType
 
 local function RebindPlate(plate, newUnit)
     local oldUnit = plate.unit
@@ -217,20 +218,21 @@ local function RebindPlate(plate, newUnit)
     end
     NP.Castbar.StopCast(plate)
     ComputeUnitState(plate)
+    SyncPlateAppearanceType(plate)
+    NPDriver.ApplySimplified(plate)
     ComputeDeferredState(plate)
     NPExtras.UpdateThreat(plate)
     NPHealth.UpdateHealth(plate)
     NPHealth.UpdateAbsorbs(plate)
+    NPHealth.UpdateHealPrediction(plate)
     NPHealth.UpdateName(plate)
-    NPHealth.UpdateColor(plate, NP.GetSettings(), NPExtras.GetContext())
-    NP.Auras.FullRescan(plate)
+    NPHealth.UpdateLevel(plate)
+    NPHealth.UpdateNpcTitle(plate)
+    NPHealth.UpdateColor(plate, NP.GetTypeSettings(plate), NPExtras.GetContext())
+    NP.Auras.ApplyAppearance(plate)
 end
 
 local function PlateOnEvent(plate, event, unit)
-    -- Token-swap self-heal: Blizzard recycles base frames; if the base now
-    -- carries a different unit token than we bound, rebind in place and tear
-    -- down cast state (the scar behind this: stale plates after loading
-    -- screens/mass despawns).
     if event == "UNIT_HEALTH" then
         local base = plate.npBase
         local token = NP.Plain(base and (base.unitToken or base.namePlateUnitToken), "string")
@@ -247,61 +249,69 @@ local function PlateOnEvent(plate, event, unit)
     if event == "UNIT_MAXHEALTH" then
         NPHealth.UpdateHealth(plate)
         NPHealth.UpdateAbsorbs(plate)
+        NPHealth.UpdateHealPrediction(plate)
         return
     end
     if event == "UNIT_ABSORB_AMOUNT_CHANGED" then
         NPHealth.UpdateAbsorbs(plate)
         return
     end
+    if event == "UNIT_HEAL_PREDICTION" then
+        NPHealth.UpdateHealPrediction(plate)
+        return
+    end
+    if event == "UNIT_POWER_UPDATE" or event == "UNIT_MAXPOWER" then
+        NPHealth.UpdatePower(plate)
+        return
+    end
+    if event == "UNIT_CLASSIFICATION_CHANGED" then
+        NPExtras.UpdatePvpIcon(plate)
+        NPHealth.UpdateLevel(plate)
+        if NPDriver.RefreshPlateType(plate) then
+            NP.RestyleActivePlates()
+        end
+        return
+    end
     if event == "UNIT_NAME_UPDATE" then
         ComputeUnitState(plate)
+        SyncPlateAppearanceType(plate)
+        NPDriver.ApplySimplified(plate)
         NPHealth.UpdateName(plate)
-        NPHealth.UpdateColor(plate, NP.GetSettings(), NPExtras.GetContext())
+        NPHealth.UpdateLevel(plate)
+        NPHealth.UpdateNpcTitle(plate)
+        NPHealth.UpdateColor(plate, NP.GetTypeSettings(plate), NPExtras.GetContext())
         return
     end
     if event == "UNIT_THREAT_LIST_UPDATE" then
         NPExtras.UpdateThreat(plate)
-        -- Combat state flips with threat activity; refresh the plain flag.
         local ok, v = pcall(UnitAffectingCombat, unit)
         plate.npInCombat = ok and NP.Plain(v, "boolean") or nil
-        NPHealth.UpdateColor(plate, NP.GetSettings(), NPExtras.GetContext())
+        NPHealth.UpdateColor(plate, NP.GetTypeSettings(plate), NPExtras.GetContext())
         return
     end
     if event == "UNIT_FLAGS" then
-        -- Demotion mirror: an enemy plate whose unit became verifiably
-        -- unattackable (duel over, charm ended) hands the unit to the
-        -- friendly module, keeping the base suppressed across the swap.
-        local ok, attackable = pcall(UnitCanAttack, "player", unit)
-        if ok and NP.Plain(attackable, "boolean") == false then
-            local base = plate.npBase
-            ReleasePlate(plate)
-            if base then
-                NP.Friendly.HandleAdded(base, unit)
-            end
+        if NPDriver.RefreshPlateType(plate) then
+            NP.RestyleActivePlates()
         end
         return
     end
 end
 
----------------------------------------------------------------------------
--- POOL
----------------------------------------------------------------------------
 local pool = {}
 local poolSize = 0
 
--- Decouple the plate's scale from the Blizzard base: the C engine scales
--- bases per-distance/spawn regardless of the min/max-scale CVar pin (the
--- 12.x driver no longer reads those CVars), and pixel-perfect sizing
--- compensates for effective scale AT STYLE TIME — any later base-scale
--- drift rendered the art at the wrong size (fresh plates spawning small).
--- With SetIgnoreParentScale the plate's effective scale is its own, pinned
--- to UIParent's, so sizes are deterministic and base scaling is inert.
 local function PinPlateScale(plate)
     if not plate.SetIgnoreParentScale then return end
     local ok, es = pcall(UIParent.GetEffectiveScale, UIParent)
     es = ok and NP.Plain(es, "number") or nil
     if es and es > 0 then
-        plate:SetScale(es)
+        local settings = NP.GetSettings()
+        local layout = settings.layout or {}
+        local mult = (plate.npIsTarget == true) and (layout.targetScale or 1.0) or 1.0
+        if plate.npRenderMode == "simplified" then
+            mult = mult * NP.SimplifiedScale(settings)
+        end
+        plate:SetScale(es * mult)
     end
 end
 NPDriver.PinPlateScale = PinPlateScale
@@ -323,9 +333,6 @@ local function BuildPlate()
         NPExtras.BuildPlate(plate)
     end
 
-    -- Stacking bounds: SetStackingBoundsFrame reads RENDERED region bounds,
-    -- so the child carries an alpha-0 full-size texture (without it the
-    -- bounds contribute nothing).
     local stackBounds = CreateFrame("Frame", nil, plate)
     local boundsTex = stackBounds:CreateTexture(nil, "BACKGROUND")
     boundsTex:SetAllPoints(stackBounds)
@@ -348,7 +355,6 @@ local function AcquirePlate()
     return plate
 end
 
--- Exhaustive recycle hygiene: caches, latches, cast state, deferred queues.
 function ClearUnit(plate)
     local unit = plate.unit
     plate:UnregisterAllEvents()
@@ -376,8 +382,12 @@ function ClearUnit(plate)
     plate.npLastMaxHP = nil
     plate.npLastAbsorbMax = nil
     plate.npAbsorbHidden = nil
+    if plate.healPredictBar then plate.healPredictBar:Hide() end
+    if plate.powerBar then plate.powerBar:Hide() end
     plate.npLastR, plate.npLastG, plate.npLastB = nil, nil, nil
     plate.npReaction = nil
+    plate.npType = nil
+    plate.npRenderMode = nil
     plate.npIsPlayer = nil
     plate.npClassToken = nil
     plate.npTapDenied = nil
@@ -386,11 +396,17 @@ function ClearUnit(plate)
     plate.npThreat = nil
     plate.npIsTarget = nil
     plate.npIsFocus = nil
+    plate.npCastKind = nil
+    plate.npCastImportant = nil
+    plate.npPlainNotInterruptible = nil
 
+    if NP.Power and NP.Power.Detach then NP.Power.Detach(plate) end
+    plate:SetAlpha(1)
     plate:Hide()
     plate:ClearAllPoints()
     plate:SetParent(hiddenParent)
 end
+NPDriver.ClearUnit = ClearUnit
 
 function ReleasePlate(plate)
     ClearUnit(plate)
@@ -398,11 +414,6 @@ function ReleasePlate(plate)
     pool[poolSize] = plate
 end
 
----------------------------------------------------------------------------
--- TWO-PHASE SETUNIT
----------------------------------------------------------------------------
--- Deferred second phase — one shared dispatcher walks a pending set so each
--- SetUnit allocates nothing.
 local deferredPlates = {}
 local deferFrame = CreateFrame("Frame")
 deferFrame:Hide()
@@ -415,13 +426,16 @@ deferFrame:SetScript("OnUpdate", function(self)
             ComputeDeferredState(plate)
             NPExtras.UpdateThreat(plate)
             NPHealth.UpdateName(plate)
+            NPHealth.UpdateLevel(plate)
+            NPHealth.UpdateNpcTitle(plate)
             NPHealth.UpdateAbsorbs(plate)
-            NPHealth.UpdateColor(plate, NP.GetSettings(), NPExtras.GetContext())
-            NP.Auras.FullRescan(plate)
+            NPHealth.UpdateHealPrediction(plate)
+            NPHealth.UpdatePower(plate)
+            NPHealth.UpdateColor(plate, NP.GetTypeSettings(plate), NPExtras.GetContext())
+            NP.Auras.ApplyAppearance(plate)
             if NPExtras.OnPlateShown then
                 NPExtras.OnPlateShown(plate)
             end
-            -- A plate acquired mid-cast missed its START event — probe once.
             if NP.Castbar.ProbeCast then
                 NP.Castbar.ProbeCast(plate)
             end
@@ -429,30 +443,112 @@ deferFrame:SetScript("OnUpdate", function(self)
     end
 end)
 
--- Full static styling for one plate (health/castbar/auras/extras appearance
--- + stacking bounds). Shared by the SetUnit generation gate and
--- RestyleActivePlates so a generation bump re-runs ALL static work.
-local function ApplyPlateAppearance(plate, settings)
-    -- Re-pin first: sizes below convert through the plate's effective scale.
-    NPDriver.PinPlateScale(plate)
-    NPHealth.ApplyAppearance(plate, settings)
-    NP.Castbar.ApplyAppearance(plate, settings)
-    NP.Auras.ApplyAppearance(plate, settings)
-    if NPExtras.ApplyAppearance then
-        NPExtras.ApplyAppearance(plate, settings)
+local LIGHTWEIGHT_HIDDEN_REGIONS = {
+    "powerBar", "castBar", "healthText", "npTitleText",
+    "absorbBar", "healPredictBar",
+    "npAbsorbText", "npLevelText", "npClassIcon", "npRaidMarker",
+    "npTargetGlow", "npTargetArrowL", "npTargetArrowR", "npTargetBrackets",
+    "npTargetGlowline", "npFocusGlow", "npPvpIcon", "npQuestIcon",
+}
+
+local LIGHTWEIGHT_DISABLED_FLAGS = {
+    "npAbsorbsEnabled", "npHealPredictEnabled", "npPowerBarEnabled",
+    "npAbsorbTextEnabled", "npTitleEnabled", "npLevelEnabled",
+    "npClassIconEnabled", "npCastEnabled", "npQuestIconEnabled",
+    "npPvpIconEnabled", "npTargetGlowEnabled", "npFocusGlowEnabled",
+    "npHoverEnabled", "npRaidMarkerEnabled",
+}
+
+local function ApplyRenderMode(plate, mode)
+    if NP.IsLightweightMode(mode) then
+        for i = 1, #LIGHTWEIGHT_DISABLED_FLAGS do
+            plate[LIGHTWEIGHT_DISABLED_FLAGS[i]] = false
+        end
+        plate.npHealthTextStyle = "none"
+        plate.npAbsorbHidden = true
+        for i = 1, #LIGHTWEIGHT_HIDDEN_REGIONS do
+            local region = plate[LIGHTWEIGHT_HIDDEN_REGIONS[i]]
+            if region then region:Hide() end
+        end
     end
 
-    -- Stacking bounds sized to name gap + bar + castbar × user spacing.
-    local health = settings.health or {}
-    local cast = settings.castbar or {}
-    local nameS = settings.name or {}
-    local spacing = (settings.cvars and settings.cvars.stackingSpacing) or 1.0
+    if mode == "nameonly" then
+        plate.healthBar:Hide()
+
+        local QUICore = ns.Addon
+        local nameS = (NP.GetTypeSettings(plate) or {}).name or {}
+        plate.nameText:ClearAllPoints()
+        plate.nameText:SetPoint("CENTER", plate, "CENTER",
+            QUICore:Pixels(nameS.offsetX or 0),
+            QUICore:Pixels(nameS.offsetY or 0))
+        plate.nameText:SetJustifyH(nameS.justify or "CENTER")
+        if nameS.enabled == false then plate.nameText:Hide() else plate.nameText:Show() end
+    else
+        plate.healthBar:Show()
+    end
+
+    if mode == "off" then
+        plate:Hide()
+    else
+        plate:Show()
+    end
+    return mode
+end
+NPDriver.ApplyRenderMode = ApplyRenderMode
+
+local function ReapplyDynamicVisuals(plate)
+    if not plate.unit then return end
+    NPHealth.UpdateAbsorbs(plate)
+    NPHealth.UpdateHealPrediction(plate)
+    NPHealth.UpdatePower(plate)
+    NPHealth.UpdateLevel(plate)
+    NPHealth.UpdateNpcTitle(plate)
+    if NPExtras.OnPlateShown then
+        NPExtras.OnPlateShown(plate)
+    end
+end
+
+local function ApplyResolvedRenderMode(plate)
+    return ApplyRenderMode(plate, NPDriver.StampRenderMode(plate))
+end
+NPDriver.ApplyResolvedRenderMode = ApplyResolvedRenderMode
+
+function ApplyPlateAppearance(plate, settings)
+    local typeSettings = NP.GetTypeSettings(plate) or {}
+    plate.npAppearanceType = plate.npType
+    local mode = NPDriver.StampRenderMode(plate)
+
     local QUICore = ns.Addon
+    local pinned = QUICore and QUICore.PushPixelReference and QUICore.PopPixelReference
+    if pinned then QUICore:PushPixelReference(nil) end
+
+    NPDriver.PinPlateScale(plate)
+    NPHealth.ApplyAppearance(plate, typeSettings)
+    NP.Castbar.ApplyAppearance(plate, typeSettings)
+    NP.Auras.ApplyAppearance(plate)
+    if NPExtras.ApplyAppearance then
+        NPExtras.ApplyAppearance(plate, typeSettings)
+    end
+
+    local health = typeSettings.health or {}
+    local cast = typeSettings.castbar or {}
+    local nameS = typeSettings.name or {}
+    local spacing = (settings.cvars and settings.cvars.stackingSpacing) or 1.0
     local w = (health.width or 210)
-    local h = ((health.height or 24) + (cast.height or 17) + ((nameS.size or 11) + math.abs(nameS.offsetY or 4)))
+    local pb = typeSettings.powerBar or {}
+    local powerH = (pb.enabled == true) and (pb.height or 6) or 0
+    local h = ((health.height or 24) + (cast.height or 17) + powerH + ((nameS.size or 11) + math.abs(nameS.offsetY or 4)))
+    if NP.IsLightweightMode(mode) then
+        h = (health.height or 24) + ((nameS.size or 11) + math.abs(nameS.offsetY or 4))
+    end
     plate.npStackBounds:ClearAllPoints()
     plate.npStackBounds:SetPoint("CENTER", plate, "CENTER", 0, 0)
     QUICore:SetPixelPerfectSize(plate.npStackBounds, w * spacing, h * spacing)
+
+    ApplyRenderMode(plate, mode)
+    ReapplyDynamicVisuals(plate)
+
+    if pinned then QUICore:PopPixelReference() end
 end
 
 local function SetUnit(plate, unit, base)
@@ -461,17 +557,16 @@ local function SetUnit(plate, unit, base)
     plates[unit] = plate
     NP.platesByBase[base] = plate
 
-    -- Dimensionless child of the Blizzard base: single CENTER→CENTER anchor
-    -- (whole-plate movement, no edge shimmer).
     plate:SetParent(base)
     plate:ClearAllPoints()
-    plate:SetPoint("CENTER", base, "CENTER", 0, 0)
-    plate:SetFrameLevel((base:GetFrameLevel() or 0) + 1)
 
     local settings = NP.GetSettings()
+    plate:SetPoint("CENTER", base, "CENTER", 0, (settings.layout and settings.layout.verticalOffset) or 0)
+    plate:SetFrameLevel((base:GetFrameLevel() or 0) + 1)
 
-    -- Appearance generation: static styling only when stale.
-    if plate.npAppearanceGen ~= NP.appearanceGen then
+    ComputeUnitState(plate)
+
+    if plate.npAppearanceGen ~= NP.appearanceGen or plate.npAppearanceType ~= plate.npType then
         plate.npAppearanceGen = NP.appearanceGen
         ApplyPlateAppearance(plate, settings)
     end
@@ -484,21 +579,16 @@ local function SetUnit(plate, unit, base)
         pcall(base.SetStackingBoundsFrame, base, plate.npStackBounds)
     end
 
-    -- Phase 1 (synchronous): the health bar must display immediately.
-    ComputeUnitState(plate)
     NPHealth.UpdateHealth(plate)
-    NPHealth.UpdateColor(plate, settings, NPExtras.GetContext())
+    NPHealth.UpdateColor(plate, NP.GetTypeSettings(plate), NPExtras.GetContext())
     plate:Show()
+    ApplyResolvedRenderMode(plate)
 
-    -- Phase 2 (next frame): name/cast/auras/markers/quest.
     plate.npDeferredPending = true
     deferredPlates[plate] = true
     deferFrame:Show()
 end
 
----------------------------------------------------------------------------
--- ADDED / REMOVED ROUTING
----------------------------------------------------------------------------
 local function GetBase(unit)
     if not (C_NamePlate and C_NamePlate.GetNamePlateForUnit) then return nil end
     local ok, base = pcall(C_NamePlate.GetNamePlateForUnit, unit)
@@ -506,9 +596,6 @@ local function GetBase(unit)
     return nil
 end
 
--- Build (or rebuild) the enemy plate for a unit. Also the friendly module's
--- promotion entry point (duel starts): re-asserts suppression first so the
--- Blizzard UF stays hidden across the ownership swap — no flash.
 local function BuildEnemyPlate(unit, base)
     base = base or GetBase(unit)
     if not base then return end
@@ -519,50 +606,33 @@ local function BuildEnemyPlate(unit, base)
     end
     local plate = AcquirePlate()
     SetUnit(plate, unit, base)
+    NPDriver.ApplySimplified(plate)
     return plate
 end
 NPDriver.BuildEnemyPlate = BuildEnemyPlate
 
 local function OnNamePlateAdded(unit)
     if not NP.IsEnabled() then return end
-    -- Personal resource display is Blizzard's — never touch the player plate.
     local okSelf, isSelf = pcall(UnitIsUnit, unit, "player")
     if okSelf and NP.Plain(isSelf, "boolean") == true then return end
 
     local base = GetBase(unit)
     if not base then return end
 
-    -- Attackability routing. First-frame UnitCanAttack lies, which is why
-    -- suppression already happened unconditionally in the driver hook — a
-    -- wrong "friendly" verdict here only delays the enemy plate by a frame
-    -- (the friendly handoff re-checks before restoring Blizzard art).
-    -- A SECRET verdict routes enemy (fail toward the suppressed path).
-    local okAtk, attackable = pcall(UnitCanAttack, "player", unit)
-    if okAtk and NP.Plain(attackable, "boolean") == false then
-        NP.Friendly.HandleAdded(base, unit)
-        return
-    end
-
     BuildEnemyPlate(unit, base)
 end
 NPDriver.RouteUnit = OnNamePlateAdded
 
 local function OnNamePlateRemoved(unit)
-    NP.Friendly.HandleRemoved(unit)
     local plate = plates[unit]
     if not plate then return end
     local base = plate.npBase
     ReleasePlate(plate)
-    -- Restore symmetrically so a future non-QUI consumer of this base frame
-    -- (friendly mode, disabled state) gets intact Blizzard art.
     if base then
         RestoreBlizzardArt(base)
     end
 end
 
----------------------------------------------------------------------------
--- BLIZZARD DRIVER HOOKS
----------------------------------------------------------------------------
 local hooksInstalled = false
 local function InstallHooks()
     if hooksInstalled then return end
@@ -570,10 +640,6 @@ local function InstallHooks()
     if not blizzDriver then return end
     hooksInstalled = true
 
-    -- Suppress-before-visible: this post-hook runs inside Blizzard's ADDED
-    -- dispatch, right after AcquireUnitFrame/SetUnit and before the frame
-    -- renders. Suppression is UNCONDITIONAL (first-frame UnitCanAttack lies);
-    -- friendly routing restores the art when it settles.
     hooksecurefunc(blizzDriver, "OnNamePlateAdded", function(_, unit)
         if not NP.IsEnabled() then return end
         local okSelf, isSelf = pcall(UnitIsUnit, unit, "player")
@@ -584,18 +650,12 @@ local function InstallHooks()
         end
     end)
 
-    -- Class resource bars: only ever attached to the player plate, which QUI
-    -- leaves alone — no suppression needed, but the post-hook re-asserts our
-    -- sizing after Blizzard rewrites it.
     hooksecurefunc(blizzDriver, "UpdateNamePlateOptions", function()
         if not NP.IsEnabled() then return end
         NPCVars.ApplyPlateSize()
     end)
 end
 
----------------------------------------------------------------------------
--- PREWARM (login; ~20 frames staggered, then released)
----------------------------------------------------------------------------
 local prewarmDone = false
 local function Prewarm()
     if prewarmDone or not NP.IsEnabled() then return end
@@ -611,22 +671,29 @@ local function Prewarm()
     end, 20)
 end
 
----------------------------------------------------------------------------
--- SETTINGS REFRESH / TEARDOWN
----------------------------------------------------------------------------
 local function RestyleActivePlates()
     local settings = NP.GetSettings()
     local context = NPExtras.GetContext()
+    local layout = settings.layout or {}
     for unit, plate in pairs(plates) do
-        if plate.npAppearanceGen ~= NP.appearanceGen then
+        if plate.npAppearanceGen ~= NP.appearanceGen or plate.npAppearanceType ~= plate.npType then
             plate.npAppearanceGen = NP.appearanceGen
             ApplyPlateAppearance(plate, settings)
         end
-        plate.npLastR = nil -- force color rewrite through the latch
-        NPHealth.UpdateColor(plate, settings, context)
+        local base = plate.npBase
+        if base then
+            plate:ClearAllPoints()
+            plate:SetPoint("CENTER", base, "CENTER", 0, layout.verticalOffset or 0)
+        end
+        PinPlateScale(plate)
+        NPDriver.ApplySimplified(plate)
+        NPExtras.ApplyPlateAlpha(plate)
+        plate.npLastR = nil
+        NPHealth.UpdateColor(plate, NP.GetTypeSettings(plate), context)
         NPHealth.UpdateHealth(plate)
     end
 end
+NP.RestyleActivePlates = RestyleActivePlates
 
 local function TeardownAll()
     for unit, plate in pairs(plates) do
@@ -642,6 +709,7 @@ function NPDriver.Refresh()
     if NP.IsEnabled() then
         NP.BumpAppearanceGeneration()
         NPCVars.ApplyAll()
+        NP.Friendly.ApplyModeCVars()
         RestyleActivePlates()
         Prewarm()
     else
@@ -649,13 +717,8 @@ function NPDriver.Refresh()
     end
 end
 
--- Cross-suite refresh trigger (ns export per the global-assignment ratchet;
--- the bootstrap proxy makes it visible to every suite including QUI_Options).
 ns.QUI_RefreshNameplates = NPDriver.Refresh
 
----------------------------------------------------------------------------
--- EVENTS
----------------------------------------------------------------------------
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("NAME_PLATE_UNIT_ADDED")
 eventFrame:RegisterEvent("NAME_PLATE_UNIT_REMOVED")
@@ -664,13 +727,6 @@ eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("UI_SCALE_CHANGED")
 eventFrame:RegisterEvent("DISPLAY_SIZE_CHANGED")
 
--- Pixel-perfect sizing depends on the plate's EFFECTIVE scale, which is not
--- final while the loading screen is up: UIParent scale settles post-login
--- and the plate-scale CVar pin only applies on PEW. Plates styled before
--- that settle would keep wrong sizes forever (the appearance generation
--- deliberately makes styling sticky) — so the settle path bumps the
--- generation and restyles, immediately and once more a second later for
--- values that finalize late.
 local function ReassertAppearance()
     if not NP.IsEnabled() then return end
     NP.BumpAppearanceGeneration()
@@ -702,13 +758,8 @@ eventFrame:SetScript("OnEvent", function(_, event, unit)
     end
 end)
 
--- Login-class suites load during the loading screen: the Blizzard driver
--- frame usually exists already, so install eagerly too.
 InstallHooks()
 
----------------------------------------------------------------------------
--- PERF INSTRUMENTATION (/qui perf)
----------------------------------------------------------------------------
 local function SetupDebugInstrumentation()
     ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
     ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "NameplateDriver", frame = eventFrame }

@@ -1,9 +1,3 @@
---- QUI Datatexts — LibDataBroker host.
---- Registers every LDB dataobject as datatext "ldb:<name>" in the shared
---- registry, so any slot consumer (info bar, minimap panel, custom
---- datapanels) can display third-party plugins. Icons render inline via |T
---- escapes (no texture-region management; auto-width measures the text).
-
 local ADDON_NAME, ns = ...
 local QUICore = ns.Addon
 local Datatexts = QUICore and QUICore.Datatexts
@@ -16,14 +10,10 @@ local format = string.format
 local floor = math.floor
 
 local LDB_PREFIX = "ldb:"
-local bridge = {}            -- callback host
--- Hosts must tear down via Datatexts:DetachFromSlot (slot frames are reused,
--- never destroyed) or entries here would pin dead frames.
-local liveSlots = {}         -- ldbName -> set of slotFrames displaying it
-local warnedPlugins = {}     -- ldbName -> true once a callback error was printed
+local bridge = {}
+local liveSlots = {}
+local warnedPlugins = {}
 
--- Display attributes that affect what RenderSlot draws; all other attribute
--- churn (chatty plugins reassign bookkeeping keys frequently) is ignored.
 local DISPLAY_KEYS = {
     text = true, value = true, suffix = true, label = true,
     icon = true, iconCoords = true,
@@ -33,8 +23,6 @@ local function GetObj(name)
     return ldb:GetDataObjectByName(name)
 end
 
--- Third-party plugin code runs inside these callbacks; contain failures so a
--- broken plugin can't break the slot host. Errors print once per session.
 local function CallPlugin(name, fn, ...)
     local ok, err = pcall(fn, ...)
     if not ok and not warnedPlugins[name] then
@@ -65,8 +53,6 @@ local function RenderSlot(slot, name)
     local size = math.max(8, floor(h) - 6)
     local parts = {}
 
-    -- slot.hideIcon: per-widget override set by the info-bar host (nil on
-    -- hosts without the setting) — text/value still render.
     local iconStr = (not slot.hideIcon) and IconString(obj, size) or nil
     if iconStr then parts[#parts + 1] = iconStr end
 
@@ -86,8 +72,6 @@ local function RenderSlot(slot, name)
     if #parts == 0 then parts[1] = name end
     text:SetText(table.concat(parts, " "))
 
-    -- Hook installed by the info-bar host for auto-width reflow; nil on
-    -- fixed-width hosts.
     if slot._quiOnWidthDirty then slot._quiOnWidthDirty() end
 end
 
@@ -136,9 +120,6 @@ end
 local function SlotOnClick(slot, button)
     local obj = GetObj(slot._quiLdbName)
     if not obj then return end
-    -- A plugin-owned tooltip frame (obj.tooltip) is not GameTooltip, so the
-    -- host's generic hide-on-click wrap misses it; drop it here so a menu the
-    -- plugin opens from OnClick isn't rendered under its own tooltip.
     if obj.tooltip and obj.tooltip.Hide then
         obj.tooltip:Hide()
     end
@@ -147,8 +128,6 @@ local function SlotOnClick(slot, button)
     end
 end
 
--- Undocumented in the LDB 1.1 spec but long supported by classic display
--- addons; some plugins rely on it.
 local function SlotOnDoubleClick(slot, button)
     local obj = GetObj(slot._quiLdbName)
     if obj and obj.OnDoubleClick then
@@ -172,9 +151,6 @@ local function RegisterObject(name)
             local frame = CreateFrame("Frame", nil, slotFrame)
             frame:SetAllPoints()
             frame._ldbName = name
-            -- Remember the owning slot on the instance frame so OnDisable
-            -- can clean up exactly this slot (the same plugin may be live
-            -- on several slot surfaces at once).
             frame._slot = slotFrame
 
             slotFrame._quiLdbName = name
@@ -184,9 +160,6 @@ local function RegisterObject(name)
             if slotFrame.RegisterForClicks then
                 slotFrame:RegisterForClicks("AnyUp")
                 slotFrame:SetScript("OnClick", SlotOnClick)
-                -- Only when the plugin defines it: a registered OnDoubleClick
-                -- handler makes the client reclassify the second rapid click
-                -- as a double-click, which would no-op for plugins without one.
                 if obj.OnDoubleClick then
                     slotFrame:SetScript("OnDoubleClick", SlotOnDoubleClick)
                 end
@@ -223,10 +196,6 @@ local function RegisterObject(name)
 end
 
 function bridge:OnObjectCreated(event, name)
-    -- Late plugin load (post initial sweep): rebuild the slot hosts so a
-    -- placed-but-empty ldb:* slot picks up the now-available datatext. The
-    -- hosts self-defer in combat, so this is at most one cheap rebuild per
-    -- late-loaded plugin.
     if RegisterObject(name) then
         if _G.QUI_RefreshInfoBar then _G.QUI_RefreshInfoBar() end
         if _G.QUI_RefreshDatapanels then _G.QUI_RefreshDatapanels() end

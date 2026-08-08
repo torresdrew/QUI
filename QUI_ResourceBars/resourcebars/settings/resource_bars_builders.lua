@@ -4,12 +4,6 @@ local Helpers = ns.Helpers
 local QUI = QUI
 local GUI = QUI and QUI.GUI
 
--- NOTE: do NOT capture `ns.QUI_Options` as a file-level local. This file is
--- loaded by the QUI addon before the on-demand QUI_Options addon is loaded;
--- at that point ns.QUI_Options is the minimal stub installed by
--- core/gui_shell.lua. Once QUI_Options/shared.lua runs it REPLACES the table,
--- so any captured local would be stale. Re-resolve at call time below.
-
 local ResourceBarsBuilders = ns.QUI_ResourceBarsSettingsBuilders or {}
 ns.QUI_ResourceBarsSettingsBuilders = ResourceBarsBuilders
 
@@ -17,10 +11,6 @@ local PAD = (ns.QUI_Options and ns.QUI_Options.PADDING) or 15
 local HEADER_GAP = 26
 local SECTION_GAP = 14
 
--- Per-spec text helpers live in resourcebars.lua and are shared via the
--- ns.QUI_ResourceBars_Internal export. That table is populated at runtime
--- (the QUI_ResourceBars addon loads before this on-demand QUI_Options file),
--- so resolve it lazily at call time rather than capturing a file-local.
 local function GetInternal()
     return ns.QUI_ResourceBars_Internal
 end
@@ -187,10 +177,6 @@ local function EnsureTextSpecOverrides(cfg, specID)
     return cfg.textSpecOverrides[specID]
 end
 
----------------------------------------------------------------------------
--- V3 BODY HELPERS (per-page, scoped via closure over the page's `y` cursor)
----------------------------------------------------------------------------
--- Shared provider-panel layout scaffold (core/settings_layout_shared.lua).
 local function MakeLayout(content)
     return ns.QUI_SettingsLayoutShared.MakeLayout(content)
 end
@@ -199,9 +185,6 @@ local function row(parent, label, widget, desc)
     return ns.QUI_Options.BuildSettingRow(parent, label, widget, desc)
 end
 
----------------------------------------------------------------------------
--- INDICATOR (BREAKPOINT) CARD
----------------------------------------------------------------------------
 local function BuildIndicatorCard(L, cfg)
     local indicatorCfg = EnsureIndicatorConfig(cfg)
     local valueProxy = CreateIndicatorValueProxy(indicatorCfg)
@@ -242,20 +225,10 @@ local function BuildIndicatorCard(L, cfg)
     L.closeSection(s)
 end
 
----------------------------------------------------------------------------
--- SEGMENT DIVIDER (TICK) CARD
----------------------------------------------------------------------------
--- Divider lines between discrete resource segments (Holy Power, Chi, combo
--- points, Soul Shards, etc.). Tick count is derived at render time from the
--- live UnitPowerMax of the active power type, so the same width covers more
--- total bar on specs with more segments. No effect on Runes or Essence: those
--- are fragmented power types and render as separate segments, not ticks.
 local function BuildSegmentCard(L, cfg)
     L.headerAt(ns.L["Segment Dividers"])
     local s = L.sectionAt()
 
-    -- Dependent rows are gated on showTicks; forward-declared so the enable
-    -- checkbox's onChange can re-sync them after each toggle.
     local thickRow, colorRow
 
     local function SyncTickRows()
@@ -280,15 +253,11 @@ local function BuildSegmentCard(L, cfg)
     colorRow = row(s.frame, ns.L["Divider Color"], colorW)
     s.AddRow(colorRow)
 
-    -- Seed initial enabled state from the saved value.
     SyncTickRows()
 
     L.closeSection(s)
 end
 
----------------------------------------------------------------------------
--- PRIMARY POWER BAR
----------------------------------------------------------------------------
 local function BuildPrimaryPowerSettings(content, _key)
     local profile = GetProfileDB()
     local primary = profile and profile.powerBar
@@ -296,7 +265,6 @@ local function BuildPrimaryPowerSettings(content, _key)
 
     local L = MakeLayout(content)
 
-    -- ENABLE
     L.headerAt(ns.L["Enable"])
     local sEnable = L.sectionAt()
     local enableW = GUI:CreateFormCheckbox(sEnable.frame, nil, "enabled", primary, RefreshPowerBars,
@@ -304,7 +272,6 @@ local function BuildPrimaryPowerSettings(content, _key)
     sEnable.AddRow(row(sEnable.frame, ns.L["Enable Primary Power Bar"], enableW))
     L.closeSection(sEnable)
 
-    -- GENERAL
     L.headerAt(ns.L["General"])
     local s1 = L.sectionAt()
 
@@ -327,7 +294,6 @@ local function BuildPrimaryPowerSettings(content, _key)
     )
     L.closeSection(s1)
 
-    -- DIMENSIONS
     L.headerAt(ns.L["Dimensions"])
     local s2 = L.sectionAt()
 
@@ -354,7 +320,6 @@ local function BuildPrimaryPowerSettings(content, _key)
     s2.AddRow(row(s2.frame, ns.L["Y Offset"], yW))
     L.closeSection(s2)
 
-    -- APPEARANCE
     L.headerAt(ns.L["Appearance"])
     local s3 = L.sectionAt()
 
@@ -367,7 +332,6 @@ local function BuildPrimaryPowerSettings(content, _key)
         row(s3.frame, ns.L["Border Size"], borderW)
     )
 
-    -- Per-bar border color (prefix "" -> primary.borderColorSource/borderColor).
     if ns.QUI_BorderControl then
         local borderSrcW, borderColorW = ns.QUI_BorderControl.Attach(
             GUI, s3.frame, primary, "", RefreshPowerBars,
@@ -385,10 +349,8 @@ local function BuildPrimaryPowerSettings(content, _key)
     end
     L.closeSection(s3)
 
-    -- BREAKPOINT INDICATORS
     BuildIndicatorCard(L, primary)
 
-    -- TEXT
     L.headerAt(ns.L["Text"])
     local s4 = L.sectionAt()
 
@@ -424,7 +386,6 @@ local function BuildPrimaryPowerSettings(content, _key)
     s4.AddRow(row(s4.frame, ns.L["Text Y Offset"], tyW))
     L.closeSection(s4)
 
-    -- COLORS
     L.headerAt(ns.L["Colors"])
     local s5 = L.sectionAt()
 
@@ -442,7 +403,6 @@ local function BuildPrimaryPowerSettings(content, _key)
     s5.AddRow(row(s5.frame, ns.L["Background Color"], bgW))
     L.closeSection(s5)
 
-    -- LOCK
     L.headerAt(ns.L["Lock"])
     local s6 = L.sectionAt()
 
@@ -459,9 +419,6 @@ local function BuildPrimaryPowerSettings(content, _key)
     return L.finish()
 end
 
----------------------------------------------------------------------------
--- SECONDARY POWER BAR
----------------------------------------------------------------------------
 local function BuildSecondaryPowerSettings(content, _key)
     local profile = GetProfileDB()
     local secondary = profile and profile.secondaryPowerBar
@@ -469,7 +426,6 @@ local function BuildSecondaryPowerSettings(content, _key)
 
     local L = MakeLayout(content)
 
-    -- ENABLE
     L.headerAt(ns.L["Enable"])
     local sEnable = L.sectionAt()
     local enableW = GUI:CreateFormCheckbox(sEnable.frame, nil, "enabled", secondary, RefreshPowerBars,
@@ -477,7 +433,6 @@ local function BuildSecondaryPowerSettings(content, _key)
     sEnable.AddRow(row(sEnable.frame, ns.L["Enable Secondary Power Bar"], enableW))
     L.closeSection(sEnable)
 
-    -- GENERAL
     L.headerAt(ns.L["General"])
     local s1 = L.sectionAt()
 
@@ -513,7 +468,6 @@ local function BuildSecondaryPowerSettings(content, _key)
     s1.AddRow(row(s1.frame, ns.L["Show Fragmented Power Bar Text"], fragW))
     L.closeSection(s1)
 
-    -- DIMENSIONS
     L.headerAt(ns.L["Dimensions"])
     local s2 = L.sectionAt()
 
@@ -540,7 +494,6 @@ local function BuildSecondaryPowerSettings(content, _key)
     s2.AddRow(row(s2.frame, ns.L["Y Offset"], yW))
     L.closeSection(s2)
 
-    -- APPEARANCE
     L.headerAt(ns.L["Appearance"])
     local s3 = L.sectionAt()
 
@@ -553,7 +506,6 @@ local function BuildSecondaryPowerSettings(content, _key)
         row(s3.frame, ns.L["Border Size"], borderW)
     )
 
-    -- Per-bar border color (prefix "" -> secondary.borderColorSource/borderColor).
     if ns.QUI_BorderControl then
         local borderSrcW, borderColorW = ns.QUI_BorderControl.Attach(
             GUI, s3.frame, secondary, "", RefreshPowerBars,
@@ -571,13 +523,10 @@ local function BuildSecondaryPowerSettings(content, _key)
     end
     L.closeSection(s3)
 
-    -- BREAKPOINT INDICATORS
     BuildIndicatorCard(L, secondary)
 
-    -- SEGMENT DIVIDERS
     BuildSegmentCard(L, secondary)
 
-    -- TEXT (with optional per-spec proxy)
     local textProxy = setmetatable({}, {
         __index = function(_, dbKey)
             if secondary.textPerSpec then
@@ -644,7 +593,6 @@ local function BuildSecondaryPowerSettings(content, _key)
     s4.AddRow(row(s4.frame, ns.L["Text Y Offset"], tyW))
     L.closeSection(s4)
 
-    -- COLORS
     L.headerAt(ns.L["Colors"])
     local s5 = L.sectionAt()
 
@@ -662,7 +610,6 @@ local function BuildSecondaryPowerSettings(content, _key)
     s5.AddRow(row(s5.frame, ns.L["Background Color"], bgW))
     L.closeSection(s5)
 
-    -- LOCK
     L.headerAt(ns.L["Lock"])
     local s6 = L.sectionAt()
 

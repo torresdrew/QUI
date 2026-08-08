@@ -1,18 +1,8 @@
--- Consolidated CDM source (canonical; the one-shot consolidation tool is retired — edit directly).
--- CDM Icon Refresh -- consolidated refresh-pass controllers for CDMIcons.
 -- Each `do -- Inlined from X ... end` block is a self-contained chunk that
--- tests load individually via load_cdm_consolidated_chunk.lua.
 
 do
 -- Inlined from cdm_icon_update_scheduler.lua
 local _, ns = ...
-
----------------------------------------------------------------------------
--- CDM Icon Update Scheduler
---
--- Private controller used by CDMIcons. It owns icon refresh cadence, fallback
--- frame coalescing, merged GCD trust state, and bar-dirty draining.
----------------------------------------------------------------------------
 
 local CDMIconUpdateScheduler = {}
 ns.CDMIconUpdateScheduler = CDMIconUpdateScheduler
@@ -220,14 +210,6 @@ do
 -- Inlined from cdm_icon_refresh_batch.lua
 local _, ns = ...
 
----------------------------------------------------------------------------
--- CDM Icon Refresh Batch
---
--- Private controller used by CDMIcons. It owns runtime-query batch accounting,
--- per-refresh DB/time hoists, edit/combat batch preparation, and stack-text
--- write requests that are consumed by cooldown-only refreshes.
----------------------------------------------------------------------------
-
 local CDMIconRefreshBatch = {}
 ns.CDMIconRefreshBatch = CDMIconRefreshBatch
 
@@ -258,8 +240,6 @@ end
 function CDMIconRefreshBatch.Create(callbacks)
     callbacks = callbacks or {}
 
-    -- Flag (not a nil stats table) because controller.stats is public surface
-    -- via GetStats(); false until the injected debugRegister activates stats.
     local statsActive = false
     local controller = {
         stats = createStats(),
@@ -373,7 +353,7 @@ function CDMIconRefreshBatch.Create(callbacks)
     if callbacks.debugRegister then
         callbacks.debugRegister(activateStats)
     else
-        activateStats() -- no gate injected (tests): eager, preserves existing behavior
+        activateStats()
     end
     return controller
 end
@@ -383,27 +363,21 @@ do
 -- Inlined from cdm_icon_refresh_walker.lua
 local _, ns = ...
 
----------------------------------------------------------------------------
--- CDM Icon Refresh Walker
---
--- Private controller used by CDMIcons. It owns broad icon-pool traversal for
--- runtime refresh passes while CDMIcons supplies renderer mutation callbacks.
----------------------------------------------------------------------------
-
 local CDMIconRefreshWalker = {}
 ns.CDMIconRefreshWalker = CDMIconRefreshWalker
 
 local pairs = pairs
 local ipairs = ipairs
 
-local measureFn -- profiler hook; bound at debug activation (nil otherwise)
+local measureFn
 local function SetupDebugInstrumentation()
-    measureFn = ns.MemAuditProfilerMeasure
+    measureFn = ns.DebugIsolate and ns.DebugIsolate(ns.MemAuditProfilerMeasure)
+        or ns.MemAuditProfilerMeasure
 end
-if ns.DebugRegister then -- gate contract: core/debug_gate.lua
+if ns.DebugRegister then
     ns.DebugRegister(SetupDebugInstrumentation)
 else
-    SetupDebugInstrumentation() -- standalone test harness: no gate, run eagerly
+    SetupDebugInstrumentation()
 end
 
 local function getIconPools(callbacks)
@@ -414,10 +388,6 @@ local function isAuraContainerType(containerType)
     return containerType == "aura" or containerType == "auraBar"
 end
 
--- Per-icon cooldown-only processing shared by RefreshCooldownOnly (all pools)
--- and RefreshRuntimeType (one pool). Resolves the icon's container, skips aura
--- containers, then runs the cooldown refresh + visibility callbacks. Returns
--- true when the icon was refreshed so the caller can bump its counter.
 local function processCooldownOnlyIcon(callbacks, icon, context, measure)
     local entry = icon and icon._spellEntry
     if not entry then return false end

@@ -1,17 +1,10 @@
 local addonName, ns = ...
 local Helpers = ns.Helpers
 
--- Fallback for NUM_BAG_FRAMES if not defined
 local NUM_BAG_FRAMES = NUM_BAG_FRAMES or 4
 
----------------------------------------------------------------------------
--- AUTO-INSERT KEYSTONE
----------------------------------------------------------------------------
-
--- Get settings from database
 local GetSettings = Helpers.CreateDBGetter("general")
 
--- Find keystone in player's bags
 local function FindKeystoneInBags()
     for bag = 0, NUM_BAG_FRAMES do
         local slots = C_Container.GetContainerNumSlots(bag)
@@ -28,7 +21,6 @@ local function FindKeystoneInBags()
     return nil, nil
 end
 
--- Insert keystone into M+ UI
 local function InsertKeystone()
     local settings = GetSettings()
     if not settings or not settings.autoInsertKey then return end
@@ -39,15 +31,12 @@ local function InsertKeystone()
     C_Container.PickupContainerItem(bag, slot)
     if C_Cursor.GetCursorItem() then
         C_ChallengeMode.SlotKeystone()
-        -- QUI's bag takeover hooks CloseAllBags (bags/takeover.lua), so this
-        -- closes the QUI bag window as well as the default bags.
         if settings.closeBagsOnKeystoneInsert then
             CloseAllBags()
         end
     end
 end
 
--- Hook when Blizzard's M+ UI loads
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
 frame:SetScript("OnEvent", function(self, event, addon)
@@ -61,7 +50,6 @@ frame:SetScript("OnEvent", function(self, event, addon)
     end
 end)
 
--- LOD catch-up: Blizzard_ChallengesUI may have loaded before this module did.
 if C_AddOns.IsAddOnLoaded("Blizzard_ChallengesUI") then
     if ChallengesKeystoneFrame then
         ChallengesKeystoneFrame:HookScript("OnShow", function()

@@ -1,85 +1,16 @@
----------------------------------------------------------------------------
--- QUI Profile Migrations
--- Shared normalization pipeline for legacy SavedVariables and profile imports.
---
--- This is the single entry point for ALL profile-level migrations.
--- Call Migrations.Run(db) from any context that activates a profile:
---   - Addon startup (init.lua OnEnable via BackwardsCompat)
---   - Module startup (main.lua QUICore:OnInitialize)
---   - Profile switch (main.lua QUICore:OnProfileChanged)
---   - Profile import (profile_io.lua via BackwardsCompat)
----------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 
 local Migrations = ns.Migrations or {}
 ns.Migrations = Migrations
--- Also expose on the QUI global so init.lua (which has no `ns` scope) can
--- reach the snapshot/restore helpers for the `/qui migration` slash command.
 if _G.QUI then _G.QUI.Migrations = Migrations end
 
--- Module-level upvalues set by Migrations.Run before iterating profiles and
--- cleared on exit. Declared here (file scope) so migration functions defined
--- anywhere in the file can reference them without forward-declaration issues.
-local _currentGlobalDB     = nil  -- db.global; for cross-profile reads (v32+)
+local _currentGlobalDB     = nil
 
----------------------------------------------------------------------------
--- Schema version history
----------------------------------------------------------------------------
--- v0–v47 = pre-5.0 history. Every step-by-step migration through v47 was
---       REMOVED in 5.0. NOTE: 4.x's header history stopped at v46, but its
---       chain carried one more (undocumented) gate — v47 =
---       ScrubRemovedImportantAuraFilter, dropping the Blizzard-removed
---       "IMPORTANT" AuraFilters flag (12.0.7) from stored unit-frame filter
---       state. The last stable release therefore shipped schema 47, which is
---       the migration floor (MIN_SUPPORTED_SCHEMA). Profiles below the floor
---       are backed up and reset; fresh profiles (stored==0) take normal init.
---
--- v48–v58 = BURNED alpha/dev numbers. None shipped in a stable release and
---       none represents an upgrade boundary that 5.0 users must traverse.
---       Never reuse them.
---
--- v59 = THE 5.0 SQUASH. Every profile at the stable v47 floor (and any
---       intermediate alpha stamp below 59) runs one direct migration to the
---       final 5.0 data model:
---         (a) RestoreBuffDebuffSplit — restore missing debuff geometry and its
---             frame anchor before the flat aura settings are consumed.
---         (b) PrunePrivateAuras — remove the retired private-aura settings.
---         (c) SeedAuraElements — convert legacy buff-border and unit-frame
---             aura settings directly into valid unified element stores, and
---             normalize existing group-frame elements in place.
---         (d) FoldDefensiveIndicatorIntoElements — replace the legacy group-
---             frame indicator with the shipped "defensives" element and fan
---             it into every non-empty override bucket in the same pass.
---         (e) PurgeOrphanContainerSatellites — remove settings left behind by
---             deleted CDM containers.
---
---       Alpha-only intermediate behavior is intentionally absent from this
---       migration. In particular, 5.0 never seeds then removes healer HoTs,
---       never emits invalid nested filter-container names as tokens, and never
---       needs repair passes for alpha-only boss-strip or HoT fan-out bugs.
---
--- When adding a new migration: bump CURRENT_SCHEMA_VERSION (next free number
--- is 60 — see the burned-numbers rule above), add a single linear gate in
--- RunOnProfile, and document the version above.
----------------------------------------------------------------------------
-local CURRENT_SCHEMA_VERSION = 59
+local CURRENT_SCHEMA_VERSION = 60
 
--- The oldest schema we still carry forward. The last 4.x stable release and
--- 5.0 alpha4 both shipped schema 47, and every step-by-step migration through
--- v47 was removed in 5.0. A profile stored below this floor is too old to
--- upgrade step-by-step; RunOnProfile backs it up, wipes it, and flags it for a
--- starter-profile reseed at login (see profile._needsStarterReseed). Fresh
--- profiles (stored==0) are NOT floored — they take the normal fresh-init path.
 local MIN_SUPPORTED_SCHEMA = 47
 
--- Exposed so the profile-import path can reject below-floor (schema < 47)
--- exports before they reach RunOnProfile (where they would otherwise trip the
--- floor and wipe the active profile they import into).
 Migrations.MIN_SUPPORTED_SCHEMA = MIN_SUPPORTED_SCHEMA
-
----------------------------------------------------------------------------
--- Shared helpers
----------------------------------------------------------------------------
 
 local function CloneValue(value)
     if type(value) ~= "table" then
@@ -92,7 +23,6 @@ local function CloneValue(value)
     end
     return copy
 end
-
 
 local SPEC_ID_CLASS_TOKEN = {
     [62] = "MAGE", [63] = "MAGE", [64] = "MAGE",
@@ -254,39 +184,7 @@ local function MergeSpecEntryLists(dst, src)
     return changed
 end
 
--- Forward declaration: defined further down (depends on _currentGlobalDB
--- and other v32-era helpers), but called from Migrations.RepairCustomTrackerSpecStorage
--- which is defined earlier in source order.
 local PromoteLegacyContainerEntriesToPerSpec
-
-
-
----------------------------------------------------------------------------
--- 1. Data format migrations (restructure raw data first)
----------------------------------------------------------------------------
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
----------------------------------------------------------------------------
--- 2. Legacy profile detection & normalization
----------------------------------------------------------------------------
-
 
 local function IsPlaceholderAnchorEntry(entry)
     if type(entry) ~= "table" then
@@ -317,13 +215,6 @@ local function IsPlaceholderAnchorEntry(entry)
         return false
     end
 
-    -- Ignore housekeeping-only entries such as hudMinWidth.
-    --
-    -- `enabled` is whitelisted because 3.0 era profiles still carry the
-    -- legacy enabled flag on ghost entries — without this, an `enabled=false`
-    -- ghost survives pruning, falls through the cleanup loop, and ends up
-    -- masking the AceDB default with a useless zero-offset CENTER anchor.
-    -- The flag itself is meaningless once the migration normalizes things.
     for key, value in pairs(entry) do
         if key ~= "parent"
             and key ~= "point"
@@ -348,12 +239,6 @@ local function IsPlaceholderAnchorEntry(entry)
     return true
 end
 
--- Buffered debug log: chat isn't available during OnInitialize/OnEnable when
--- migrations run, so we collect lines into a global table that can be dumped
--- via /qui miglog after login. The buffer is created lazily on first write.
---
--- Logging is unconditional during the v3.1.5 anchor-migration debug push.
--- Strip the MigLog calls and this helper after the bug is fixed.
 local function MigLog(fmt, ...)
     if not _G.QUI_MIGRATION_LOG then _G.QUI_MIGRATION_LOG = {} end
     local line
@@ -365,15 +250,6 @@ local function MigLog(fmt, ...)
     end
     _G.QUI_MIGRATION_LOG[#_G.QUI_MIGRATION_LOG + 1] = line
 end
-
-
-
-
-
-
----------------------------------------------------------------------------
--- 3. Feature migrations
----------------------------------------------------------------------------
 
 local function ResetCastbarPreviewModes(profile)
     if not profile or not profile.quiUnitFrames then
@@ -395,9 +271,6 @@ local function ResetCastbarPreviewModes(profile)
     end
 end
 
-
--- v59 squash step (a): restore the two-container player buff/debuff model
--- before the flat settings are consumed by SeedAuraElements.
 function Migrations.RestoreBuffDebuffSplit(profile)
     local bb = profile and profile.buffBorders
     if type(bb) == "table" then
@@ -452,11 +325,6 @@ function Migrations.RestoreBuffDebuffSplit(profile)
     end
 end
 
--- v59 squash step (b): the private-aura feature is gone (runtime consumers,
--- settings surfaces, and defaults all removed). Strip any stored privateAuras
--- subtable left behind by an older profile so it doesn't linger as dead
--- data. Mirrors the exact paths the removed defaults carried it under:
--- quiUnitFrames.player/target/focus and quiGroupFrames.party/raid.
 function Migrations.PrunePrivateAuras(profile)
     if type(profile) ~= "table" then return end
 
@@ -481,27 +349,10 @@ function Migrations.PrunePrivateAuras(profile)
     end
 end
 
--- v59 squash step (c): aura-surface unification. The three aura surfaces
--- converge on ONE model
--- (core/aura_elements.lua): a spec-bucket store `auras.elements = { ["*"] = {
--- element, ... } }` guarded by `elementsSeeded`.
---   * buffborders: flat per-strip settings -> buffAuras / debuffAuras stores.
---   * unit frames: flat per-strip settings -> auras.elements store.
---   * group frames: elements already exist -> NormalizeElement in place.
--- Runs at ADDON_LOADED, strictly before any surface renders (renders are
--- post-PEW), so the stores are seeded first. SKIPS any store already carrying
--- elementsSeeded (idempotency + never clobbers a runtime-seeded fresh profile).
--- Nil-guarded throughout; prunes ONLY known migrated keys.
--- Returns false (without seeding) if the element model isn't loaded — the
--- caller must NOT stamp in that case or the flat keys would strand
--- unmigrated behind the version gate. Unreachable in practice (migration
--- fires at ADDON_LOADED after all TOC files; headless/import callers load
--- core first); belt-and-braces only.
 function Migrations.SeedAuraElements(profile)
     local E = _G.QUI and _G.QUI.AuraElements
     if not E then return false end
 
-    -- ---- buffborders ------------------------------------------------------
     local bb = profile.buffBorders
     if type(bb) == "table" then
         local FLAG_KEYS = {
@@ -510,10 +361,6 @@ function Migrations.SeedAuraElements(profile)
                      buffFilterBigDefensive = "BIG_DEFENSIVE" },
             debuff = { debuffFilterPlayer = "PLAYER", debuffFilterRaid = "RAID",
                        debuffFilterIncludeNameplateOnly = "INCLUDE_NAME_PLATE_ONLY",
-                       -- Legacy checkbox meant "dispellable by me"; 68675
-                       -- moved that semantic to RAID (RAID_PLAYER_DISPELLABLE
-                       -- now means anyone-in-raid). Port to the token that
-                       -- preserves the user's intent.
                        debuffFilterRaidPlayerDispellable = "RAID",
                        debuffFilterCrowdControl = "CROWD_CONTROL" },
         }
@@ -521,20 +368,7 @@ function Migrations.SeedAuraElements(profile)
             if type(bb[storeKey]) == "table" and bb[storeKey].elementsSeeded then return end
             local e = E.NewFilterStripElement(auraType)
             e.id = prefix .. "s"
-            -- Frame-level enable stays a settings-level read (the runtime gates
-            -- the whole host on bb.enableBuffs/enableDebuffs), but the per-strip
-            -- element inherits the same on/off state so a disabled host does not
-            -- render a strip that would flip on the moment the host is enabled.
             e.enabled = (bb[enableKey] ~= false)
-            -- ABSENT-key resolution: this migration reads RAW SavedVariables
-            -- (Migrations.Run iterates db.sv.profiles) and AceDB never persists
-            -- unchanged defaults — an absent key means HEAD rendered the
-            -- defaults.lua value. Two DISTINCT iconSize resolutions:
-            --   * ABSENT           -> 35 (defaults.lua buff/debuffIconSize)
-            --   * PRESENT but <= 0 -> 30 (HEAD BuildZoneProfile's explicit
-            --     DEFAULT_ICON_SIZE reset for the 0 = "use default" sentinel)
-            -- perRow/spacing resolve identically on both paths (absent ->
-            -- defaults 10/0; BuildZoneProfile resolved <= 0 -> 10/2 either way).
             local size = bb[prefix .. "IconSize"]
             if type(size) == "number" then
                 e.iconSize = (size > 0) and size or 30
@@ -545,13 +379,7 @@ function Migrations.SeedAuraElements(profile)
             e.iconsPerRow = (type(perRow) == "number" and perRow > 0) and perRow or 10
             local spacing = bb[prefix .. "IconSpacing"]
             e.spacing = (type(spacing) == "number" and spacing > 0) and spacing or 2
-            -- HEAD's BuildZoneProfile capped every zone at the FIXED
-            -- BUFF_MAX_DISPLAY / DEBUFF_MAX_DISPLAY (= 40), never a setting;
-            -- the element-model default (3) would truncate the strip.
             e.maxIcons = 40
-            -- Absent grow toggles resolve to the defaults.lua values
-            -- (buff/debuffGrowLeft = true, GrowUp = false => grow LEFT from a
-            -- TOPRIGHT origin). This corner also feeds UpdateGrowAnchor.
             local growLeft = bb[prefix .. "GrowLeft"]
             if growLeft == nil then growLeft = true end
             local growUp = bb[prefix .. "GrowUp"] == true
@@ -567,9 +395,6 @@ function Migrations.SeedAuraElements(profile)
             for dbKey, token in pairs(FLAG_KEYS[prefix]) do
                 if bb[dbKey] then flags[token] = true; any = true end
             end
-            -- The engine removed NOT_CANCELABLE. Preserve the legacy checkbox
-            -- as the canonical negated CANCELABLE value, without overriding an
-            -- explicitly enabled CANCELABLE checkbox if both were stored.
             if prefix == "buff" and bb.buffFilterNotCancelable then
                 if flags.CANCELABLE == nil then flags.CANCELABLE = "exclude" end
                 any = true
@@ -578,8 +403,6 @@ function Migrations.SeedAuraElements(profile)
                 e.filterMode = "flags"
                 e.filterFlags = flags
             end
-            -- Absent fontSize rendered the defaults.lua value (12), not the
-            -- element-model default (9).
             e.duration.fontSize = (type(bb.fontSize) == "number" and bb.fontSize > 0) and bb.fontSize or 12
             e.duration.anchor = bb[prefix .. "DurationTextAnchor"] or e.duration.anchor
             e.duration.offsetX = bb[prefix .. "DurationTextOffsetX"] or e.duration.offsetX
@@ -593,10 +416,6 @@ function Migrations.SeedAuraElements(profile)
         end
         seedZone("buff", "buffAuras", "HELPFUL", "enableBuffs", true)
         seedZone("debuff", "debuffAuras", "HARMFUL", "enableDebuffs", false)
-        -- Prune every migrated per-strip key. Frame-level keys SURVIVE:
-        -- enableBuffs/enableDebuffs (per-frame master gate), hide*/fade*,
-        -- showBuffBorders/showDebuffBorders, iconSkin, externalSkinning,
-        -- borderSize, fontSize, fontOutline.
         local PRUNE_SUFFIXES = {
             "IconSize", "IconsPerRow", "IconSpacing", "GrowLeft", "GrowUp",
             "SortRule", "SortReverse", "RowSpacing", "InvertSwipeDarkening",
@@ -614,16 +433,6 @@ function Migrations.SeedAuraElements(profile)
         end
     end
 
-    -- ---- unit frames ------------------------------------------------------
-    -- Effective HEAD render defaults PER UNIT. This migration reads RAW
-    -- SavedVariables, and AceDB never persists unchanged defaults — an absent
-    -- key means HEAD rendered that unit's defaults.lua value (per-unit auras
-    -- blocks, deleted by the 5.0 defaults restructure), falling through to
-    -- HEAD's code fallback for keys no block declared (buff/debuffMaxPerRow on
-    -- non-player units -> 0, spacing on tt/pet/focus/boss -> 2). Values below
-    -- transcribed from `git show HEAD:core/defaults.lua`: iconSize + maxIcons
-    -- + offsetY are the only per-unit variations (HEAD's debuff size read the
-    -- shared `iconSize` key; only focus declared non-zero offsets and 16 max).
     local UF_HEAD_DEFAULTS = {
         player       = { buff = { iconSize = 22, maxIcons = 4,  offsetY = 0 },  debuff = { iconSize = 22, maxIcons = 4,  offsetY = 0 } },
         target       = { buff = { iconSize = 18, maxIcons = 4,  offsetY = 0 },  debuff = { iconSize = 26, maxIcons = 4,  offsetY = 0 } },
@@ -632,8 +441,6 @@ function Migrations.SeedAuraElements(profile)
         focus        = { buff = { iconSize = 20, maxIcons = 16, offsetY = -2 }, debuff = { iconSize = 20, maxIcons = 16, offsetY = 2 } },
         boss         = { buff = { iconSize = 22, maxIcons = 4,  offsetY = 0 },  debuff = { iconSize = 22, maxIcons = 4,  offsetY = 0 } },
     }
-    -- Units with no HEAD defaults block: HEAD's code fallbacks
-    -- (BuildZoneProfiles: iconSize 22, maxIcons 16, offsetY -2 buff / 2 debuff).
     local UF_HEAD_FALLBACK = {
         buff = { iconSize = 22, maxIcons = 16, offsetY = -2 },
         debuff = { iconSize = 22, maxIcons = 16, offsetY = 2 },
@@ -649,9 +456,6 @@ function Migrations.SeedAuraElements(profile)
                     local e = E.NewFilterStripElement(auraType)
                     e.id = prefix .. "s"
                     e.enabled = (a[showKey] == true)
-                    -- HEAD's UF BuildZoneProfiles used auraSettings.iconSize for
-                    -- the DEBUFF size fallback (there is no debuffIconSize key in
-                    -- the shipped defaults — only the shared `iconSize`).
                     local size = a[prefix .. "IconSize"] or ((prefix == "debuff") and a.iconSize)
                     e.iconSize = (type(size) == "number" and size > 0) and size or d.iconSize
                     e.anchor = a[prefix .. "Anchor"] or ((prefix == "buff") and "BOTTOMLEFT" or "TOPLEFT")
@@ -665,23 +469,12 @@ function Migrations.SeedAuraElements(profile)
                     if a[prefix .. "FilterMode"] == "classification" and type(a[prefix .. "Classifications"]) == "table" then
                         e.filterMode = "classify"
                         e.classifications = a[prefix .. "Classifications"]
-                        -- Legacy-master heal: pre-merge UF maps had ONLY the
-                        -- helpful/harmful master keys and derived them as
-                        -- (raid or raidInCombat). The merged model reads keys
-                        -- independently, so a legacy {raid=true} shape would
-                        -- silently lose RAID_IN_COMBAT (helpful) or fall to
-                        -- bare-polarity (harmful). Stamp the master to preserve
-                        -- pre-migration visuals exactly.
                         local c = e.classifications
                         local master = (auraType == "HELPFUL") and "helpful" or "harmful"
                         if c[master] == nil and (c.raid or c.raidInCombat) then
                             c[master] = true
                         end
                     elseif type(a[prefix .. "Filter"]) == "table" then
-                        -- Legacy UF filter store is NESTED (HEAD's BuildFilterString
-                        -- read { modifiers = {TOKEN=bool}, exclusive = "TOKEN"|nil });
-                        -- tolerate flat {TOKEN=true} variants too. Convert only
-                        -- engine tokens; container names never become filter tokens.
                         local lf = a[prefix .. "Filter"]
                         local valid = E.VALID_FILTER_TOKENS or {}
                         local flags = {}
@@ -696,9 +489,6 @@ function Migrations.SeedAuraElements(profile)
                         for tok, on in pairs(lf) do
                             if on == true and valid[tok] then flags[tok] = true end
                         end
-                        -- Preserve the removed NOT_CANCELABLE token from every
-                        -- legacy spelling as canonical !CANCELABLE. Process it
-                        -- after valid tokens so CANCELABLE=true wins conflicts.
                         local legacyNotCancelable = type(lf.modifiers) == "table"
                             and lf.modifiers.NOT_CANCELABLE == true
                         legacyNotCancelable = legacyNotCancelable
@@ -712,12 +502,6 @@ function Migrations.SeedAuraElements(profile)
                             e.filterFlags = flags
                         end
                     end
-                    -- Absent duration/stack sub-tables resolve to the HEAD
-                    -- defaults.lua declarations (player/target blocks:
-                    -- buffDuration show/fs12, debuffDuration hidden/fs10, stack
-                    -- fs10) — identical to the staged DefaultUnitAuraBucket, so
-                    -- migrated and fresh-seeded stores render the same. The
-                    -- element-model defaults (fs 9) never rendered on UF.
                     local dur = a[prefix .. "Duration"]
                     if type(dur) == "table" then
                         e.duration = { show = dur.show ~= false, fontSize = dur.fontSize or 10,
@@ -736,11 +520,6 @@ function Migrations.SeedAuraElements(profile)
                         e.stack = { show = true, fontSize = 10, anchor = "BOTTOMRIGHT",
                                     offsetX = -1, offsetY = 1, color = { 1, 1, 1, 1 } }
                     end
-                    -- "Hide Duration Swipe" was a real HEAD checkbox
-                    -- (per-zone prefixed key, shared fallback) — map it or
-                    -- the user's setting silently reverts (element default
-                    -- false re-enables the swipe permanently). reverseSwipe:
-                    -- same shared-fallback read on HEAD's live path.
                     e.hideSwipe = (a[prefix .. "HideSwipe"] == true) or (a.hideSwipe == true)
                     e.reverseSwipe = (a[prefix .. "ReverseSwipe"] == true) or (a.reverseSwipe == true)
                     e.rightClickCancel = (unitKey == "player") and (auraType == "HELPFUL")
@@ -750,7 +529,6 @@ function Migrations.SeedAuraElements(profile)
                 local buff = seedElem("buff", "HELPFUL", "showBuffs")
                 a.elements = { ["*"] = { debuff, buff } }
                 a.elementsSeeded = true
-                -- Prune migrated flat keys; unknown/sibling keys survive.
                 local PRUNE = {
                     "showBuffs", "showDebuffs", "iconSize", "iconSpacing",
                     "hideSwipe", "reverseSwipe",
@@ -761,8 +539,6 @@ function Migrations.SeedAuraElements(profile)
                 }
                 for _, k in ipairs(PRUNE) do a[k] = nil end
                 for _, prefix in ipairs({ "buff", "debuff" }) do
-                    -- Duration* scalars (buffDurationSize etc.) were PREVIEW-only
-                    -- orphans at HEAD (never live-rendered): prune, don't map.
                     for _, suffix in ipairs({ "IconSize", "Anchor", "Grow", "MaxIcons", "MaxPerRow",
                         "OffsetX", "OffsetY", "Spacing", "FilterMode", "FilterOnlyMine", "Classifications",
                         "Filter", "Duration", "Stack", "ShowStack", "StackSize", "StackAnchor",
@@ -776,11 +552,6 @@ function Migrations.SeedAuraElements(profile)
         end
     end
 
-    -- ---- group frames (normalize in place) --------------------------------
-    -- GF stores are already element-shaped at HEAD; normalize each element to
-    -- fold flat duration fields and stamp the new fields. No legacy-master heal
-    -- here: GF's HEAD classification map used the SPLIT keys directly (raid /
-    -- raidInCombat), so no master derivation to preserve.
     local gf = profile.quiGroupFrames
     if type(gf) == "table" then
         for _, groupKey in ipairs({ "party", "raid" }) do
@@ -796,26 +567,6 @@ function Migrations.SeedAuraElements(profile)
     end
 end
 
--- v59 squash step (d): fold the legacy GF
--- defensive indicator into the unified element model.
--- The indicator (healer.defensiveIndicator, its own renderer/classifier in
--- groupframes.lua) is replaced by a shipped "defensives" filterStrip element
--- (classify: bigDefensive + externalDefensive, engine-filtered). A latched
--- "*" bucket receives the shipped strip and every existing non-empty override
--- bucket receives a clone; empty overrides remain empty because they express
--- deliberate suppression. An unlatched store gets the strip from the
--- surface-aware runtime seed (Model.DefaultStripBucket). `enabled`
--- carries over ONLY when the raw SV stored enabled == true: migrations see
--- RAW profiles (no AceDB defaults merged) and the AceDB default was false on
--- BOTH surfaces, so an absent table/key means the user's effective value was
--- false. Old geometry is discarded by design (fresh-seed decision, see
--- docs/superpowers/specs/2026-07-10-defensives-fold-into-aura-elements-design.md).
--- Also strips the dead dedupeDefensives key from EVERY element store (no
--- runtime consumer since the pipeline unification) and deletes the old
--- healer.defensiveIndicator table. Self-contained (no element-model
--- dependency): plain-table injection, so no seed/repair-style bail. This literal
--- must stay field-identical to Model.DefaultStripBucket's third strip
--- (enabled excepted) — pinned by migration_schema59_defensives_fold_test.lua.
 local function BuildShippedDefensivesElement(enabled)
     return {
         id = "defensives", enabled = enabled == true, mode = "filterStrip", auraType = "HELPFUL",
@@ -885,10 +636,6 @@ function Migrations.FoldDefensiveIndicatorIntoElements(profile)
                         end
                     end
 
-                    -- Override buckets replace "*" at render time, so carry
-                    -- the shipped strip into every existing non-empty bucket.
-                    -- An existing empty bucket is deliberate suppress-intent;
-                    -- never turn it into a defensives-only bucket.
                     if base then
                         for bucketKey, bucket in pairs(elements) do
                             if IsAuraOverrideBucketKey(bucketKey)
@@ -929,27 +676,6 @@ function Migrations.FoldDefensiveIndicatorIntoElements(profile)
     return true
 end
 
----------------------------------------------------------------------------
--- v59 squash step (e): purge CDM per-container satellite settings orphaned by
--- DeleteContainer (which historically never cleaned them). A satellite is
--- orphaned when its derived container key no longer exists in
--- profile.ncdm.containers. This is its own copy of the purge logic (NOT a
--- shared call into QUI_CDM/cdm/cdm_containers.lua's PurgeContainerSatellites
--- seam) — migrations run in contexts (profile import, addon startup before
--- LOD modules load) where the CDM sub-addon may not be loaded yet. Keep the
--- customGlow suffix list in lockstep with tools/gen_new_profile_seed.lua's
--- copy. (cdm_containers.lua's PurgeContainerSatellites needs no list — it
--- prefix-matches on a known containerKey.)
----------------------------------------------------------------------------
--- Ordered longest-suffix-first: several suffixes share a tail (every
--- Pandemic*Enabled variant ends in "Enabled"), so a shorter generic suffix
--- must never be tried before the longer specific one it is a tail of, or it
--- mis-derives the container prefix (e.g. stripping bare "Enabled" from
--- "<liveKey>PandemicBuffEnabled" yields "<liveKey>PandemicBuff", which is
--- not a live container key, wrongly orphaning a LIVE key). The match loop
--- below stops at the first suffix that matches the key's tail at all
--- (break unconditionally on match, not only on delete) so this ordering is
--- load-bearing, not cosmetic.
 local CDM_GLOW_SUFFIXES = {
     "PandemicDebuffEnabled", "PandemicBuffEnabled", "PandemicEnabled",
     "Thickness", "Frequency", "GlowType", "XOffset", "YOffset", "Enabled",
@@ -995,10 +721,6 @@ function Migrations.PurgeOrphanContainerSatellites(profile)
                 for _, suffix in ipairs(CDM_GLOW_SUFFIXES) do
                     local key = k:match("^(.+)" .. suffix .. "$")
                     if key then
-                        -- First matching suffix wins and stops the search
-                        -- (see the ordering note on CDM_GLOW_SUFFIXES above).
-                        -- Only container-shaped prefixes; never touch the
-                        -- essential/utility builtin glow keys.
                         if key ~= "essential" and key ~= "utility"
                             and (key:find("^custom_") or key:find("^customBar_"))
                             and not live[key] then
@@ -1015,17 +737,6 @@ function Migrations.PurgeOrphanContainerSatellites(profile)
     return true
 end
 
----------------------------------------------------------------------------
--- Custom-tracker → CDM custom-bar helpers
---
--- Build/repair the unified ncdm.containers["customBar_<id>"] entries that
--- mirror legacy db.customTrackers bars. These are NOT migration-gated; they
--- are retained because the profile-import normalization path in
--- core/profile_io.lua calls Migrations.SyncCustomTrackerBarsToCDM and
--- Migrations.RemoveLegacyCustomBarContainers, which reach
--- EnsureCustomTrackerBarContainer / PortLegacySpecTrackerEntries /
--- RepairCustomTrackerSpecStorage and the spec-key helpers above.
----------------------------------------------------------------------------
 local CUSTOM_TRACKER_ANCHOR_PREFIX = "customTracker:"
 local CDM_CUSTOM_ANCHOR_PREFIX = "cdmCustom_"
 
@@ -1145,9 +856,6 @@ local function StampCustomBarCompatibilityDefaults(container)
     if container.activeGlowThickness == nil then container.activeGlowThickness = 2 end
     if container.activeGlowScale == nil then container.activeGlowScale = 1.0 end
 
-    -- Legacy custom trackers defaulted to fixed slots. A nil value in old
-    -- profiles means "static", while generic CDM containers treat nil as
-    -- "dynamic"; stamp the legacy default explicitly for migrated bars.
     if container.dynamicLayout == nil then
         container.dynamicLayout = false
     end
@@ -1176,8 +884,6 @@ local function CopyLegacyCustomTrackerAnchor(profile, legacyId, containerKey)
         fa[newKey] = CloneValue(fa[oldKey])
     end
 
-    -- Anything anchored to the old dynamic target should now point at the
-    -- unified CDM container resolver.
     for _, entry in pairs(fa) do
         if type(entry) == "table" and entry.parent == oldKey then
             entry.parent = newKey
@@ -1356,7 +1062,6 @@ function IsUncustomizedDefaultTrackerBar(bar)
     return true
 end
 
-
 function Migrations.RepairCustomTrackerSpecStorage(profile, globalDB)
     if type(profile) ~= "table" then return false end
     local containers = profile.ncdm and profile.ncdm.containers
@@ -1416,11 +1121,6 @@ function Migrations.RepairCustomTrackerSpecStorage(profile, globalDB)
                 end
             end
 
-            -- Defensive late pass: if any container.entries leaked back
-            -- into a spec-specific bar between v32(d) and here, promote
-            -- it through the same path. PromoteLegacyContainerEntriesToPerSpec
-            -- handles _sourceSpecID stamping internally; the wipe stays
-            -- unconditional for the no-source-spec corner case.
             if container.specSpecific == true
                and type(container.entries) == "table"
                and #container.entries > 0
@@ -1435,29 +1135,6 @@ function Migrations.RepairCustomTrackerSpecStorage(profile, globalDB)
     return changed
 end
 
-
-----------------------------------------------------------------------------
--- Promote legacy container.entries on a spec-specific customBar into the
--- canonical per-spec storage location at
--- db.global.ncdm.specTrackerSpells[containerKey][canonicalSpec].
---
--- Used by RepairCustomTrackerSpecStorage just before it clears
--- container.entries.
--- Each promoted entry is cloned and stamped with _sourceSpecID,
--- _legacySourceSpecKey, and _legacySpellbookSlot so the composer's
--- "Source: <Spec>" tooltip and "Legacy data" hint can attach to it. Real
--- spell IDs and pre-V2 drag-handler garbage both go through unconditionally
--- — the runtime icon factory renders the standard ? fallback for IDs that
--- C_Spell.GetSpellInfo can't resolve, IsPlayerSpell drives the "Not usable
--- on your current class" hint for known-but-cross-class entries, and the
--- _legacySpellbookSlot stamp drives the "Legacy data — may need review"
--- hint. The user gets visibility into what was imported instead of a
--- silently empty bar.
---
--- Returns true if anything was promoted, false otherwise. Caller still
--- wipes container.entries unconditionally so a no-source-spec-hint bar
--- ends up empty (matches prior wipe semantics in that corner case).
-----------------------------------------------------------------------------
 PromoteLegacyContainerEntriesToPerSpec = function(profile, containerKey, container, globalDB)
     if type(container) ~= "table" then return false end
     if container.specSpecific ~= true then return false end
@@ -1505,49 +1182,6 @@ PromoteLegacyContainerEntriesToPerSpec = function(profile, containerKey, contain
     return true
 end
 
-
----------------------------------------------------------------------------
--- Late migration: import action bar / micro menu / bag bar positions from
--- Blizzard Edit Mode for users whose QUI profile predates frame anchoring
--- for these bars. Runs at PLAYER_LOGIN (not at addon-init time) because it
--- depends on EditModeManagerFrame being populated and the live bar frames
--- being laid out, neither of which is guaranteed during ADDON_LOADED.
---
--- Per-bar gating:
---   1. Bar already has a real (non-placeholder) frameAnchoring entry → PROTECTED.
---      Users who positioned the bar in QUI's Layout Mode keep their position.
---   2. Live frame readable → IMPORTED. Read absolute screen coords from
---      the live frame (lets WoW resolve any anchor chain like
---      MainActionBar → MultiBar5 → ...) and write a UIParent-relative
---      anchor into profile.frameAnchoring[<key>].
---   3. Live frame missing/nil-coords → SKIPPED. Bar gets no entry from
---      this migration; sentinel still stamps so we don't retry forever.
---      Affects e.g. stance bar on a stanceless character — harmless
---      because that bar is never visible for them anyway.
---
--- Note: we deliberately do NOT skip `isInDefaultPosition` entries. Even
--- bars at Blizzard's default need to be captured as explicit QUI data,
--- otherwise the migration leaves a gap exactly where legacy users with
--- no QUI overrides need it filled — they currently get the EditMode
--- position via actionbars.lua's RestoreContainerPosition fallback, but
--- that fallback depends on the live Blizzard frame being readable at
--- apply time. Importing makes the position permanent and editable.
---
--- Sentinel: profile._abPositionsImportedFromEditMode. Stamped after the
--- first successful EditMode read regardless of how many bars actually
--- imported — this is a one-shot best-effort migration, not a "keep
--- trying until everything succeeds" loop.
---
--- Only operates on the active profile (db.profile), not all stored
--- profiles, because EditMode layouts are per-character and other profiles
--- belong to alts with potentially different EditMode setups.
----------------------------------------------------------------------------
-
--- (system, systemIndex) → { fa = frameAnchoring key, frame = global frame name }
--- Indexed by [system][systemIndex] for ActionBar (which has multiple
--- instances), and [system]["*"] for MicroMenu/Bags (single instance, no
--- systemIndex). Built lazily so the Enum reference doesn't blow up if
--- this file is loaded in a context without Blizzard's enums.
 local EM_TO_QUI = nil
 local function GetEditModeLookup()
     if EM_TO_QUI then return EM_TO_QUI end
@@ -1572,7 +1206,6 @@ local function GetEditModeLookup()
             [8]  = { fa = "bar8",      frame = "MultiBar7" },
             [11] = { fa = "stanceBar", frame = "StanceBar" },
             [12] = { fa = "petBar",    frame = "PetActionBar" },
-            -- 13 = PossessActionBar — intentionally omitted, QUI doesn't manage it
         },
         [MICRO] = { ["*"] = { fa = "microMenu", frame = "MicroMenuContainer" } },
         [BAGS]  = { ["*"] = { fa = "bagBar",    frame = "BagsBar" } },
@@ -1595,13 +1228,6 @@ local function MigrateActionBarPositionsFromEditMode(profile)
         return
     end
 
-    -- Scope gate: this migration is intended for fresh installs and
-    -- pre-3.0 legacy upgraders. RunOnProfile flags eligible profiles
-    -- (those whose pre-migration `_schemaVersion` was < 19, i.e. before
-    -- MigrateAnchoringV1) by setting `_needsLateAbImport`. Profiles
-    -- without that flag have already been through the modern anchoring
-    -- pipeline and have explicit QUI positions for any bars they care
-    -- about, so we just stamp the sentinel and return.
     if not profile._needsLateAbImport then
         MigLog("EditMode AB import: profile not flagged for late import, stamping sentinel and skipping")
         profile._abPositionsImportedFromEditMode = true
@@ -1658,11 +1284,6 @@ local function MigrateActionBarPositionsFromEditMode(profile)
         end
     end
 
-    -- One-shot best-effort: stamp the sentinel after a successful
-    -- EditMode read regardless of how many bars actually imported.
-    -- Bars that couldn't be read (e.g. stance bar on a stanceless
-    -- character) won't get retried — they're invisible for that
-    -- character anyway and don't need a frameAnchoring entry.
     profile._abPositionsImportedFromEditMode = true
     profile._needsLateAbImport = nil
 
@@ -1670,16 +1291,6 @@ local function MigrateActionBarPositionsFromEditMode(profile)
         imported, protected, skipped)
 end
 
----------------------------------------------------------------------------
--- Late entry point: migrations that depend on Blizzard runtime state
----------------------------------------------------------------------------
--- Called from QUICore PLAYER_LOGIN (after EditModeManagerFrame is loaded
--- and live frames are laid out, but before the action bar module applies
--- frameAnchoring on PLAYER_ENTERING_WORLD).
---
--- Unlike Migrations.Run, this only operates on the active profile —
--- the data sources (live frames, EditMode layout) are per-character and
--- don't apply to alts' stored profiles.
 function Migrations.RunLate(db)
     if not db then return false end
     local profile = db.profile
@@ -1687,35 +1298,6 @@ function Migrations.RunLate(db)
     MigrateActionBarPositionsFromEditMode(profile)
     return true
 end
-
----------------------------------------------------------------------------
--- Entry point: Run all profile migrations
----------------------------------------------------------------------------
---
--- Note: SeedDefaultFrameAnchoring and DEFAULT_FRAME_ANCHORING used to live
--- here. They wrote a parallel copy of default frameAnchoring entries into
--- every profile on login, bloating SVs with data AceDB already provides
--- via its defaults metatable. Removed. All frameAnchoring defaults now
--- live in core/defaults.lua as the single source of truth. AceDB serves
--- them on read, strips them on save, and no migration write is needed.
---
--- For legacy 2.55 absolute-offset profiles, MigrateAnchoring v1's
--- LEGACY255_DISCARD_ABSOLUTE handling still nils the broken entries;
--- AceDB defaults then fill in the replacements via metatable.
-
----------------------------------------------------------------------------
--- Snapshot / restore
----------------------------------------------------------------------------
--- Before the migration pipeline mutates a profile, we save a deep copy of
--- the profile under `_migrationBackup`. If a migration corrupts data, the
--- user can run `/qui migration restore [N]` to roll back to the latest
--- pre-migration state. Only the newest snapshot is retained; older builds
--- kept several full profile copies, which made SavedVariables expensive to
--- parse during login/reload.
---
--- The backup excludes `_migrationBackup` itself to prevent recursive growth,
--- and excludes legacy per-profile shipped-default snapshots because those are
--- now represented once in global storage.
 
 local BACKUP_KEY = "_migrationBackup"
 local MAX_BACKUP_SLOTS = 1
@@ -1735,16 +1317,12 @@ local function DeepCloneExcluding(value, excludedKeys)
     return copy
 end
 
--- Returns the backup container in slotted form, lazily upgrading the
--- legacy single-slot shape ({fromVersion, toVersion, savedAt, snapshot})
--- to the new {slots = {...}} shape. Returns nil if no backup exists.
 local function GetBackupContainer(profile)
     local b = profile[BACKUP_KEY]
     if type(b) ~= "table" then return nil end
     if type(b.slots) == "table" then
         return b
     end
-    -- Legacy single-slot shape — migrate in place.
     if type(b.snapshot) == "table" then
         local upgraded = { slots = { {
             fromVersion = b.fromVersion,
@@ -1766,7 +1344,6 @@ local function CreateBackup(profile, fromVersion)
         savedAt     = (time and time()) or 0,
         snapshot    = DeepCloneExcluding(profile, BACKUP_EXCLUDED_KEYS),
     }
-    -- Push to front, trim tail to MAX_BACKUP_SLOTS.
     table.insert(container.slots, 1, newEntry)
     while #container.slots > MAX_BACKUP_SLOTS do
         table.remove(container.slots)
@@ -1774,10 +1351,6 @@ local function CreateBackup(profile, fromVersion)
     profile[BACKUP_KEY] = container
 end
 
--- Restore the active profile from a migration backup slot. `slotIndex`
--- is 1-based and defaults to 1 (most recent). Wipes all current profile
--- keys (except the backup container itself) and copies the snapshot in.
--- Returns (ok, messageOrBackupInfo).
 function Migrations.Restore(profile, slotIndex)
     if type(profile) ~= "table" then
         return false, "no profile"
@@ -1803,8 +1376,6 @@ function Migrations.Restore(profile, slotIndex)
     for k, v in pairs(entry.snapshot) do
         profile[k] = DeepCloneExcluding(v, BACKUP_EXCLUDED_KEYS)
     end
-    -- After restore, the profile is back at its pre-migration version. The
-    -- backup container is preserved so the user can restore other slots.
     return true, entry
 end
 
@@ -1852,8 +1423,6 @@ local function PruneBackupContainer(profile)
     return changed
 end
 
--- Returns the full backup container ({slots = {...}}) for inspection.
--- Lazily upgrades legacy single-slot shape on read.
 function Migrations.GetBackupInfo(profile)
     if type(profile) ~= "table" then return nil end
     PruneBackupContainer(profile)
@@ -1862,10 +1431,6 @@ end
 
 Migrations.MAX_BACKUP_SLOTS = MAX_BACKUP_SLOTS
 
-
--- Clear every key on a profile table in place, preserving only the migration
--- backup container so a floored profile can still be rolled back. Used by the
--- schema-47 floor in RunOnProfile before flagging a starter-profile reseed.
 local function WipeProfileData(profile)
     for k in pairs(profile) do
         if k ~= BACKUP_KEY then
@@ -1874,28 +1439,6 @@ local function WipeProfileData(profile)
     end
 end
 
----------------------------------------------------------------------------
--- Entry point: Run all profile migrations
----------------------------------------------------------------------------
---
--- Run the full migration pipeline against a single raw profile table.
--- Accepts either db.profile (AceDB proxy) or a raw db.sv.profiles[name]
--- entry. Operates only on explicit user data — never relies on AceDB
--- default-merging, so it's safe to call against raw tables that have
--- never been touched by AceDB.
---
--- A profile's `_schemaVersion` records the last version it was migrated
--- through. The stable v47 floor upgrades through one direct v59 transform;
--- helper functions retain data-shape guards so a retry after an unavailable
--- dependency is safe.
---
--- Historical note: prior to the rewrite, CURRENT_SCHEMA_VERSION was a
--- constant `1` that never matched the actual number of migrations added
--- over time. Profiles from the 3.0 – 3.1.4 era all have `_schemaVersion=1`
--- stamped regardless of which migrations had actually run; they are
--- treated as v1 here and all post-v1 gates re-run against them, relying
--- on each migration's internal shape guards to no-op on already-migrated
--- data.
 function Migrations.RunOnProfile(profile)
     if type(profile) ~= "table" then return false end
 
@@ -1903,15 +1446,6 @@ function Migrations.RunOnProfile(profile)
 
     local stored = tonumber(profile._schemaVersion) or 0
 
-    -- === Migration floor (schema 47) ===
-    -- A profile stored below MIN_SUPPORTED_SCHEMA (47) is too old to upgrade
-    -- step-by-step: every incremental migration through v47 was removed in 5.0,
-    -- leaving the floor as the lowest schema we still carry forward. Rather than
-    -- leave it half-migrated, snapshot it, wipe it, and flag it for a Starter
-    -- Profile reseed at login — the reseed lives in QUI_Options (where the
-    -- preset string + import engine load) and prompts a reload. Fresh profiles
-    -- (stored==0) are explicitly NOT floored: they take the normal fresh-init
-    -- path through the single gate below.
     if stored > 0 and stored < MIN_SUPPORTED_SCHEMA then
         MigLog("RunOnProfile: stored=%d below floor %d — backup + reseed",
             stored, MIN_SUPPORTED_SCHEMA)
@@ -1922,13 +1456,6 @@ function Migrations.RunOnProfile(profile)
         return true
     end
 
-    -- Flag fresh profiles for the late EditMode action bar import. v19
-    -- (the removed MigrateAnchoringV1) was the first migration to write
-    -- frameAnchoring data; a fresh profile (stored==0) has none yet, so the
-    -- late EditMode import should run for it. The flag is read at PLAYER_LOGIN
-    -- by Migrations.RunLate after EditModeManagerFrame loads. Profiles at v31+
-    -- already carry anchoring data and never get the flag, so RunLate stamps
-    -- their sentinel and skips the import loop.
     if stored == 0 and not profile._abPositionsImportedFromEditMode then
         profile._needsLateAbImport = true
     end
@@ -1949,9 +1476,6 @@ function Migrations.RunOnProfile(profile)
         end
     end
 
-    -- ResetCastbarPreviewModes is a runtime sanity reset, NOT a migration —
-    -- it clears the transient previewMode flag on every load so a preview
-    -- left enabled in a prior session never persists. Always runs.
     ResetCastbarPreviewModes(profile)
 
     if stored >= CURRENT_SCHEMA_VERSION then
@@ -1959,9 +1483,6 @@ function Migrations.RunOnProfile(profile)
         return cleanupChanged
     end
 
-    -- Skip the backup for empty/fresh profiles — there's nothing worth
-    -- rolling back to. A profile is "fresh" if it has no keys other than
-    -- internal version stamps.
     local hasUserData = false
     for k in pairs(profile) do
         if k ~= "_schemaVersion" and k ~= "_defaultsVersion" and k ~= BACKUP_KEY then
@@ -1970,36 +1491,21 @@ function Migrations.RunOnProfile(profile)
         end
     end
 
-    -- Snapshot BEFORE any gate runs, so a failed/corrupt migration can
-    -- always be rolled back to the pre-pipeline state.
     if hasUserData then
         CreateBackup(profile, stored)
     end
 
-    -- v59: the complete 5.0 migration. Schema 47 is the only stable source
-    -- version, so the final transform lives behind one gate with no alpha-only
-    -- seed/remove or repair chain. Burned intermediate stamps also enter this
-    -- gate and are handled by the helpers' existing data-shape guards.
     if stored < CURRENT_SCHEMA_VERSION then
-        -- (a) restore missing debuff geometry before the flat aura settings
-        -- are consumed by the element migration.
         Migrations.RestoreBuffDebuffSplit(profile)
 
-        -- (b) private-aura feature removed; strip stored privateAuras.
         Migrations.PrunePrivateAuras(profile)
 
-        -- (c) convert the legacy aura surfaces directly to the final unified
-        -- element shape. If the model is unavailable, leave the schema stamp
-        -- untouched so the full squash retries on the next pass.
         if Migrations.SeedAuraElements(profile) == false then
             return true
         end
 
-        -- (d) fold the legacy GF defensive indicator and fan the shipped
-        -- element into all non-empty override buckets in one pass.
         Migrations.FoldDefensiveIndicatorIntoElements(profile)
 
-        -- (e) purge CDM per-container satellite settings orphaned by deletion.
         Migrations.PurgeOrphanContainerSatellites(profile)
     end
 
@@ -2007,21 +1513,9 @@ function Migrations.RunOnProfile(profile)
     return true
 end
 
--- Run migrations across every stored profile in the database. Previously
--- this function only touched db.profile (the active profile of the logged-
--- in character), leaving all other profiles frozen in their pre-migration
--- state until the user happened to log in on the matching character. Now
--- it iterates db.sv.profiles and migrates each one.
---
--- For stub db objects (e.g. profile import path) without db.sv.profiles,
--- falls back to migrating db.profile alone.
 function Migrations.Run(db)
     if not db then return false end
 
-    -- Expose db.global to migrations that need cross-profile / global
-    -- reads (e.g. v32's legacy spec-tracker port). Cleared on exit so
-    -- individual RunOnProfile calls from other entry points (profile
-    -- import, profile switch) get nil and handle its absence gracefully.
     _currentGlobalDB = db.global
 
     local sv = db.sv

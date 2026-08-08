@@ -22,7 +22,7 @@ local src = readAll("QUI_CDM/cdm/cdm_buff_layout.lua")
 
 local bodyStart = assert(src:find("local iconAuraCoalesce = CreateFrame", 1, true),
     "icon aura coalesce frame not found")
-local bodyEnd = assert(src:find("-- Subscribe to centralized aura dispatcher (player only)", bodyStart, true),
+local bodyEnd = assert(src:find("if ns.AuraEvents then", bodyStart, true),
     "icon aura coalesce end marker not found")
 local body = src:sub(bodyStart, bodyEnd)
 
@@ -45,9 +45,9 @@ assert(reanchorPos < legacyPos,
 -- aura live, last refresh pass 60s stale). The coalesce handler and the
 -- subscriber both re-fetch the viewer per-event, so install-time presence
 -- is irrelevant.
-local regionStart = assert(src:find("-- EVENT-BASED UPDATES: UNIT_AURA hook", 1, true),
+local regionStart = assert(src:find("local lastAuraIconCount = 0", 1, true),
     "event-based updates header not found")
-local regionEnd = assert(src:find("-- Hook Blizzard's BuffBarCooldownViewer", regionStart, true),
+local regionEnd = assert(src:find("InstallBarViewerLayoutHook()", regionStart, true),
     "bar viewer hook marker not found")
 local region = src:sub(regionStart, regionEnd)
 assert(region:find('AuraEvents:Subscribe("player"', 1, true),

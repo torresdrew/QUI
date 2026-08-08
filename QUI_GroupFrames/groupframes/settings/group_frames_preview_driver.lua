@@ -1,21 +1,3 @@
---[[
-    QUI Group Frames - Settings Preview Driver
-
-    Renders the docked group-frame settings preview: a mock unit-frame roster
-    that reflects every group setting live and animates via one OnUpdate ticker.
-    Aura elements follow the live ownership split: health tint, border and
-    missing raid buffs use ns.QUI_GroupFrameAuraRender with fabricated matches;
-    engine-owned filter strips and tracked icon/square/bar containers use
-    ns.AuraPreview placeholders laid out with the live pin math.
-
-    Public surface (also published as the 3 _G.QUI_*GroupFramePreview seams):
-        ns.QUI_GroupFramesPreview.Build(host)
-        ns.QUI_GroupFramesPreview.Refresh(contextMode)
-        ns.QUI_GroupFramesPreview.Teardown()
-
-    Invariants: registers no game events; never touches real party/raid frames;
-    no WoW API call at file scope (loads under a bare test ns).
-]]
 local _, ns = ...
 local function CJKFont(fs, p, s, f)
     if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
@@ -28,9 +10,6 @@ end
 local Driver = ns.QUI_GroupFramesPreview or {}
 ns.QUI_GroupFramesPreview = Driver
 
----------------------------------------------------------------------------
--- FAKE DATA POOLS (preview only — not gameplay data)
----------------------------------------------------------------------------
 local PREVIEW_BUFF_ICONS   = { 136034, 135940, 136081, 135932, 136063 }
 local FAKE_DURATIONS = { 8, 15, 30, 45, 60 }
 local DISPEL_CYCLE   = { "Magic", "Curse", "Disease", "Poison", "Bleed" }
@@ -41,7 +20,6 @@ local function NextInstanceID()
     return _fakeInstance
 end
 
--- Real spell icon when the client is present; nil under a bare test ns.
 local function ResolveSpellIcon(spellID)
     if C_Spell and C_Spell.GetSpellTexture then
         local ok, tex = pcall(C_Spell.GetSpellTexture, spellID)
@@ -50,10 +28,9 @@ local function ResolveSpellIcon(spellID)
     return nil
 end
 
--- now is injected so the builders are pure/testable (callers pass GetTime()).
 local function MakeFakeAura(icon, index, harmful, now, spellId)
     local duration = FAKE_DURATIONS[((index - 1) % #FAKE_DURATIONS) + 1]
-    local phase = ((index - 1) % 5) / 5          -- 0,.2,.4,.6,.8 — staggered fill
+    local phase = ((index - 1) % 5) / 5
     local remaining = duration * (1 - phase)
     return {
         auraInstanceID = NextInstanceID(),
@@ -69,16 +46,8 @@ local function MakeFakeAura(icon, index, harmful, now, spellId)
     }
 end
 
----------------------------------------------------------------------------
--- PURE PREVIEW HELPERS (no WoW API — math/table logic, unit-tested directly)
----------------------------------------------------------------------------
-
--- Raid preview frame-count tiers (multiples of 5, matching the step-5 sliders so
--- a slider value always renders 1:1; odd stored values snap to the nearest tier).
 local RAID_COUNT_TIERS = { 5, 10, 15, 20, 25, 30, 35, 40 }
 
--- Snap an arbitrary raid count to the nearest tier. nil -> 25 (default).
--- Clamps to [5,40]; ties round UP to the larger tier.
 function Driver._SnapRaidCount(n)
     n = tonumber(n)
     if not n then return 25 end
@@ -88,8 +57,6 @@ function Driver._SnapRaidCount(n)
     local best, bestDist = RAID_COUNT_TIERS[1], math.huge
     for _, tier in ipairs(RAID_COUNT_TIERS) do
         local dist = math.abs(tier - n)
-        -- Tiers are ascending, so on an exact tie (dist == bestDist) the later,
-        -- larger tier wins -> ties round up.
         if dist < bestDist or (dist == bestDist and tier > best) then
             best, bestDist = tier, dist
         end
@@ -97,15 +64,11 @@ function Driver._SnapRaidCount(n)
     return best
 end
 
--- Preview focus-filter keys. Each maps to an element group gated in the preview
--- ON TOP OF the normal config gates. Default all-on.
 local FILTER_KEYS = {
     "threat", "dispel", "auras", "indicators", "targetedSpells",
     "targetHighlight", "pets", "range",
 }
 
--- Normalize an arbitrary filter table to exactly FILTER_KEYS, defaulting any
--- missing key to true and dropping unknown keys.
 function Driver._NormalizeFilter(tbl)
     tbl = tbl or {}
     local out = {}
@@ -115,7 +78,6 @@ function Driver._NormalizeFilter(tbl)
     return out
 end
 
--- True unless the filter explicitly disables this key.
 function Driver._FilterAllows(filter, key)
     if not filter then return true end
     return filter[key] ~= false
@@ -126,8 +88,6 @@ local INDICATOR_TOGGLE_KEYS = {
     "showLeaderIcon", "showTargetMarker", "showPhaseIcon",
 }
 
--- Whether the underlying config feature(s) behind a focus chip are enabled.
--- Surface uses this to grey chips the user can't usefully preview.
 function Driver._ChipEnabledInConfig(vdb, chipKey)
     vdb = vdb or {}
     local ind = vdb.indicators or {}
@@ -159,9 +119,6 @@ function Driver._ChipEnabledInConfig(vdb, chipKey)
     return false
 end
 
--- One contract for both the full refresh and the aura-only refresh: the Aura
--- focus chip supplies the configured aura table when ON and nil when OFF. nil
--- drives RenderFrameAuras' complete release/hide path.
 function Driver._AuraSettingsForFilter(vdb, filter)
     if filter and filter.auras == false then return nil end
     return vdb and vdb.auras or nil
@@ -194,11 +151,6 @@ function Driver._BuildMissingRaidBuffMatches(element, now)
                 if count >= maxIcons then break end
             end
         end
-        -- Auto-detect can legitimately resolve no built-in raid buff for the
-        -- player's class (for example, Death Knight). Runtime should remain
-        -- empty in that case, but the synthetic settings preview still needs to
-        -- expose the newly-added container so its placement can be configured.
-        -- Manual mode remains exact: an empty buffChecks table previews nothing.
         if count == 0 and (not element or element.classDetection ~= false) then
             local buff = buffs[1]
             local spellID = buff.iconSpellID or (buff.ids and buff.ids[1])
@@ -211,10 +163,6 @@ function Driver._BuildMissingRaidBuffMatches(element, now)
     return out
 end
 
----------------------------------------------------------------------------
--- GRID MATH — replicate the secure-header anchor layout (offsets from the
--- roster root's TOP-LEFT; +x right, +y up; y negative = downward).
----------------------------------------------------------------------------
 local function ResolveGrow(layout)
     local g = layout and layout.growDirection
     if g == "UP" or g == "DOWN" or g == "LEFT" or g == "RIGHT" then return g end
@@ -226,9 +174,6 @@ function Driver._ComputeGridPositions(contextMode, count, layout, w, h)
     layout = layout or {}
     local grow = ResolveGrow(layout)
     local horizontal = (grow == "LEFT" or grow == "RIGHT")
-    -- Default matches the live header math (groupframes.lua CalculateHeaderSize
-    -- uses `layout.spacing or 2`); previewing an unset spacing as 0 drew the
-    -- tiles flush when the real frames have a 2px gap.
     local spacing = tonumber(layout.spacing) or 2
     local isRaid = (contextMode == "raid")
 
@@ -243,7 +188,7 @@ function Driver._ComputeGridPositions(contextMode, count, layout, w, h)
         end
         groupGrow = layout.groupGrowDirection or "RIGHT"
     else
-        perGroup = 5            -- party: single group, count <= 5
+        perGroup = 5
         colSpacing = spacing
         groupGrow = "RIGHT"
     end
@@ -251,14 +196,14 @@ function Driver._ComputeGridPositions(contextMode, count, layout, w, h)
 
     local positions = {}
     for i = 1, count do
-        local gi = math.floor((i - 1) / perGroup)   -- group index (0-based)
-        local si = (i - 1) % perGroup               -- slot index within group
+        local gi = math.floor((i - 1) / perGroup)
+        local si = (i - 1) % perGroup
         local slotStep  = si * ((horizontal and w or h) + spacing)
         local groupStep = gi * ((horizontal and h or w) + colSpacing)
         local x, y = 0, 0
         if horizontal then
             x = (grow == "RIGHT") and slotStep or -slotStep
-            y = -groupStep                                  -- columnAnchorPoint TOP
+            y = -groupStep
         else
             y = (grow == "UP") and slotStep or -slotStep
             x = (groupGrow == "LEFT") and -groupStep or groupStep
@@ -268,9 +213,6 @@ function Driver._ComputeGridPositions(contextMode, count, layout, w, h)
     return positions
 end
 
----------------------------------------------------------------------------
--- ROSTER — deterministic fake members for the mock grid.
----------------------------------------------------------------------------
 local FAKE_CLASSES = { "WARRIOR","PALADIN","PRIEST","DRUID","SHAMAN","MAGE",
     "ROGUE","HUNTER","WARLOCK","DEATHKNIGHT","MONK","DEMONHUNTER","EVOKER" }
 local FAKE_NAMES = { "Tankthor","Healena","Pwnadin","Natureza","Shamwow","Frostina",
@@ -309,9 +251,6 @@ end
 
 local ROLE_ORDER = { TANK = 1, HEALER = 2, DAMAGER = 3 }
 
--- Apply the roster settings that are visually meaningful in a synthetic
--- preview: party player/DPS filters, group/role/class grouping, name/role sort
--- and the explicit self-first pin.
 function Driver._PrepareRoster(contextMode, count, layout, gfdb)
     layout = layout or {}
     gfdb = gfdb or {}
@@ -357,22 +296,19 @@ function Driver._PrepareRoster(contextMode, count, layout, gfdb)
     return out
 end
 
----------------------------------------------------------------------------
--- DRIVER STATE + MOCK FRAME FACTORY
----------------------------------------------------------------------------
 local MAX_AURA_PREVIEW_FRAMES = 5
 
 local state = {
-    host       = nil,   -- panel.contentHost from the surface
-    root       = nil,   -- roster root frame (the measured previewCell)
-    frames     = {},    -- all mock unit frames
-    auraFrames = {},    -- subset that renders aura elements
+    host       = nil,
+    root       = nil,
+    frames     = {},
+    auraFrames = {},
     ticker     = nil,
     contextMode = "party",
-    onBuilt    = nil,   -- observer fn from the surface
+    onBuilt    = nil,
     clock      = 0,
 }
-Driver._state = state   -- exposed for later tasks in this file
+Driver._state = state
 
 local function EnsureRoot()
     if state.root and state.root:GetParent() == state.host then return state.root end
@@ -384,26 +320,12 @@ local function EnsureRoot()
 end
 Driver._EnsureRoot = EnsureRoot
 
--- Build ONE mock unit frame with the regions the preview styles + the members
--- the aura renderer reads (previewUnit/healthBar/._healthPct/._isVerticalFill/._bottomPad).
 local function CreateMockFrame(parent, fakeUnitToken)
     local f = CreateFrame("Button", nil, parent, "BackdropTemplate")
-    f.previewUnit = fakeUnitToken           -- routed through QUI_GF.GetFrameUnit
+    f.previewUnit = fakeUnitToken
     f._bottomPad = 0
-    -- Dirty-check table Chrome.ResizeHealthForPower keeps its geometry in (the
-    -- runtime uses the frame's own state entry for exactly the same purpose).
     f._chromeState = {}
 
-    -- The health bar, power bar, overlay bars, text frame, name/level/health
-    -- text, corner indicator textures, threat / target-highlight / dispel /
-    -- cleanse overlays and the portrait are ALL built by
-    -- ns.QUI_GroupFrameChrome.Apply -- the same builder DecorateGroupFrame
-    -- runs on live frames -- so preview layering IS runtime layering and there
-    -- is nothing to re-derive here.
-
-    -- Placeholder host for the elements the ENGINE draws live (filter strips,
-    -- tracked icon/square/bar): parked at the shared live aura-host level so
-    -- placeholders sit exactly where the real containers do.
     f._auraHost = CreateFrame("Frame", nil, f)
     f._auraHost:SetAllPoints(f)
     f._auraHost:SetFrameLevel(Driver._AuraHostLevel(f:GetFrameLevel()))
@@ -411,11 +333,6 @@ local function CreateMockFrame(parent, fakeUnitToken)
 end
 Driver._CreateMockFrame = CreateMockFrame
 
----------------------------------------------------------------------------
--- SETTINGS STYLING
----------------------------------------------------------------------------
--- Dispel-type seed mirrors the settings UI's 4-color palette (no Bleed) so the
--- preview border colors match what the dispel-overlay tab pickers default to.
 local DISPEL_SEED_FALLBACK = {
     Magic   = { 0.2, 0.6, 1.0 },
     Curse   = { 0.6, 0.0, 1.0 },
@@ -423,7 +340,6 @@ local DISPEL_SEED_FALLBACK = {
     Poison  = { 0.0, 0.6, 0.0 },
 }
 
--- Role atlases mirror the live builder (ns.QUI_GroupFrameRoleAtlas / ROLE_ATLAS).
 local ROLE_ATLAS_FALLBACK = {
     TANK    = "roleicon-tiny-tank",
     HEALER  = "roleicon-tiny-healer",
@@ -448,9 +364,6 @@ local function GetContextDB(gfdb, contextMode)
 end
 Driver._GetContextDB = GetContextDB
 
--- (statusbar texture resolution now comes from the shared chrome module --
--- Chrome.ApplyStatusBarTexture -- so the preview cannot pick a different one.)
-
 local function FontPath(general)
     local sm = ns.LSM
     local name = (general and general.font) or "Quazii"
@@ -465,14 +378,8 @@ local function ClassColor(class)
     return 0.6, 0.6, 0.6
 end
 
--- The shared frame chrome (core/group_frame_chrome.lua) ships in the core addon,
--- so it is always loaded before this file. Resolve it lazily anyway: the
--- headless driver tests load this file against a bare ns.
 local function GetChrome() return ns.QUI_GroupFrameChrome end
 
--- Fallback colors and the role/dispel palettes come from the modules that OWN
--- them (chrome, groupframes.lua, icon layout) so the preview cannot drift from
--- the live defaults the way its private copies did.
 local function DefaultColor(key)
     local C = GetChrome()
     local t = C and C.DEFAULT_COLORS
@@ -488,28 +395,11 @@ local function DispelPalette()
     return (IL and IL.DISPEL_DEFAULT_COLORS) or DISPEL_SEED_FALLBACK
 end
 
--- Add bottomPad to a Y offset whenever the anchor is a BOTTOM* point (mirrors the
--- live builder's BottomPadY so preview-only overlays clear the power bar).
 local function BottomPadY(anchor, offY, bottomPad)
     if anchor and anchor:find("BOTTOM") then return (offY or 0) + (bottomPad or 0) end
     return offY or 0
 end
 
----------------------------------------------------------------------------
--- SETTINGS STYLING
---
--- Everything structural -- backdrop, health bar, the three overlay bars, power
--- bar, text frame, name/level/health/status text, corner indicator textures,
--- threat / target-highlight / dispel / cleanse overlays, portrait -- is built
--- and positioned by ns.QUI_GroupFrameChrome.Apply, the SAME builder
--- DecorateGroupFrame runs on live frames. What is left here is only what a
--- preview legitimately owns: fabricated values (health percentages, sample
--- colors, mock names), the demo gating for transient states, and preview-only
--- extras (targeted-spell markers, pets, range fade).
----------------------------------------------------------------------------
-
--- Role filter for the power bar: the live path is UpdatePower ->
--- ShouldShowPowerForUnit -> Chrome.ResizeHealthForPower.
 local function PowerVisibleFor(member, power)
     if power.showPowerBar == false then return false end
     local onlyHealers, onlyTanks = power.powerBarOnlyHealers, power.powerBarOnlyTanks
@@ -520,7 +410,6 @@ local function PowerVisibleFor(member, power)
     return true
 end
 
--- Health + power VALUES and colors (geometry/texture/orientation are Chrome's).
 local function ApplyBarValues(f, member, general, power, showPower)
     local hb = f.healthBar
     if hb then
@@ -543,8 +432,6 @@ local function ApplyBarValues(f, member, general, power, showPower)
     if not showPower then pb:Hide(); return end
     pb:SetMinMaxValues(0, 100)
     pb:SetValue(80)
-    -- Default mana-blue stands in for the live power-type color; when the user
-    -- opts OUT of power-type coloring, honor the configured custom color.
     local r, g, b = 0.2, 0.4, 0.8
     if not power.powerBarUsePowerColor and power.powerBarColor then
         local c = power.powerBarColor; r, g, b = c[1] or r, c[2] or g, c[3] or b
@@ -553,9 +440,6 @@ local function ApplyBarValues(f, member, general, power, showPower)
     pb:Show()
 end
 
--- Overlay bar VALUES: Chrome already styled absorb / heal-absorb / heal-pred
--- (draw order, texture, fill origin, detached geometry, spark, outline), so
--- the preview only fills them with a representative amount and color.
 local OVERLAY_SAMPLE = {
     { key = "healPredictionBar", cfg = "healPrediction", value = 20, alpha = 0.5, r = 0.2, g = 1,   b = 0.2 },
     { key = "absorbBar",         cfg = "absorbs",        value = 25, alpha = 0.3, r = 1,   g = 1,   b = 1   },
@@ -585,7 +469,6 @@ local function ApplyHealthOverlays(f, member, vdb)
     end
 end
 
--- Name / level text CONTENT (Chrome owns font, anchors and justification).
 local function ApplyTextContent(f, member, nameCfg)
     local nt = f.nameText
     if nt then
@@ -622,7 +505,6 @@ local function ApplyTextContent(f, member, nameCfg)
     lt:Show()
 end
 
--- Build the configured health-text string from a percent + a fake max HP.
 local function FormatHealthText(style, pct, hideSymbol)
     local FAKE_MAX = 100000
     local hp = math.floor(FAKE_MAX * (pct / 100) + 0.5)
@@ -642,7 +524,6 @@ local function FormatHealthText(style, pct, hideSymbol)
     return hideSymbol and ("%d"):format(pct) or ("%d%%"):format(pct)
 end
 
--- Health text CONTENT + the ticker hook (Chrome owns font/anchor/justify).
 local function ApplyHealthText(f, health)
     local ht = f.healthText
     if not ht then return end
@@ -663,8 +544,6 @@ local function ApplyHealthText(f, health)
     end
 end
 
--- Role icon: Chrome sized and positioned frame.roleIcon; the preview picks the
--- atlas for the mock member's role and honors the per-role toggles.
 local function ApplyRoleIcon(f, member, ind, allowed)
     local icon = f.roleIcon
     if not icon then return end
@@ -678,20 +557,8 @@ local function ApplyRoleIcon(f, member, ind, allowed)
     icon:Show()
 end
 
--- No demo slots (spotlight tiles, or a roster past the demo table): every
--- transient indicator stays hidden on that tile.
 local EMPTY_DEMO = {}
 
--- indicators: readyCheck / resurrection / summon / leader / targetMarker / phase.
--- Every one of these is TRANSIENT at runtime (a ready check in progress, a
--- pending res/summon, the marked unit, the leader, a phased unit) -- drawing
--- them all on every tile stacked three CENTER-anchored icons on top of each
--- other on all five frames, which is nothing the runtime ever renders. Each
--- demos on one representative tile (INDICATOR_DEMO, assigned by
--- AssignSampleFlags); pairs that share a tile use non-overlapping anchors.
---
--- Size/anchor/offset all come from Chrome (it created and placed these exact
--- textures); the preview only decides visibility and supplies the sample art.
 local INDICATOR_ART = {
     { key = "readyCheckIcon", show = "showReadyCheck",     demo = "readyCheck",
       texture = "Interface\\RAIDFRAME\\ReadyCheck-Ready" },
@@ -712,11 +579,10 @@ local function ApplyIndicators(f, ind, allowed, demo)
             if allowed == false or not demo[spec.demo] or not ind[spec.show] then
                 tex:Hide()
             else
-                -- res/summon/phase already carry their live texture from Chrome.
                 if spec.atlas then tex:SetAtlas(spec.atlas)
                 elseif spec.texture then tex:SetTexture(spec.texture) end
                 if spec.raidIcon and SetRaidTargetIconTexture then
-                    SetRaidTargetIconTexture(tex, spec.raidIcon)  -- 8 = skull sample
+                    SetRaidTargetIconTexture(tex, spec.raidIcon)
                 end
                 tex:Show()
             end
@@ -724,8 +590,6 @@ local function ApplyIndicators(f, ind, allowed, demo)
     end
 end
 
--- threat (indicators.showThreatBorder/threatColor) on Chrome's threatBorder,
--- colored the way UpdateThreat colors it at runtime.
 local function ApplyThreat(f, ind, isSample)
     local tb = f.threatBorder
     if not tb then return end
@@ -737,8 +601,6 @@ local function ApplyThreat(f, ind, isSample)
     tb:Show()
 end
 
--- target highlight (healer.targetHighlight) on Chrome's targetHighlight,
--- colored the way UpdateTargetHighlight colors it at runtime.
 local function ApplyTargetHighlight(f, healer, isTarget)
     local th = f.targetHighlight
     if not th then return end
@@ -751,8 +613,6 @@ local function ApplyTargetHighlight(f, healer, isTarget)
     th:Show()
 end
 
--- Dispel border + native type icon on the exact Chrome objects runtime uses.
--- Each visual is independently gated by its own setting.
 local function ApplyDispelOverlay(f, healer, dispelType)
     local ov = f.dispelOverlay
     if not ov then return end
@@ -781,8 +641,6 @@ local function ApplyDispelOverlay(f, healer, dispelType)
     end
 end
 
--- cleanse-ready glow shares the dispellable sample with the border but has its
--- own enable/color settings and can run with the border disabled.
 local function ApplyCleanseGlow(f, healer, hasDispellable)
     local glow = f.cleanseGlow
     if not glow then return end
@@ -798,15 +656,11 @@ local function ApplyCleanseGlow(f, healer, hasDispellable)
     glow:Show()
 end
 
--- Portrait: Chrome built and anchored the bordered frame; the preview fills it
--- with a flat swatch (there is no unit to portrait).
 local function ApplyPortraitTint(f)
     local tex = f.portraitTexture
     if tex then tex:SetColorTexture(0.15, 0.15, 0.2, 1) end
 end
 
--- targetedSpells (enabled/maxIcons/iconSize/reverseSwipe/growDirection/spacing/
---   position/offsetX/Y) — representative enemy-cast markers on sampled frames.
 local TARGETED_SPELL_SAMPLES = { 135807, 136197, 136201, 135826, 135818 }
 local function ApplyTargetedSpells(f, targeted, sampleCount, allowed)
     f._targetedSpellIcons = f._targetedSpellIcons or {}
@@ -878,7 +732,6 @@ local function ApplyTargetedSpells(f, targeted, sampleCount, allowed)
     end
 end
 
--- range fade (range.enabled/outOfRangeAlpha) — apply reduced alpha to demo frames.
 local function ApplyRangeFade(f, range, outOfRange)
     if range and range.enabled and outOfRange then
         f:SetAlpha(tonumber(range.outOfRangeAlpha) or 0.4)
@@ -887,7 +740,6 @@ local function ApplyRangeFade(f, range, outOfRange)
     end
 end
 
--- pets (pets.enabled/width/height/anchorTo) — one attached mock pet frame.
 local function ApplyPets(f, pets, hasPet)
     if not pets or not pets.enabled or not hasPet then
         if f._petFrame then f._petFrame:Hide() end
@@ -914,9 +766,6 @@ local function ApplyPets(f, pets, hasPet)
     pet:Show()
 end
 
--- Party target companion: mirrors groupframes_party_targets.lua's dimensions,
--- four-way anchor, gap and name visibility. It is ordinary frame chrome, not a
--- transient highlight, so the Highlights focus chip never suppresses it.
 local function ApplyCompanionAnchor(frame, memberFrame, cfg)
     local gap = tonumber(cfg and cfg.anchorGap) or 2
     local side = (cfg and cfg.anchorTo) or "BOTTOM"
@@ -984,12 +833,6 @@ local function ApplyPartyTarget(f, member, cfg, general, contextMode)
     target:Show()
 end
 
--- Orchestrator: style a mock tile from EVERY group-frame setting.
--- Step 1 hands the tile to the LIVE builder (ns.QUI_GroupFrameChrome.Apply);
--- steps 2+ add only what a preview owns -- fabricated values, demo gating and
--- the preview-only extras. `member._sampleTarget/._sampleThreat/._sampleDispel/
--- ._samplePet/._sampleOOR/._sampleIndicators` are representative flags set by
--- the roster builder so a single tile demos each single-unit feature.
 local function ApplyFrameSettings(f, member, vdb, gfdb, contextMode)
     local general = vdb.general or {}
     local health  = vdb.health or {}
@@ -999,25 +842,15 @@ local function ApplyFrameSettings(f, member, vdb, gfdb, contextMode)
     local Chrome = GetChrome()
     if not Chrome or not Chrome.Apply then return end
 
-    -- 1. The shared builder: skeleton + every settings-driven geometry, font,
-    --    texture and frame level. Identical call the live frames get, including
-    --    the state table it reseeds -- tiles are POOLED, so without that reseed
-    --    the second refresh would leave a role-filtered tile with the power-bar
-    --    gap this pass just rewrote from the global setting.
     f._chromeState = f._chromeState or {}
     Chrome.Apply(f, vdb, f._chromeState)
 
-    -- 2. Per-unit power visibility (role filters) -- live does this from
-    --    UpdatePower; it re-anchors the health bar and rewrites f._bottomPad.
     local showPower = PowerVisibleFor(member, power)
     Chrome.ResizeHealthForPower(f, vdb, showPower, f._chromeState)
     f._isVerticalFill = (health.healthFillDirection == "VERTICAL")
 
-    -- 3. Fabricated values + content.
     ApplyBarValues(f, member, general, power, showPower)
     ApplyHealthOverlays(f, member, vdb)
-    -- Name, level and health text are baseline frame chrome, not highlights:
-    -- focus chips may hide demo effects but must never erase ordinary text.
     ApplyTextContent(f, member, vdb.name or {})
     ApplyHealthText(f, health)
     ApplyPortraitTint(f)
@@ -1034,7 +867,6 @@ local function ApplyFrameSettings(f, member, vdb, gfdb, contextMode)
     ApplyDispelOverlay(f, vdb.healer, sampleDispel)
     ApplyCleanseGlow(f, vdb.healer, sampleDispel ~= nil and sampleDispel ~= "Bleed")
 
-    -- 4. Preview-only extras (no live counterpart on the frame itself).
     ApplyTargetedSpells(f, vdb.targetedSpells, member._sampleTargetedSpells,
         F.targetedSpells ~= false)
     ApplyPets(f, vdb.pets, member._samplePet == true and F.pets ~= false)
@@ -1043,26 +875,15 @@ local function ApplyFrameSettings(f, member, vdb, gfdb, contextMode)
 end
 Driver._ApplyFrameSettings = ApplyFrameSettings
 
----------------------------------------------------------------------------
--- ASSEMBLY: aura render, lifecycle, ticker, spotlight, seams
----------------------------------------------------------------------------
 local state = Driver._state
--- Seven raid members cover the deterministic tank/healer/DPS role samples.
--- Party remains capped by its five-member roster.
 local AURA_PREVIEW_LIMIT = 7
 
--- AURA ELEMENTS: renderer-owned modes use fabricated matches; engine-owned
--- containers use placeholders because they require real unit auras. ----------
 local function GetPreviewSpecID()
     local idx = GetSpecialization and GetSpecialization()
     if idx and GetSpecializationInfo then return (GetSpecializationInfo(idx)) end
     return nil
 end
 
--- healthTint tracked previews as a health-bar tint (not an icon slot), so it
--- rides the real renderer and needs a fake match keyed by a tracked spell for
--- RenderHealthTint to find an "active" aura. The icon field is irrelevant for a
--- tint, so a helpful placeholder is fine.
 local function BuildHealthTintMatches(element, now)
     local out = {}
     local spells = element.spells
@@ -1076,12 +897,6 @@ local function BuildHealthTintMatches(element, now)
     return out
 end
 
--- Placeholder pin that mirrors the LIVE unit-frame path (RenderIcon,
--- groupframes_aura_render.lua) instead of the generic default:
---   * icon corner = IconLayout.GetIconAnchorForGrow(anchor, grow). The generic
---     derivation takes its horizontal side from the grow direction alone, so a
---     column-growing strip on a RIGHT-side anchor pinned the wrong corner.
---   * BOTTOM-anchored strips add frame._bottomPad so they clear the power bar.
 local function MakeAuraPin(f, profileOverrides)
     return function(element)
         local G = ns.AuraGlue
@@ -1098,10 +913,6 @@ local function MakeAuraPin(f, profileOverrides)
 end
 Driver._MakeAuraPin = MakeAuraPin
 
--- Real spell art for tracked placeholders: the element names its spells, so a
--- preview has no excuse for question marks. Filter strips stay generic -- their
--- content is whatever the engine's filter matches at runtime, which is exactly
--- what the placeholder's "worst-case footprint" is standing in for.
 local function MakePlaceholderIcon(element, index)
     if element.mode ~= "tracked" then return nil end
     local spells = element.spells
@@ -1116,9 +927,6 @@ local function ColorComponents(color)
         color.a or color[4] or 1
 end
 
--- Harmful placeholders cycle through the same dispel types used by the live
--- engine. Per-element custom colors take precedence over the shared default
--- palette, exactly as AuraSkin's registered dispel texture options do.
 local function MakePreviewDispelColor(vdb)
     local healer = vdb and vdb.healer
     local overlay = healer and healer.dispelOverlay
@@ -1133,14 +941,6 @@ local function MakePreviewDispelColor(vdb)
 end
 Driver._MakePreviewDispelColor = MakePreviewDispelColor
 
--- WHICH ELEMENTS THE RENDERER DRAWS is not the preview's call: it asks the live
--- module (QUI_GFA.EngineRendersElement). At runtime only missingRaidBuff and the
--- healthTint/border feeders go through ns.QUI_GroupFrameAuraRender; filter strips
--- and tracked icon/square/bar are drawn by a secure CustomAuraContainer that the
--- ENGINE fills from real unit auras. A preview cannot feed that container fake
--- data, so those elements get placeholders (ns.AuraPreview) laid out with the
--- live layout math -- and dispatching them through the renderer instead would
--- resurrect the pre-cutover path the live release reconciliation tears down.
 local function RenderFrameAuras(f, member, auras, now)
     local Render  = ns.QUI_GroupFrameAuraRender
     local Model   = ns.QUI_GroupFramesAuraModel
@@ -1148,8 +948,6 @@ local function RenderFrameAuras(f, member, auras, now)
     local GFA     = ns.QUI_GroupFrameAuras
     if not Render or not Model or not Model.ActiveElementsForSpec then return end
     if auras and Model.EnsureSeeded then Model.EnsureSeeded(auras, state.contextMode) end
-    -- Placeholders live on the dedicated host at the shared live container
-    -- level, never on `f` itself -- see CreateMockFrame.
     local auraHost = f._auraHost or f
 
     if not auras or auras.enabled == false then
@@ -1160,15 +958,8 @@ local function RenderFrameAuras(f, member, auras, now)
         return
     end
 
-    -- Preview the bucket the EDITOR is on (per-context), not the player's live
-    -- spec -- otherwise editing "All Specs" while your current spec has its own
-    -- bucket shows the wrong auras. nil (no editor push yet) falls back to live
-    -- spec so the preview is sensible before the auras tab is ever opened.
     local bucketKey = state.previewBucket and state.previewBucket[state.contextMode]
     if bucketKey == nil then bucketKey = GetPreviewSpecID() end
-    -- ActiveElementsForSpec drops `enabled == false` elements, so a disabled
-    -- element is absent here: the renderer release pass below reclaims its
-    -- widgets and AuraPreview hides its surplus placeholders.
     local elements = Model.ActiveElementsForSpec(auras, bucketKey)
     local gfdb = Driver._GetGFDB()
     local vdb = Driver._GetContextDB(gfdb, state.contextMode)
@@ -1192,7 +983,6 @@ local function RenderFrameAuras(f, member, auras, now)
                 if element.mode == "missingRaidBuff" then
                     matches = Driver._BuildMissingRaidBuffMatches(element, now)
                 else
-                    -- healthTint / border: frame-level feeders keyed by spellID.
                     matches = BuildHealthTintMatches(element, now)
                 end
                 work[#work + 1] = { element = element, matches = matches }
@@ -1211,8 +1001,6 @@ local function RenderFrameAuras(f, member, auras, now)
         })
     end
 
-    -- Release any renderer-owned element from last pass that is gone now
-    -- (disabled, deleted, moved bucket, or flipped to a container display type).
     local prev = f._previewAuraIDs
     if prev then
         for id in pairs(prev) do
@@ -1224,15 +1012,12 @@ local function RenderFrameAuras(f, member, auras, now)
 end
 Driver._RenderFrameAuras = RenderFrameAuras
 
--- FRAME DIMENSIONS (mirror groupframes.lua GetFrameDimensions) --------------
 local function GetMockDimensions(vdb, contextMode, count)
     local Chrome = GetChrome()
     if not Chrome or not Chrome.FrameDimensions then return 200, 40 end
     return Chrome.FrameDimensions(vdb, Chrome.DimensionMode(count, contextMode))
 end
 
--- Teardown helper: hide every pooled frame (frames are POOLED, never destroyed,
--- so a refresh reuses them rather than orphaning the old set).
 local function ReleaseFrames()
     local Render = ns.QUI_GroupFrameAuraRender
     for _, f in ipairs(state.framePool or {}) do
@@ -1243,14 +1028,6 @@ local function ReleaseFrames()
     state.auraFrames = {}
 end
 
--- Pick representative frames to demo single-frame features (threat/target/
--- dispel/pet/out-of-range). Match the value each Apply* function checks for.
---
--- INDICATOR_DEMO does the same for the six transient corner indicators: one
--- tile each so the preview shows what the runtime shows (a ready check on one
--- unit, a pending res on another) instead of three CENTER icons stacked on
--- every tile. Tiles that share a slot use anchors that cannot collide (leader
--- TOP + target marker TOPRIGHT).
 local INDICATOR_DEMO = {
     [1] = { leader = true, targetMarker = true },
     [2] = { phase = true },
@@ -1260,10 +1037,6 @@ local INDICATOR_DEMO = {
 }
 Driver._INDICATOR_DEMO = INDICATOR_DEMO
 
--- Put an attached Pet sample on the roster's OUTER edge whenever its anchor
--- points along the party growth axis. A BOTTOM pet on the first tile of a
--- DOWN-growing party otherwise lands directly on top of tile 2 and looks like
--- an unexplained full-frame overlay.
 function Driver._EdgeSampleIndex(count, grow, anchorTo)
     if not count or count < 1 then return nil end
     grow = grow or "DOWN"
@@ -1298,7 +1071,6 @@ local function AssignSampleFlags(roster, count, vdb, layout)
 end
 Driver._AssignSampleFlags = AssignSampleFlags
 
--- ANIMATION TICKER ---------------------------------------------------------
 local function OscillateHealth(base, phase, clock)
     local v = base + math.sin((clock + phase) * 0.6) * 18
     if v < 1 then v = 1 elseif v > 100 then v = 100 end
@@ -1331,8 +1103,6 @@ end
 
 function Driver._EnsureTicker()
     if state.ticker then
-        -- The options window (and our host) is rebuilt on theme change; re-parent
-        -- so the OnUpdate keeps firing instead of riding a torn-down host.
         if state.host and state.ticker:GetParent() ~= state.host then
             state.ticker:SetParent(state.host)
         end
@@ -1363,9 +1133,6 @@ function Driver._EnsureTicker()
     return state.ticker
 end
 
--- SPOTLIGHT (raid only) — a separate mock cluster shown when enabled.
--- gridRight = horizontal extent of the main grid (root is sized 1x1, so we
--- must NOT read root:GetWidth()).
 function Driver._SpotlightOffset(index, w, h, spacing, orientation, grow)
     local n = index - 1
     local horizontal = orientation == "HORIZONTAL" or grow == "LEFT" or grow == "RIGHT"
@@ -1459,11 +1226,6 @@ function Driver._RenderSpotlight(root, vdb, gfdb, now, gridRight)
     end
 end
 
--- One "Group N" label per raid subgroup block in the preview, anchored to the
--- block's first frame (block origin). Mirrors the live per-group header. Gated to
--- raid + groupBy==GROUP + showGroupNumber; pooled/hidden otherwise. Labels live on
--- a high-level overlay host so they sit above the member frames (a fontstring on
--- root would be buried under the child frames -- same lesson as the _textFrame fix).
 function Driver._RenderGroupLabels(vdb, layout, count)
     state.groupLabelPool = state.groupLabelPool or {}
     local pool = state.groupLabelPool
@@ -1493,9 +1255,6 @@ function Driver._RenderGroupLabels(vdb, layout, count)
     local offY = tonumber(s.groupNumberOffsetY) or 0
     local c = s.groupNumberTextColor or { 1, 1, 1, 1 }
 
-    -- Place the label OUTSIDE the block on the chosen side (TOP anchor => label's
-    -- BOTTOM pinned to the block's TOP, so it sits above the group, not inside the
-    -- first unit). Mirrors the live UpdateRaidGroupLabel mapping. CENTER stays inside.
     local anchor = s.groupNumberAnchor or "TOPRIGHT"
     local selfPoint, blockPoint = anchor, anchor
     if anchor == "CENTER" then
@@ -1535,7 +1294,6 @@ function Driver._RenderGroupLabels(vdb, layout, count)
     end
 end
 
--- LIFECYCLE ----------------------------------------------------------------
 function Driver.Refresh(contextMode)
     if not state.host then return end
     state.contextMode = (contextMode == "raid") and "raid" or "party"
@@ -1551,10 +1309,6 @@ function Driver.Refresh(contextMode)
     end
 
     local root = Driver._EnsureRoot()
-    -- Mock frames are POOLED, not recreated each refresh. Refresh fires on every
-    -- settings onChange (every slider tick); creating fresh frames would orphan
-    -- the old ones (WoW frames can't be destroyed) and leak. Reuse pool[1..count]
-    -- and hide the surplus.
     state.framePool = state.framePool or {}
     state.frames = {}
     state.auraFrames = {}
@@ -1610,7 +1364,6 @@ function Driver.Refresh(contextMode)
 
     Driver._RenderGroupLabels(vdb, layout, count)
 
-    -- Hide pooled frames beyond the current count (e.g. raid 25 -> party 5).
     for i = count + 1, #state.framePool do
         local f = state.framePool[i]
         if f then
@@ -1619,24 +1372,15 @@ function Driver.Refresh(contextMode)
         end
     end
 
-    -- Always call _RenderSpotlight: on party (or raid with spotlight disabled)
-    -- it self-guards and clears any stale spotlight frames left from a prior
-    -- raid refresh, so a raid->party switch doesn't leave them on screen.
     local gridRight = (maxX - minX) + w + pad
     Driver._RenderSpotlight(root, vdb, gfdb, now, gridRight)
 
-    root:SetSize(1, 1)   -- the surface measures the descendant union, not root size
+    root:SetSize(1, 1)
     if state.onBuilt then
         state.onBuilt(nil, { previewCell = root })
     end
 end
 
--- Lightweight refresh used by the aura editor: re-dispatch ONLY the aura
--- preview tiles, skipping the full per-tile restyle in Refresh (up to 40 tiles
--- × ~15 Apply* subsystems). The aura editor only mutates aura element config --
--- never tile geometry/health/etc -- so the heavy restyle is wasted work on
--- every keystroke/slider tick. Falls back to a full Refresh when the preview
--- has not been built yet (no aura tiles to reuse).
 function Driver.RefreshAuras()
     if not state.host then return end
     if not state.auraFrames or #state.auraFrames == 0 then
@@ -1671,16 +1415,10 @@ function Driver.Teardown()
     if state.ticker then state.ticker:Hide() end
 end
 
--- GLOBAL SEAMS — the options surface calls these (replaces the old composer
--- definitions). Guarded callers tolerate nil before this LOD file loads.
 _G.QUI_BuildGroupFramePreview = function(host, contextMode)
     Driver.Build(host)
     Driver.Refresh(contextMode)
 end
--- Refresh coalescer: a single discrete settings change can fan out into several
--- onChange pings within one frame (editor rebuild + per-widget callbacks +
--- section reflow). Collapse them into one rebuild on the next frame. A queued
--- full refresh supersedes an aura-only one.
 local function FlushPreviewRefresh()
     state._refreshScheduled = false
     local kind = state._pendingRefresh
@@ -1710,12 +1448,6 @@ local function ScheduleRefresh(kind, contextMode)
     end
 end
 
--- aurasOnly=true requests the lightweight aura-tile-only rebuild (see
--- Driver.RefreshAuras); omitted/false does the full per-tile restyle. Kept a
--- single seam (no new _G global) for the assignment ratchet.
--- bucketKey (optional): the spec bucket the auras editor currently has selected
--- ("*" = All Specs, or a specID). Set synchronously here so the coalesced flush
--- reads the latest; omitted/nil leaves the prior binding untouched.
 _G.QUI_RefreshGroupFramePreview = function(contextMode, aurasOnly, bucketKey)
     if bucketKey ~= nil then
         local cm = (contextMode == "raid") and "raid" or "party"

@@ -1,66 +1,21 @@
---[[
-    QUI Raid Markers Bar / Leader Toolbar — Owned Engine
-    Row 1: secure buttons that place raid target markers (skull / cross / etc.)
-    on the current target via the blessed type="raidtarget" action.
-    Row 2: secure buttons that place world markers (flares) on the ground via
-    the blessed type="worldmarker" action (left-click places / re-places,
-    right-click clears — mirroring Blizzard's own raid manager UX), plus a
-    clear-all-flares button.
-    Row 3: a leader action strip — ready check, role poll, pull countdown.
-    These are plain (insecure) buttons: DoReadyCheck / InitiateRolePoll /
-    DoCountdown are callable from normal code.
-
-    Rows 2 and 3 are leader-gated by default: they appear only while the
-    player is group leader (or raid assist), driven by a coalesced
-    GROUP_ROSTER_UPDATE / PARTY_LEADER_CHANGED watcher (GRU fires in bursts).
-
-    Combat-safety contract is cloned from totems.lua: secure attributes are set
-    OUT OF COMBAT only (deferred via pendingReconcile), button/container geometry
-    is never changed in combat (LayoutButtons / StyleButton / PositionContainer all
-    bail or skip SetSize in combat), and visibility is alpha-only (the container
-    parents secure children so its Show/Hide and EnableMouse are protected).
-    The strip buttons are not secure, but they live in the same container and
-    follow the same alpha-only visibility rules for uniformity.
-
-    Unlike totems there is no per-slot active state: all configured marker buttons
-    are shown whenever the bar is enabled. Placing markers requires raid lead /
-    assist in a group; the secure click silently no-ops without it (a UX note, not
-    a taint issue).
-]]
-
 local ADDON_NAME, ns = ...
 
----------------------------------------------------------------------------
--- MODULE NAMESPACE
----------------------------------------------------------------------------
 local RaidMarkersBar = {}
 ns.QUI_RaidMarkersBar = RaidMarkersBar
 
 local QUICore = ns.Addon
 local Helpers = ns.Helpers
 
--- 8 raid target markers (1 = star, … 8 = skull).
 local MAX_MARKERS = 8
 local BASE_CROP = 0.08
 
--- World markers project the same 8 symbols onto the ground, but the world
--- marker INDEX for a symbol differs from its raid target index. Our buttons
--- show symbol i (star-first UI-RaidTargetingIcon_i), so slot i must place
--- the world marker whose flare shows symbol i. In Blizzard terms that is
--- WORLD_RAID_MARKER_ORDER[9 - i]: their manager buttons are skull-first
--- (atlas GM-raidMarker(ReverseMarkerID(id)) with ReverseMarkerID = 9 - id).
--- Star-first result: star→5 (yellow), circle→6 (orange), diamond→3 (purple),
--- triangle→2 (green), moon→7 (silver), square→1 (blue), cross→4 (red),
--- skull→8 (white).
 local MAX_WORLD_MARKERS = 8
 local WORLD_MARKER_ORDER = { 5, 6, 3, 2, 7, 1, 4, 8 }
 
--- Per-marker icon textures (individual files, indexed 1-8).
 local function MarkerTexture(i)
     return "Interface\\TargetingFrame\\UI-RaidTargetingIcon_" .. i
 end
 
--- Performance: cache frequently-called globals as locals
 local CreateFrame = CreateFrame
 local UIParent = UIParent
 local InCombatLockdown = InCombatLockdown
@@ -68,9 +23,6 @@ local C_Timer = C_Timer
 local math_floor = math.floor
 local L = ns.L
 
----------------------------------------------------------------------------
--- COMBAT-SAFE SHOW / HIDE (alpha + mouse enable; never Show/Hide secure children)
----------------------------------------------------------------------------
 local pendingReconcile = false
 local HideAllButtons
 
@@ -94,14 +46,8 @@ local function SafeHideButton(btn)
     btn:EnableMouse(false)
 end
 
----------------------------------------------------------------------------
--- DATABASE ACCESS
----------------------------------------------------------------------------
 local GetDB = Helpers.CreateDBGetter("raidMarkersBar")
 
----------------------------------------------------------------------------
--- GROW DIRECTION HELPERS
----------------------------------------------------------------------------
 local function GrowAnchor(growDir)
     if growDir == "RIGHT" then return "LEFT"
     elseif growDir == "LEFT" then return "RIGHT"
@@ -125,14 +71,9 @@ local function GetAnchorPosition(frame, anchor)
     return x, y
 end
 
----------------------------------------------------------------------------
--- LEADERSHIP STATE (drives visibility of the world-marker and strip rows)
----------------------------------------------------------------------------
 local isLeaderish = false
 
 local function ComputeLeaderish()
-    -- UnitIsGroupLeader/Assistant are secret-capable under identity
-    -- restriction; probe FIRST — `or`/`==` on a secret throws.
     if IsInRaid() then
         local lead = UnitIsGroupLeader("player")
         if Helpers.IsSecretValue(lead) then return false end -- @secret-policy: reject-secret-value — unreadable rank hides the leader rows
@@ -148,24 +89,17 @@ local function ComputeLeaderish()
     return false
 end
 
----------------------------------------------------------------------------
--- BAR CONTEXT (whole-bar gate: optionally only inside dungeons and raids)
----------------------------------------------------------------------------
 local function InDungeonOrRaid()
     local inInstance, instanceType = IsInInstance()
     return inInstance and (instanceType == "party" or instanceType == "raid") or false
 end
 
--- Preview always shows the bar so it can be positioned anywhere.
 local function IsBarContextActive(db)
     if RaidMarkersBar.previewing then return true end
     if not db or not db.onlyInInstances then return true end
     return InDungeonOrRaid()
 end
 
----------------------------------------------------------------------------
--- SECURE ATTRIBUTES (set OOC only; deferred in combat)
----------------------------------------------------------------------------
 local function SetMarkerAction(btn, marker)
     if not btn or not marker then return end
     if InCombatLockdown() then
@@ -175,7 +109,6 @@ local function SetMarkerAction(btn, marker)
         return
     end
     if btn._secureMarker == marker then return end
-    -- type="raidtarget" + marker N + action "toggle" on the current target.
     btn:SetAttribute("type", "raidtarget")
     btn:SetAttribute("type1", "raidtarget")
     btn:SetAttribute("*type1", "raidtarget")
@@ -195,9 +128,6 @@ local function SetWorldMarkerAction(btn, displayIndex)
         return
     end
     if btn._secureWorldMarker == marker then return end
-    -- type="worldmarker": left-click places / re-places the flare
-    -- (action1 "set"), right-click clears it (action2 "clear") — the same
-    -- UX as Blizzard's raid manager, which never uses "toggle" for flares.
     btn:SetAttribute("type", "worldmarker")
     btn:SetAttribute("type1", "worldmarker")
     btn:SetAttribute("*type1", "worldmarker")
@@ -217,9 +147,6 @@ local function SetWorldClearAction(btn)
         return
     end
     if btn._secureWorldClear then return end
-    -- "clear" with NO marker attribute → ClearRaidMarker(nil) clears ALL
-    -- world markers (SECURE_ACTIONS.worldmarker passes the nil through;
-    -- same behavior as Blizzard's /cwm with no argument).
     btn:SetAttribute("type", "worldmarker")
     btn:SetAttribute("type1", "worldmarker")
     btn:SetAttribute("*type1", "worldmarker")
@@ -227,9 +154,6 @@ local function SetWorldClearAction(btn)
     btn._secureWorldClear = true
 end
 
----------------------------------------------------------------------------
--- CONTAINER + BUTTON CREATION
----------------------------------------------------------------------------
 local container = CreateFrame("Frame", "QUI_RaidMarkersBar", UIParent)
 container:SetFrameStrata("MEDIUM")
 container:SetSize(1, 1)
@@ -240,9 +164,6 @@ container:SetClampedToScreen(true)
 container:SetAlpha(0)
 container.visible = false
 
--- Container parents SecureActionButtonTemplate children → EnableMouse is
--- protected in combat. Toggle deferred via pendingReconcile; alpha + visible
--- flag remain combat-safe.
 local function ShowContainer()
     container:SetAlpha(1)
     container.visible = true
@@ -265,8 +186,8 @@ end
 
 RaidMarkersBar.container = container
 RaidMarkersBar.buttons = {}
-RaidMarkersBar.worldRow = {}   -- 8 flare buttons + the clear-all button
-RaidMarkersBar.stripRow = {}   -- ready check / role poll / pull countdown
+RaidMarkersBar.worldRow = {}
+RaidMarkersBar.stripRow = {}
 RaidMarkersBar.enabled = false
 
 local function AttachTooltip(btn, title, body)
@@ -293,8 +214,6 @@ for i = 1, MAX_MARKERS do
     btn:SetAlpha(0)
     btn:EnableMouse(false)
     btn.active = false
-    -- Register both directions so the secure click fires regardless of the
-    -- ActionButtonUseKeyDown CVar (same reasoning as the totem bar).
     btn:RegisterForClicks("AnyDown", "AnyUp")
     SetMarkerAction(btn, i)
 
@@ -302,7 +221,6 @@ for i = 1, MAX_MARKERS do
     btn.icon:SetAllPoints()
     btn.icon:SetTexture(MarkerTexture(i))
 
-    -- Border (behind icon)
     btn.border = btn:CreateTexture(nil, "BACKGROUND", nil, -8)
     btn.border:SetColorTexture(0, 0, 0, 1)
 
@@ -310,9 +228,6 @@ for i = 1, MAX_MARKERS do
     RaidMarkersBar.buttons[i] = btn
 end
 
--- World-marker (flare) row: same symbol icons as row 1; the secure marker
--- attribute carries the WORLD_MARKER_ORDER mapping so the projected flare
--- matches the symbol on the button.
 for i = 1, MAX_WORLD_MARKERS do
     local btn = CreateFrame("Button", "QUI_RaidMarkersBarWorldButton" .. i, container, "SecureActionButtonTemplate")
     btn:SetSize(36, 36)
@@ -347,7 +262,7 @@ do
     btn.icon = btn:CreateTexture(nil, "ARTWORK")
     btn.icon:SetAllPoints()
     btn.icon:SetAtlas("GM-raidMarker-remove")
-    btn.iconIsAtlas = true  -- StyleButton must not apply zoom texcoords
+    btn.iconIsAtlas = true
 
     btn.border = btn:CreateTexture(nil, "BACKGROUND", nil, -8)
     btn.border:SetColorTexture(0, 0, 0, 1)
@@ -356,9 +271,6 @@ do
     RaidMarkersBar.worldRow[MAX_WORLD_MARKERS + 1] = btn
 end
 
--- Leader action strip: plain (insecure) buttons — DoReadyCheck /
--- InitiateRolePoll / DoCountdown are callable from normal code. Permission
--- failures print a hint instead of silently no-opping.
 local function PrintHint(msg)
     print("|cFF30D1FFQUI:|r " .. msg)
 end
@@ -453,9 +365,6 @@ HideAllButtons = function()
     end
 end
 
----------------------------------------------------------------------------
--- STYLE A SINGLE BUTTON
----------------------------------------------------------------------------
 local function StyleButton(btn)
     local db = GetDB()
     if not db or not btn then return end
@@ -465,8 +374,6 @@ local function StyleButton(btn)
         btn:SetSize(size, size)
     end
 
-    -- Atlas icons (clear-all, strip buttons) carry their own texcoords;
-    -- applying the zoom crop would corrupt them.
     if not btn.iconIsAtlas then
         local zoom = db.zoom or 0
         local left = BASE_CROP + zoom
@@ -486,11 +393,6 @@ local function StyleButton(btn)
     end
 end
 
----------------------------------------------------------------------------
--- ROW VISIBILITY PREDICATES
--- Preview mode (layout positioning) shows every enabled row regardless of
--- leadership; live mode applies the autoShowForLeader gate.
----------------------------------------------------------------------------
 local function LeaderRowGate(db)
     if RaidMarkersBar.previewing then return true end
     if db.autoShowForLeader == false then return true end
@@ -511,9 +413,6 @@ local function IsStripRowActive(db)
     return LeaderRowGate(db)
 end
 
----------------------------------------------------------------------------
--- LAYOUT BUTTONS (no-op in combat — secure SetPoint is protected)
----------------------------------------------------------------------------
 local function LayoutButtons()
     if InCombatLockdown() then
         pendingReconcile = true
@@ -526,9 +425,6 @@ local function LayoutButtons()
     local spacing = db.spacing or 4
     local iconSize = db.iconSize or 36
 
-    -- Active rows, in fixed order: target markers, world markers, strip.
-    -- Rows run along the grow direction; additional rows stack on the cross
-    -- axis (below for horizontal growth, to the right for vertical).
     local rows = { RaidMarkersBar.buttons }
     if IsWorldRowActive(db) then
         rows[#rows + 1] = RaidMarkersBar.worldRow
@@ -559,8 +455,6 @@ local function LayoutButtons()
         end
     end
 
-    -- Inactive rows are alpha-hidden but must not occupy stale points inside
-    -- the new container rect; park them on the container origin.
     if not IsWorldRowActive(db) then
         for i = 1, #RaidMarkersBar.worldRow do
             RaidMarkersBar.worldRow[i]:ClearAllPoints()
@@ -574,7 +468,6 @@ local function LayoutButtons()
         end
     end
 
-    -- Container sized to the full bar extent so the anchor engine sees a stable rect.
     local mainExtent = maxCount * iconSize + (maxCount - 1) * spacing
     local crossExtent = #rows * iconSize + (#rows - 1) * spacing
     if growDir == "RIGHT" or growDir == "LEFT" then
@@ -593,9 +486,6 @@ local function LayoutButtons()
     end
 end
 
----------------------------------------------------------------------------
--- POSITIONING
----------------------------------------------------------------------------
 local function PositionContainer()
     if InCombatLockdown() then return end
     if _G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("raidMarkersBar") then return end
@@ -610,13 +500,6 @@ local function PositionContainer()
     container:SetPoint(anchor, UIParent, "CENTER", offsetX, offsetY)
 end
 
----------------------------------------------------------------------------
--- SHOW ALL CONFIGURED MARKER BUTTONS
----------------------------------------------------------------------------
-
--- Applies contents + visibility for the world-marker and strip rows (both
--- live and preview paths). Attribute writers are cached/idempotent and
--- combat-deferred internally.
 local function ApplyLeaderRows(db)
     local worldActive = IsWorldRowActive(db)
     for i = 1, MAX_WORLD_MARKERS do
@@ -659,9 +542,6 @@ local function ShowMarkers()
     end
 end
 
----------------------------------------------------------------------------
--- ENABLE / DISABLE
----------------------------------------------------------------------------
 local function Enable()
     if RaidMarkersBar.enabled then return end
     RaidMarkersBar.enabled = true
@@ -677,9 +557,6 @@ local function Disable()
     HideContainer()
 end
 
----------------------------------------------------------------------------
--- DRAG HANDLERS
----------------------------------------------------------------------------
 container:SetScript("OnDragStart", function(self)
     local db = GetDB()
     if db and not db.locked then
@@ -707,9 +584,6 @@ container:SetScript("OnDragStop", function(self)
     PositionContainer()
 end)
 
----------------------------------------------------------------------------
--- PUBLIC API
----------------------------------------------------------------------------
 function RaidMarkersBar:Refresh()
     local db = GetDB()
     if not db or not db.enabled or not IsBarContextActive(db) then
@@ -725,9 +599,6 @@ function RaidMarkersBar:Hide()
     Disable()
 end
 
----------------------------------------------------------------------------
--- PREVIEW (shown on the container's own buttons)
----------------------------------------------------------------------------
 RaidMarkersBar.previewing = false
 
 local function ShowMockMarkers()
@@ -738,9 +609,6 @@ local function ShowMockMarkers()
         StyleButton(btn)
         SafeShowButton(btn)
     end
-    -- Preview shows every enabled row regardless of leadership (the
-    -- IsWorldRowActive/IsStripRowActive gates return true while previewing)
-    -- so users can position the full bar.
     ApplyLeaderRows(db)
     LayoutButtons()
 end
@@ -772,9 +640,6 @@ function RaidMarkersBar:IsPreviewShown()
     return self.previewing
 end
 
----------------------------------------------------------------------------
--- GLOBAL CALLBACKS (for options / layout mode)
----------------------------------------------------------------------------
 _G.QUI_RefreshRaidMarkersBar = function()
     RaidMarkersBar:Refresh()
     if RaidMarkersBar:IsPreviewShown() then
@@ -799,32 +664,16 @@ if ns.Registry then
     })
 end
 
----------------------------------------------------------------------------
--- LEADERSHIP / CONTEXT WATCHER
--- GROUP_ROSTER_UPDATE fires in bursts of 5-20 during roster churn, so the
--- recompute is coalesced through a hidden frame's OnUpdate (one pass per
--- render frame at most; same pattern as hud_visibility.lua). The same pass
--- tracks the whole-bar instance gate (onlyInInstances), re-evaluated on
--- PLAYER_ENTERING_WORLD.
----------------------------------------------------------------------------
 local leaderCoalesce = CreateFrame("Frame")
 leaderCoalesce:Hide()
 leaderCoalesce:SetScript("OnUpdate", function(self)
     self:Hide()
     local db = GetDB()
     local newLeader = ComputeLeaderish()
-    -- Compare desired bar state against the ACTUAL applied state
-    -- (RaidMarkersBar.enabled) rather than a snapshot of the inputs: a
-    -- snapshot goes stale whenever Refresh() runs outside this watcher
-    -- (e.g. the options toggle), which would swallow the next transition.
     local shouldBeActive = (db and db.enabled and IsBarContextActive(db)) and true or false
     if newLeader == isLeaderish and shouldBeActive == RaidMarkersBar.enabled then return end
     isLeaderish = newLeader
     if RaidMarkersBar.previewing then return end
-    -- Refresh handles both directions: it disables the bar when the
-    -- instance gate closes and re-enables + re-applies rows when it opens
-    -- or leadership changes. Visibility stays alpha-only in combat and
-    -- layout defers via pendingReconcile.
     RaidMarkersBar:Refresh()
 end)
 
@@ -836,9 +685,6 @@ leaderWatch:SetScript("OnEvent", function()
     leaderCoalesce:Show()
 end)
 
----------------------------------------------------------------------------
--- INITIALIZATION
----------------------------------------------------------------------------
 local initFrame = CreateFrame("Frame")
 initFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 initFrame:RegisterEvent("PLAYER_REGEN_ENABLED")

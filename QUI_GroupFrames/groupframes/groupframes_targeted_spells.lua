@@ -1,10 +1,3 @@
---[[
-    QUI Group Frames - Targeted cast markers
-
-    Tracks hostile nameplate casts whose Blizzard unit APIs expose a spell
-    target, then places the spell icon on the matching QUI group frame.
-]]
-
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 local GroupFrames = ns.QUI_GroupFrames
@@ -176,9 +169,6 @@ local function CurrentRosterTokens()
     return IsInRaid() and RAID_ROSTER or PARTY_ROSTER
 end
 
----------------------------------------------------------------------------
--- Roster index
----------------------------------------------------------------------------
 local Roster = {
     byClass = {},
     role = {},
@@ -320,9 +310,6 @@ local function UnitFromCasterTarget(caster)
     return candidates[1]
 end
 
----------------------------------------------------------------------------
--- Frame markers
----------------------------------------------------------------------------
 local markerPools = setmetatable({}, { __mode = "k" })
 
 local function MarkerSize(isRaid)
@@ -499,8 +486,6 @@ local function StartCooldown(cooldown, durationObject, startMS, endMS)
         return
     end
 
-    -- durationObject may be SECRET (UnitCasting/ChannelDuration are
-    -- SecretReturns): probe before any truth-test/index; a secret object is
     -- still routed to the SetCooldownFromDurationObject sink.
     local durSecret = IsSecretValue(durationObject)
     if (durSecret or durationObject) and cooldown.SetCooldownFromDurationObject then
@@ -539,9 +524,6 @@ local function StartCooldown(cooldown, durationObject, startMS, endMS)
     end
 end
 
----------------------------------------------------------------------------
--- Cast watching
----------------------------------------------------------------------------
 local eventFrame = CreateFrame("Frame")
 local activeByCaster = {}
 local serialByCaster = {}
@@ -557,14 +539,6 @@ local function NextSerial(caster)
     return serial
 end
 
--- Returns: spellName, texture, isChannel, startMS, endMS, evidence
---   evidence "plain"  — readable cast; every value is ordinary.
---   evidence "secret" — the poll returned secrets: INDETERMINATE, never
---       converted into cast state. name/texture ride along SINK-ONLY (raw,
---       possibly secret), timing is dropped; the caller may render only via
---       its own EVENT evidence (watch latch) + the DurationObject sink.
---       Cast-vs-channel is unknowable here (isChannel defaults false).
---   evidence nil — readable "no cast".
 local function ReadCast(caster)
     local ok, spellName, _, texture, startMS, endMS = pcall(UnitCastingInfo, caster)
     if ok then
@@ -736,16 +710,11 @@ local function ResolveCastTarget(caster, expectedSerial)
 
     local durationObject
     if evidence == "secret" then
-        -- Restricted cast: render ONLY on event evidence (the watch latch
-        -- set by the cast-start event) and only through the DurationObject
-        -- sink. Cast-vs-channel is unknowable — try both getters; a SECRET
-        -- object still routes to the sink (probed, never truth-tested).
         if not watchedCaster[caster] then
             return
         end
         durationObject = ReadDuration(caster, false)
         if IsSecretValue(durationObject) then
-            -- sink-capable as-is
         elseif durationObject == nil then
             durationObject = ReadDuration(caster, true)
         end
@@ -789,8 +758,6 @@ local function RecheckCasterTarget(caster)
 end
 
 local function AdoptLiveCast(unit)
-    -- Catch-up has NO event evidence: only a READABLE live cast adopts.
-    -- (A secret poll is indeterminate and must not start a watch.)
     local _, _, _, _, _, evidence = ReadCast(unit)
     if evidence == "plain" then
         BeginCastWatch(unit)

@@ -21,7 +21,7 @@ end
 local source = readFile("modules/qol/consumablecheck.lua")
 
 local fnStart = assert(source:find("UpdateConsumables = function()", 1, true))
-local computeMarker = assert(source:find("-- Compute desired button states", fnStart, true))
+local computeMarker = assert(source:find("local states = ComputeDesiredStates(settings, canUseItems)", fnStart, true))
 local head = source:sub(fnStart, computeMarker)
 
 assert(head:find("ShouldAurasBeSecret", 1, true),

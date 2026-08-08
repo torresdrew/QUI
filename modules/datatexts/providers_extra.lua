@@ -1,6 +1,3 @@
---- QUI Datatexts — additional providers: reputation, vault, mail, professions.
---- Registered into the shared registry; usable by every slot consumer.
-
 local ADDON_NAME, ns = ...
 local QUICore = ns.Addon
 local Datatexts = QUICore and QUICore.Datatexts
@@ -11,7 +8,6 @@ local floor = math.floor
 local min = math.min
 local ipairs = ipairs
 
--- WoW globals (upvalued; all exist before addons load)
 local C_Reputation = _G.C_Reputation
 local C_WeeklyRewards = _G.C_WeeklyRewards
 local GetProfessions = _G.GetProfessions
@@ -20,7 +16,6 @@ local WeeklyRewards_ShowUI = _G.WeeklyRewards_ShowUI
 local C_Traits = _G.C_Traits
 local C_PlayerInfo = _G.C_PlayerInfo
 
--- File-local copies of the registry's color/label helpers (locals there by design).
 local function GetValueColor()
     local addon = ns and ns.Addon
     local db = addon and addon.db and addon.db.profile
@@ -28,7 +23,6 @@ local function GetValueColor()
     if dt and dt.useClassColor then
         local _, class = UnitClass("player")
         -- @secret-policy: collapse-only — UnitClass can return SECRET on 12.1 PTR7
-        -- (SecretWhenUnitIdentityRestricted); collapse so the valueColor fallback applies.
         if issecretvalue and issecretvalue(class) then class = nil end
         local color = class and RAID_CLASS_COLORS[class]
         if color then
@@ -47,14 +41,9 @@ end
 
 local EnsureText = Datatexts.EnsureText
 
--- Hook installed by auto-width hosts (info bar); nil on fixed-width panels.
 local function MarkWidthDirty(slotFrame)
     if slotFrame._quiOnWidthDirty then slotFrame._quiOnWidthDirty() end
 end
-
----=================================================================================
---- REPUTATION DATATEXT
----=================================================================================
 
 Datatexts:Register("reputation", {
     displayName = ns.L["Reputation"],
@@ -67,8 +56,6 @@ Datatexts:Register("reputation", {
 
         local text = EnsureText(slotFrame)
 
-        -- Returns name, current-into-standing, total-for-standing, isParagon
-        -- (nil when no faction is watched).
         local function GetWatchedProgress()
             if not (C_Reputation and C_Reputation.GetWatchedFactionData) then return nil end
             local data = C_Reputation.GetWatchedFactionData()
@@ -77,7 +64,6 @@ Datatexts:Register("reputation", {
             local cur = (data.currentStanding or 0) - (data.currentReactionThreshold or 0)
             local total = (data.nextReactionThreshold or 0) - (data.currentReactionThreshold or 0)
 
-            -- Paragon override: progress within the current paragon cycle.
             if data.factionID and C_Reputation.IsFactionParagon
                 and C_Reputation.IsFactionParagon(data.factionID) then
                 local value, threshold = C_Reputation.GetFactionParagonInfo(data.factionID)
@@ -110,7 +96,6 @@ Datatexts:Register("reputation", {
         frame:RegisterEvent("PLAYER_ENTERING_WORLD")
         frame:SetScript("OnEvent", Update)
 
-        -- Tooltip
         slotFrame:EnableMouse(true)
         slotFrame:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
@@ -138,7 +123,6 @@ Datatexts:Register("reputation", {
         end)
         slotFrame:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-        -- Click handler: Left = Reputation panel
         slotFrame:RegisterForClicks("AnyUp")
         slotFrame:SetScript("OnClick", function(self, button)
             if button == "LeftButton" then
@@ -155,10 +139,6 @@ Datatexts:Register("reputation", {
         frame:SetScript("OnEvent", nil)
     end,
 })
-
----=================================================================================
---- GREAT VAULT DATATEXT
----=================================================================================
 
 Datatexts:Register("vault", {
     displayName = ns.L["Vault"],
@@ -211,7 +191,6 @@ Datatexts:Register("vault", {
         frame:RegisterEvent("PLAYER_ENTERING_WORLD")
         frame:SetScript("OnEvent", Update)
 
-        -- Tooltip
         slotFrame:EnableMouse(true)
         slotFrame:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
@@ -249,7 +228,6 @@ Datatexts:Register("vault", {
         end)
         slotFrame:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-        -- Click handler: Left = Great Vault (loads Blizzard_WeeklyRewards on demand)
         slotFrame:RegisterForClicks("AnyUp")
         slotFrame:SetScript("OnClick", function(self, button)
             if button ~= "LeftButton" then return end
@@ -270,10 +248,6 @@ Datatexts:Register("vault", {
         frame:SetScript("OnEvent", nil)
     end,
 })
-
----=================================================================================
---- MAIL DATATEXT
----=================================================================================
 
 Datatexts:Register("mail", {
     displayName = ns.L["Mail"],
@@ -304,7 +278,6 @@ Datatexts:Register("mail", {
         frame:RegisterEvent("PLAYER_ENTERING_WORLD")
         frame:SetScript("OnEvent", Update)
 
-        -- Tooltip
         slotFrame:EnableMouse(true)
         slotFrame:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
@@ -340,10 +313,6 @@ Datatexts:Register("mail", {
     end,
 })
 
----=================================================================================
---- PROFESSIONS DATATEXT
----=================================================================================
-
 Datatexts:Register("professions", {
     displayName = ns.L["Professions"],
     category = ns.L["Character"],
@@ -355,8 +324,6 @@ Datatexts:Register("professions", {
 
         local text = EnsureText(slotFrame)
 
-        -- index may be nil (GetProfessions returns nil for empty slots);
-        -- returns nil for empty slots, otherwise name, texture, rank, maxRank.
         local function GetProfession(index)
             if not index then return nil end
             return GetProfessionInfo(index)
@@ -365,8 +332,6 @@ Datatexts:Register("professions", {
         local function AppendBarPart(parts, index, r, g, b)
             local name, texture, rank, maxRank = GetProfession(index)
             if not name then return end
-            -- hideIcon: per-widget host override — drop the inline profession
-            -- icon, keep the skill numbers.
             if slotFrame.hideIcon then
                 parts[#parts + 1] = format("|cff%02x%02x%02x%d/%d|r",
                     r, g, b, rank or 0, maxRank or 0)
@@ -399,7 +364,6 @@ Datatexts:Register("professions", {
         frame:RegisterEvent("PLAYER_ENTERING_WORLD")
         frame:SetScript("OnEvent", Update)
 
-        -- Tooltip
         slotFrame:EnableMouse(true)
         slotFrame:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
@@ -410,7 +374,6 @@ Datatexts:Register("professions", {
             local ar, ag, ab = GetValueColor()
             ar, ag, ab = ar / 255, ag / 255, ab / 255
 
-            -- GetProfessions returns prof1, prof2, archaeology, fishing, cooking
             local prof1, prof2, arch, fish, cook = GetProfessions()
             local any = false
             local function AddRow(index)
@@ -435,7 +398,6 @@ Datatexts:Register("professions", {
         end)
         slotFrame:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-        -- Click handler: Left = Professions book (loads Blizzard_ProfessionsBook on demand)
         slotFrame:RegisterForClicks("AnyUp")
         slotFrame:SetScript("OnClick", function(self, button)
             if button ~= "LeftButton" then return end
@@ -455,14 +417,6 @@ Datatexts:Register("professions", {
     end,
 })
 
----=================================================================================
---- OMNIUM FOLIO DATATEXT (Midnight expansion landing page / Runes of Power)
----=================================================================================
--- Launcher + unspent Runes-of-Power counter. The landing page opens via the
--- insecure global ToggleExpansionLandingPage(); the unspent count comes from the
--- Runes of Power trait tree (system 48 / tree 1186), mirroring Blizzard's own
--- Blizzard_MidnightLandingPage CanPurchaseRuneOfPower() logic.
-
 local RUNES_OF_POWER_SYSTEM_ID = 48
 local RUNES_OF_POWER_TREE_ID = 1186
 
@@ -477,8 +431,6 @@ Datatexts:Register("omniumfolio", {
 
         local text = EnsureText(slotFrame)
 
-        -- LE_EXPANSION_MIDNIGHT is a Blizzard global constant; tolerate absence
-        -- on older clients by treating the feature as unavailable.
         local MIDNIGHT_EXPANSION_ID = _G.LE_EXPANSION_MIDNIGHT
 
         local function IsUnlocked()
@@ -489,13 +441,10 @@ Datatexts:Register("omniumfolio", {
             return C_PlayerInfo.IsExpansionLandingPageUnlockedForPlayer(MIDNIGHT_EXPANSION_ID)
         end
 
-        -- Returns unspent Runes-of-Power points, or nil if the system is
-        -- unavailable (config not yet created, pre-Midnight client).
         local function GetUnspentPoints()
             if not (C_Traits and C_Traits.GetConfigIDBySystemID and C_Traits.GetTreeCurrencyInfo) then
                 return nil
             end
-            -- GetConfigIDBySystemID MayReturnNothing -> nil-check.
             local configID = C_Traits.GetConfigIDBySystemID(RUNES_OF_POWER_SYSTEM_ID)
             if not configID then return nil end
             local currencies = C_Traits.GetTreeCurrencyInfo(configID, RUNES_OF_POWER_TREE_ID, false)
@@ -523,7 +472,6 @@ Datatexts:Register("omniumfolio", {
         frame:RegisterEvent("TRAIT_TREE_CURRENCY_INFO_UPDATED")
         frame:SetScript("OnEvent", Update)
 
-        -- Tooltip
         slotFrame:EnableMouse(true)
         slotFrame:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
@@ -552,7 +500,6 @@ Datatexts:Register("omniumfolio", {
         end)
         slotFrame:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-        -- Click handler: Left = toggle the expansion landing page (insecure global).
         slotFrame:RegisterForClicks("AnyUp")
         slotFrame:SetScript("OnClick", function(self, button)
             if button ~= "LeftButton" then return end
@@ -572,15 +519,6 @@ Datatexts:Register("omniumfolio", {
     end,
 })
 
----=================================================================================
---- CATALYST CHARGES DATATEXT
----=================================================================================
-
--- Season -> catalyst-charge currency ID. The charge count is a plain currency
--- quantity; the currency ID rotates each season and is not exposed by any API,
--- so it must be mapped from C_MythicPlus.GetCurrentSeason() (doc-verified:
--- returns seasonID number; -1 until map info arrives — RequestMapInfo below).
--- Extend this table each season.
 local CATALYST_CURRENCY_BY_SEASON = {
     [15] = 3269,
     [17] = 3378,
@@ -598,15 +536,13 @@ Datatexts:Register("catalyst", {
 
         local text = EnsureText(slotFrame)
 
-        local catalystID -- resolved lazily; season info can lag login
+        local catalystID
 
         local function ResolveCurrencyID()
             if catalystID then return catalystID end
             if not (C_MythicPlus and C_MythicPlus.GetCurrentSeason) then return nil end
             local season = C_MythicPlus.GetCurrentSeason()
             if not season or season == -1 then
-                -- Season unknown yet: ask the server; CURRENCY_DISPLAY_UPDATE /
-                -- PLAYER_ENTERING_WORLD re-runs Update, which retries this.
                 if C_MythicPlus.RequestMapInfo then C_MythicPlus.RequestMapInfo() end
                 return nil
             end
@@ -617,7 +553,6 @@ Datatexts:Register("catalyst", {
         local function GetInfo()
             local id = ResolveCurrencyID()
             if not id or not (C_CurrencyInfo and C_CurrencyInfo.GetCurrencyInfo) then return nil end
-            -- Doc: GetCurrencyInfo MayReturnNothing — nil-guard.
             return C_CurrencyInfo.GetCurrencyInfo(id)
         end
 

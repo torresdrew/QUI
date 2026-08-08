@@ -10,10 +10,10 @@ end
 
 do -- WhatToShowKeys
     local h = E.WhatToShowKeys("HELPFUL")
-    check("helpful keys", table.concat(h, ",") == "all,mine,defensives,purgeable,whitelist", table.concat(h, ","))
+    check("helpful keys", table.concat(h, ",") == "all,mine,defensives,important,purgeable,whitelist", table.concat(h, ","))
     local d = E.WhatToShowKeys("HARMFUL")
-    check("harmful keys", table.concat(d, ",") == "all,dispellable,crowdControl,boss,roleBoss,whitelist", table.concat(d, ","))
-    check("defaults to helpful", table.concat(E.WhatToShowKeys(nil), ",") == "all,mine,defensives,purgeable,whitelist")
+    check("harmful keys", table.concat(d, ",") == "all,dispellable,crowdControl,important,boss,roleBoss,whitelist", table.concat(d, ","))
+    check("defaults to helpful", table.concat(E.WhatToShowKeys(nil), ",") == "all,mine,defensives,important,purgeable,whitelist")
 end
 
 do -- ApplyWhatToShow sets the canonical combo and clears prior modifiers
@@ -37,6 +37,28 @@ do -- ApplyWhatToShow sets the canonical combo and clears prior modifiers
     check("defensives keys", d.classifications.bigDefensive and d.classifications.externalDefensive
         and not d.classifications.raid)
 
+    -- 68675 IMPORTANT is offered on BOTH polarities: the AuraFilters comment
+    -- naming helpful auras describes the case Blizzard built it for, while the
+    -- underlying flag (C_Spell.IsSpellImportant) is spell-level. Either way the
+    -- preset lands on classify with exactly one key — never a filterFlags token.
+    local imp = E.NewFilterStripElement("HELPFUL")
+    imp.gateStealable = true                            -- pre-existing noise
+    E.ApplyWhatToShow(imp, "important")
+    check("important classify", imp.filterMode == "classify")
+    local impKeys = 0
+    for _ in pairs(imp.classifications or {}) do impKeys = impKeys + 1 end
+    check("important sole classification key", imp.classifications.important == true and impKeys == 1)
+    check("important clears purgeable gate", imp.gateStealable == nil)
+    local impFS = E.CompileFilters(imp)
+    check("important compiles to HELPFUL|IMPORTANT",
+        #impFS == 1 and impFS[1] == "HELPFUL|IMPORTANT", table.concat(impFS, ","))
+
+    local impH = E.NewFilterStripElement("HARMFUL")
+    E.ApplyWhatToShow(impH, "important")
+    local impHFS = E.CompileFilters(impH)
+    check("important compiles to HARMFUL|IMPORTANT on the other polarity",
+        #impHFS == 1 and impHFS[1] == "HARMFUL|IMPORTANT", table.concat(impHFS, ","))
+
     local b = E.NewFilterStripElement("HARMFUL")
     E.ApplyWhatToShow(b, "boss")
     check("boss gate", b.gateBossAura == true and b.filterMode == "off")
@@ -49,8 +71,8 @@ end
 
 do -- Derive is the exact reverse of Apply for every key
     local KEYS = {
-        HELPFUL = { "all", "mine", "defensives", "purgeable", "whitelist" },
-        HARMFUL = { "all", "dispellable", "crowdControl", "boss", "roleBoss", "whitelist" },
+        HELPFUL = { "all", "mine", "defensives", "important", "purgeable", "whitelist" },
+        HARMFUL = { "all", "dispellable", "crowdControl", "important", "boss", "roleBoss", "whitelist" },
     }
     for _, pol in ipairs({ "HELPFUL", "HARMFUL" }) do
         for _, key in ipairs(KEYS[pol]) do

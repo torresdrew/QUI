@@ -1,12 +1,3 @@
----------------------------------------------------------------------------
--- QUI Feature Toggles — Visual onboarding (Phase 2)
---
--- Registers feature manifests with moduleEntry blocks for every static
--- visual module that already exists as a Layout Mode element. The
--- isEnabled/setEnabled callbacks proxy through ns.QUI_LayoutMode's
--- element registry, so the canonical DB write path is the LM element's
--- existing setEnabled closure (no duplication).
----------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local Settings = ns.Settings
 local Registry = Settings and Settings.Registry
@@ -17,10 +8,6 @@ if not (Registry and Schema
     and type(Schema.Feature) == "function") then
     return
 end
-
----------------------------------------------------------------------------
--- Shared proxy helpers
----------------------------------------------------------------------------
 
 local function MakeModuleEntry(key, group, label, caption, combatLocked, hidden)
     return {
@@ -46,9 +33,6 @@ local function MakeModuleEntry(key, group, label, caption, combatLocked, hidden)
     }
 end
 
---- Register a feature with a moduleEntry proxy.
--- If a feature with this id already exists (e.g., from layoutmode_utils.lua
--- stubs), attach moduleEntry to it rather than creating a duplicate.
 local function RegisterModuleFeature(key, group, label, caption, combatLocked, hidden)
     local existing = Registry:GetFeature(key)
     if existing then
@@ -63,14 +47,9 @@ local function RegisterModuleFeature(key, group, label, caption, combatLocked, h
     }))
 end
 
----------------------------------------------------------------------------
--- Class/spec-gated hidden callbacks
----------------------------------------------------------------------------
-
 local function HiddenUnlessDisciplinePriest()
     local _, class = UnitClass("player")
     -- @secret-policy: collapse-only — UnitClass can return SECRET on 12.1 PTR7
-    -- (SecretWhenUnitIdentityRestricted); collapse ⇒ hidden (the safe default below).
     if issecretvalue and issecretvalue(class) then class = nil end
     if class ~= "PRIEST" then return true end
     local spec = GetSpecialization and GetSpecialization()
@@ -85,21 +64,8 @@ local function HiddenFromFeatureToggles()
     return true
 end
 
----------------------------------------------------------------------------
--- Static visual module inventory
---
--- Each entry:  { key, group, label, caption, combatLocked [, hidden] }
---
--- Rules:
---   combatLocked = true  — frame-touching toggles (all visual modules)
---   combatLocked = false — lightweight event-handler toggles only
----------------------------------------------------------------------------
-
 local VISUAL_MODULES = {
 
-    ---------------------------------------------------------------------------
-    -- Display
-    ---------------------------------------------------------------------------
     {
         key = "buffFrame", group = ns.L["Display"], label = ns.L["Buff Frame"],
         caption = ns.L["Active beneficial auras with custom borders."],
@@ -154,9 +120,6 @@ local VISUAL_MODULES = {
         hidden = HiddenFromFeatureToggles,
     },
 
-    ---------------------------------------------------------------------------
-    -- QoL
-    ---------------------------------------------------------------------------
     {
         key = "crosshair", group = ns.L["QoL"], label = ns.L["Crosshair"],
         caption = ns.L["Reticle drawn at the screen center for precise targeting."],
@@ -204,9 +167,6 @@ local VISUAL_MODULES = {
         hidden = HiddenUnlessDisciplinePriest,
     },
 
-    ---------------------------------------------------------------------------
-    -- Instance
-    ---------------------------------------------------------------------------
     {
         key = "combatTimer", group = ns.L["Instance"], label = ns.L["Combat Timer"],
         caption = ns.L["Tracks how long you have been in the current combat."],
@@ -248,9 +208,6 @@ local VISUAL_MODULES = {
         combatLocked = true,
     },
 
-    ---------------------------------------------------------------------------
-    -- Action Bars
-    ---------------------------------------------------------------------------
     {
         key = "bar1", group = ns.L["Action Bars"], label = ns.L["Action Bar 1"],
         caption = ns.L["Primary action bar (main bar)."],
@@ -336,9 +293,6 @@ local VISUAL_MODULES = {
         hidden = HiddenFromFeatureToggles,
     },
 
-    ---------------------------------------------------------------------------
-    -- Castbars
-    ---------------------------------------------------------------------------
     {
         key = "playerCastbar", group = ns.L["Castbars"], label = ns.L["Player Castbar"],
         caption = ns.L["Custom castbar for the player character."],
@@ -370,9 +324,6 @@ local VISUAL_MODULES = {
         hidden = HiddenFromFeatureToggles,
     },
 
-    ---------------------------------------------------------------------------
-    -- Group Frames
-    ---------------------------------------------------------------------------
     {
         key = "partyFrames", group = ns.L["Group Frames"], label = ns.L["Party Frames"],
         caption = ns.L["Custom party member frames for groups of up to five."],
@@ -392,9 +343,6 @@ local VISUAL_MODULES = {
         hidden = HiddenFromFeatureToggles,
     },
 
-    ---------------------------------------------------------------------------
-    -- Unit Frames
-    ---------------------------------------------------------------------------
     {
         key = "playerFrame", group = ns.L["Unit Frames"], label = ns.L["Player Frame"],
         caption = ns.L["Custom frame displaying player health, power, and buffs."],
@@ -432,9 +380,6 @@ local VISUAL_MODULES = {
         hidden = HiddenFromFeatureToggles,
     },
 
-    ---------------------------------------------------------------------------
-    -- Resource Bars
-    ---------------------------------------------------------------------------
     {
         key = "primaryPower", group = ns.L["Resource Bars"], label = ns.L["Primary Power"],
         caption = ns.L["Custom bar for the player's primary resource (mana, rage, energy, etc.)."],
@@ -448,9 +393,6 @@ local VISUAL_MODULES = {
         hidden = HiddenFromFeatureToggles,
     },
 
-    ---------------------------------------------------------------------------
-    -- Cooldown Manager & Custom Tracker Bars
-    ---------------------------------------------------------------------------
     {
         key = "rotationAssistIcon", group = ns.L["Cooldown Manager & Custom Tracker Bars"],
         label = ns.L["Rotation Assist Icon"],
@@ -458,9 +400,6 @@ local VISUAL_MODULES = {
         combatLocked = true,
     },
 
-    ---------------------------------------------------------------------------
-    -- 3rd Party
-    ---------------------------------------------------------------------------
     {
         key = "dandersParty", group = ns.L["3rd Party"], label = ns.L["DF Party"],
         caption = ns.L["DandersFrames party layout (requires optional companion addon)."],
@@ -486,10 +425,6 @@ local VISUAL_MODULES = {
         hidden = HiddenFromFeatureToggles,
     },
 }
-
----------------------------------------------------------------------------
--- Registration pass
----------------------------------------------------------------------------
 
 for _, m in ipairs(VISUAL_MODULES) do
     RegisterModuleFeature(m.key, m.group, m.label, m.caption, m.combatLocked, m.hidden)

@@ -223,9 +223,11 @@ local function LoadCore()
 
     -- Localization must precede any string consumer (matches QUI.toc, where
     -- the locale block loads before core/core.xml). enUS.lua populates the
-    -- base table in ns.LocaleData; locale.lua builds the ns.L metatable that
-    -- settings/options modules index at load time. Without these, ns.L is nil
-    -- and every `ns.L["..."]` errors on load.
+    -- ordered key array in ns.LocaleData; locale.lua builds the ns.L metatable
+    -- that settings/options modules index at load time. Without these, ns.L is
+    -- nil and every `ns.L["..."]` errors on load. No overlay is loaded here, so
+    -- ns.L resolves every key to itself (English), which is what the harness
+    -- and the search-cache generator want.
     LoadAddonFile("core/locale/enUS.lua",    "QUI", SHARED_NS)
     LoadAddonFile("core/locale/locale.lua",  "QUI", SHARED_NS)
 

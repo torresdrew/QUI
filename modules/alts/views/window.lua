@@ -1,20 +1,3 @@
----------------------------------------------------------------------------
--- Alts window: chassis styled after the QUI settings window (framework.lua
--- CreateMainFrame): deep-dark GUI.Colors bg, title bar with line-drawn X
--- close, LEFT vertical tab sidebar (3px accent indicator + faint accent
--- active bg + hover wash) and a content area with the horizontal accent
--- gradient wash. Tab views self-register via Window.RegisterTab(id, label,
--- builder, desc); builder(parent) returns { frame, Refresh() }; desc feeds
--- the GUI:AttachTooltip hover on the sidebar tab. Position/size persist in
--- profile alts.window (bags chassis precedent).
---
--- Pure UI: reads settings via Alts.GetSettings; no data access of its own.
--- Colors resolve LIVE from QUI.GUI.Colors (chat.lua I.GetThemeColors
--- precedent — the framework mutates those tables in place on accent
--- change); the accent itself resolves through GUI:ResolveThemePreset so the
--- window matches the user's theme even before the options panel has ever
--- been opened this session (CreateMainFrame is what seeds GUI.Colors.accent).
----------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local Alts = ns.Alts or {}; ns.Alts = Alts
 
@@ -34,17 +17,10 @@ Alts.Window = Window
 
 local HEADER_H, SIDEBAR_W, TAB_H, TAB_GAP, PAD = 32, 120, 26, 2, 10
 
-local win          -- created lazily on first Toggle
-local tabs = {}    -- ordered: { id, label, builder, desc, view, button }
-local activeTab    -- id
+local win
+local tabs = {}
+local activeTab
 
---- Register a tab view. builder(parent) returns { frame, Refresh() };
---- frame is hidden + SetAllPoints(body) by Build. desc (optional) is the
---- sidebar tab's hover tooltip body. MUST be called at file load (before
---- the first Toggle) — Build runs once and never re-renders the sidebar,
---- so a post-Build registration is silently invisible. Reskin covers
---- chrome + tab labels ONLY: views own their content's font/color refresh
---- (re-apply inside their Refresh()).
 function Window.RegisterTab(id, label, builder, desc)
     tabs[#tabs + 1] = { id = id, label = label, builder = builder, desc = desc }
 end
@@ -54,8 +30,6 @@ local function Settings()
     return s and s.window
 end
 
--- Fallbacks mirror framework.lua's "Mint Condition" palette so the window
--- still renders if QUI.GUI is somehow absent (it loads at login).
 local FALLBACK = {
     bg        = { 0.051, 0.067, 0.09, 0.97 },
     bgSidebar = { 0, 0, 0, 0.25 },
@@ -79,9 +53,6 @@ local function Col(name)
     return c[1], c[2], c[3], c[4] or 1
 end
 
---- Theme accent r,g,b. GUI.Colors.accent is only seeded with the user's
---- preset when the options panel first opens (CreateMainFrame), so resolve
---- the saved preset directly when available.
 local function Accent()
     local gui = _G.QUI and _G.QUI.GUI
     local core = Helpers.GetCore and Helpers.GetCore()
@@ -126,8 +97,6 @@ local function Reskin()
     win._contentBg:SetColorTexture(Col("bgContent"))
     if win._glow.SetGradient then
         local gr, gg, gb, ga = Col("accentGlow")
-        -- accentGlow rgb follows the accent on ApplyAccentColor; keep the
-        -- resolved accent as the source so the wash is correct pre-options.
         local ok = pcall(function()
             win._glow:SetGradient("HORIZONTAL",
                 CreateColor(ar, ag, ab, ga or 0.06),
@@ -146,8 +115,6 @@ local function Reskin()
             SetTabActiveState(t, t.id == activeTab)
         end
     end
-    -- re-tint the view scroll bars to the current accent (creation-time color
-    -- otherwise goes stale on a theme change until /reload)
     if ns.AltsViewShared and ns.AltsViewShared.RestyleScrollBars then
         ns.AltsViewShared.RestyleScrollBars()
     end
@@ -193,8 +160,6 @@ local function BuildSidebarTabs()
         btn._indicator:Hide()
 
         btn._label = btn:CreateFontString(nil, "ARTWORK")
-        -- font BEFORE SetText: a templateless FontString has no font and
-        -- SetText errors ("Font not set"); Reskin re-applies later.
         CJKFont(btn._label, fontPath, 11, outline)
         btn._label:SetPoint("LEFT", btn, "LEFT", 10, 0)
         btn._label:SetJustifyH("LEFT")
@@ -246,7 +211,7 @@ local function Build()
     header:SetScript("OnDragStop", function()
         win:StopMovingOrSizing()
         local point, _, _, x, y = win:GetPoint()
-        if not point then return end -- GetPoint is MayReturnNothing per API docs
+        if not point then return end
         local core = Helpers.GetCore()
         if core and core.PixelRound then x, y = core:PixelRound(x), core:PixelRound(y) end
         local s = Settings()
@@ -255,28 +220,22 @@ local function Build()
     win._header = header
 
     win._title = header:CreateFontString(nil, "ARTWORK")
-    -- font BEFORE SetText (templateless FontString errors otherwise)
     CJKFont(win._title, Helpers.GetGeneralFont() or STANDARD_TEXT_FONT, 14,
         Helpers.GetGeneralFontOutline() or "OUTLINE")
     win._title:SetPoint("LEFT", 12, 0)
     win._title:SetText("Alts")
 
-    -- Close button: line-drawn X with accent hover (settings-window style).
-    -- Uses the central UIKit.CreateCloseButton factory (extracted from this exact
-    -- impl); accent resolves via UIKit.GetAccentColor (== the old local Accent()).
     win._close = UIKit.CreateCloseButton(header, {
         point = "RIGHT", x = -8, y = 0,
         onClick = function() win:Hide() end,
     })
 
-    -- Separator line below the title bar
     win._titleSep = win:CreateTexture(nil, "ARTWORK")
     win._titleSep:SetPoint("TOPLEFT", PAD, -HEADER_H)
     win._titleSep:SetPoint("TOPRIGHT", -PAD, -HEADER_H)
     win._titleSep:SetHeight(1)
     UIKit.DisablePixelSnap(win._titleSep)
 
-    -- Sidebar: vertical tab list on the left
     local sidebar = CreateFrame("Frame", nil, win)
     sidebar:SetPoint("TOPLEFT", PAD, -(HEADER_H + 1))
     sidebar:SetPoint("BOTTOMLEFT", PAD, PAD)
@@ -293,12 +252,9 @@ local function Build()
     win._sidebarDivider:SetWidth(1)
     UIKit.DisablePixelSnap(win._sidebarDivider)
 
-    -- Content area right of the sidebar: card surface + accent wash
     local content = CreateFrame("Frame", nil, win)
     content:SetPoint("TOPLEFT", sidebar, "TOPRIGHT", 5, 0)
     content:SetPoint("BOTTOMRIGHT", -PAD, PAD)
-    -- views lay rows/cells out at fixed x offsets; anything wider than the
-    -- window must cut at the content edge, not bleed past the border
     content:SetClipsChildren(true)
     win._content = content
 
@@ -311,7 +267,6 @@ local function Build()
     win._glow:SetTexture("Interface\\Buttons\\WHITE8x8")
     UIKit.DisablePixelSnap(win._glow)
 
-    -- Body: inset inside the content surface; views fill it
     win._body = CreateFrame("Frame", nil, content)
     win._body:SetPoint("TOPLEFT", 8, -8)
     win._body:SetPoint("BOTTOMRIGHT", -8, 8)
@@ -329,7 +284,6 @@ local function Build()
 
     Reskin()
 
-    -- ESC-close (chassis.lua precedent)
     if not tContains(UISpecialFrames, "QUI_AltsWindow") then
         tinsert(UISpecialFrames, "QUI_AltsWindow")
     end
@@ -354,7 +308,6 @@ function Window.Toggle()
     end
 end
 
---- Active tab refresh — bus subscribers call this on data changes.
 function Window.RefreshActive()
     if not (win and win:IsShown()) then return end
     for _, t in ipairs(tabs) do
@@ -362,8 +315,6 @@ function Window.RefreshActive()
     end
 end
 
--- live theme recolor (bags chassis precedent: second Registry entry on the
--- skinning group). Hidden windows skip — Toggle reskins on next show.
 if ns.Registry then
     ns.Registry:Register("altsSkin", {
         refresh = function()
@@ -375,7 +326,6 @@ if ns.Registry then
     })
 end
 
---- Profile switch: re-apply persisted position/size.
 function Window.OnProfileChanged()
     if not win then return end
     local cfg = Settings()

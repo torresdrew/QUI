@@ -1,35 +1,23 @@
 local addonName, ns = ...
 local Helpers = ns.Helpers
 
----------------------------------------------------------------------------
--- QUICK SALVAGE: One-click Milling, Prospecting, Disenchanting
----------------------------------------------------------------------------
-
 local QuickSalvage = {}
 ns.QuickSalvage = QuickSalvage
 
--- Spell IDs for profession actions
 local SPELL_DISENCHANT = 13262
 
--- Colors for different actions
 local COLORS = {
-    disenchant = CreateColor(0.7, 0.3, 0.9),  -- Purple
-    milling = CreateColor(0.3, 0.8, 0.3),     -- Green
-    prospecting = CreateColor(1.0, 0.6, 0.2), -- Orange
-    salvage = CreateColor(0.2, 0.8, 1.0),     -- Cyan (fallback/unknown)
+    disenchant = CreateColor(0.7, 0.3, 0.9),
+    milling = CreateColor(0.3, 0.8, 0.3),
+    prospecting = CreateColor(1.0, 0.6, 0.2),
+    salvage = CreateColor(0.2, 0.8, 1.0),
 }
 
--- Current modifier setting
 local currentModifier = "ALT"
 
 local IsPlayerSpell = C_SpellBook.IsSpellKnown or IsPlayerSpell
 
----------------------------------------------------------------------------
--- Build a dynamic lookup of salvageable items from TradeSkillUI.
--- This avoids hardcoding large itemID tables when possible.
----------------------------------------------------------------------------
-
-local SalvageLookup = {} -- [itemID] = { spellID = number, color = ColorMixin, required = number|nil }
+local SalvageLookup = {}
 local SalvageLookupBuilt = false
 local SalvageLookupBuilding = false
 local SalvageLookupLastAttempt = 0
@@ -56,7 +44,7 @@ local function LoadSalvageLookupFromDB()
             SalvageLookup[itemID] = {
                 spellID = entry.spellID,
                 required = entry.required,
-                action = entry.action, -- "prospecting" | "milling" | "salvage"
+                action = entry.action,
             }
             count = count + 1
         end
@@ -93,8 +81,6 @@ local function SaveSalvageLookupToDB()
 end
 
 local function EnsureProfessionsUI()
-    -- Intentionally DO NOT auto-load or auto-open professions UI.
-    -- For stability, only scan when the user has the UI open and ready.
     if not C_AddOns or not C_AddOns.IsAddOnLoaded then return false end
     local profLoaded = C_AddOns.IsAddOnLoaded("Blizzard_Professions")
     local tsiLoaded = C_AddOns.IsAddOnLoaded("Blizzard_TradeSkillUI")
@@ -131,9 +117,6 @@ local function RebuildSalvageLookup()
                 if recipeSpellID then
                     local isLearned = (recipeInfo and recipeInfo.learned) or IsPlayerSpell(recipeSpellID)
                     if isLearned then
-                        -- Include:
-                        -- - Salvage-type recipes
-                        -- - Item-type recipes whose alternate verb is Milling/Prospecting
                         local includeRecipe = false
                         local action = "salvage"
                         if schematic.recipeType == salvageRecipeType then
@@ -200,28 +183,18 @@ end
 local function EnsureSalvageLookup()
     if SalvageLookupBuilt or SalvageLookupBuilding then return end
     if LoadSalvageLookupFromDB() then return end
-    -- If we don't have a cache, only attempt a rebuild when Professions is open+ready.
     RebuildSalvageLookup()
 end
 
----------------------------------------------------------------------------
--- HELPER: Get settings
----------------------------------------------------------------------------
 local function GetSettings()
     local general = Helpers.GetModuleDB("general")
     return general and general.quickSalvage
 end
 
----------------------------------------------------------------------------
--- HELPER: Check if player has the profession spell
----------------------------------------------------------------------------
 local function PlayerHasSpell(spellID)
     return IsPlayerSpell(spellID)
 end
 
----------------------------------------------------------------------------
--- HELPER: Check modifier state
----------------------------------------------------------------------------
 local function IsModifierActive()
     if not IsAltKeyDown() then return false end
 
@@ -229,18 +202,14 @@ local function IsModifierActive()
         return IsControlKeyDown()
     elseif currentModifier == "ALTSHIFT" then
         return IsShiftKeyDown()
-    else -- "ALT"
+    else
         return not IsControlKeyDown() and not IsShiftKeyDown()
     end
 end
 
----------------------------------------------------------------------------
--- HELPER: Determine if item is salvageable and what action to use
----------------------------------------------------------------------------
 local function GetSalvageInfo(itemID, stackCount)
     if not itemID then return nil end
 
-    -- Prefer a dynamic lookup derived from TradeSkillUI salvage recipes.
     EnsureSalvageLookup()
     local salvage = SalvageLookup[itemID]
     if salvage and salvage.spellID then
@@ -251,14 +220,12 @@ local function GetSalvageInfo(itemID, stackCount)
         return salvage.spellID, GetColorForAction(action), action, salvage.required
     end
 
-    -- Check for Armor/Weapons -> Disenchanting (green+ quality)
     local quality = C_Item.GetItemQualityByID and C_Item.GetItemQualityByID(itemID)
     local _, _, _, equipLoc, _, classID, subClassID = C_Item.GetItemInfoInstant(itemID)
     if not quality or not classID then
         return nil
     end
 
-    -- Conservative disenchantability checks for armor/weapons
     if quality < Enum.ItemQuality.Uncommon or quality > Enum.ItemQuality.Epic then
         return nil
     end
@@ -273,11 +240,11 @@ local function GetSalvageInfo(itemID, stackCount)
     end
 
     if equipLoc == "INVTYPE_BODY" then
-        return nil -- shirts can't be disenchanted
+        return nil
     end
 
     if C_Item.IsCosmeticItem and C_Item.IsCosmeticItem(itemID) then
-        return nil -- cosmetic items can't be disenchanted
+        return nil
     end
 
     if PlayerHasSpell(SPELL_DISENCHANT) then
@@ -287,9 +254,6 @@ local function GetSalvageInfo(itemID, stackCount)
     return nil
 end
 
----------------------------------------------------------------------------
--- CREATE SECURE BUTTON
----------------------------------------------------------------------------
 local TEMPLATES = {
     'SecureActionButtonTemplate',
     'SecureHandlerAttributeTemplate',
@@ -302,14 +266,10 @@ SalvageButton:EnableMouse(true)
 SalvageButton:RegisterForClicks("AnyUp", "AnyDown")
 SalvageButton:Hide()
 
--- Store references
 SalvageButton.spellID = nil
 SalvageButton.itemLink = nil
 SalvageButton._ownerRect = nil
 
----------------------------------------------------------------------------
--- GLOW ANIMATION
----------------------------------------------------------------------------
 local Glow = SalvageButton:CreateTexture(nil, 'ARTWORK')
 Glow:SetPoint('CENTER')
 Glow:SetAtlas('UI-HUD-ActionBar-Proc-Loop-Flipbook')
@@ -330,12 +290,10 @@ local function SetGlowColor(color)
         Glow:SetVertexColor(color:GetRGB())
     end
 
-    -- Adjust glow size to button size
     local width, height = SalvageButton:GetSize()
     if not width or not height or width <= 0 or height <= 0 then
         return
     end
-    -- Clamp to prevent accidental full-screen glow if anchoring goes wrong.
     width = math.min(width, 256)
     height = math.min(height, 256)
     Glow:SetSize(width * 1.4, height * 1.4)
@@ -349,14 +307,10 @@ SalvageButton:HookScript('OnHide', function()
     Animation:Stop()
 end)
 
----------------------------------------------------------------------------
--- TOOLTIP
----------------------------------------------------------------------------
 local function ShowTooltip(self)
     local right = self:GetRight()
     local screenWidth = GetScreenWidth()
 
-    -- Default to right anchor if we can't determine position
     if right and screenWidth and right >= screenWidth / 2 then
         GameTooltip:SetOwner(self, 'ANCHOR_LEFT')
     else
@@ -371,10 +325,9 @@ local function ShowTooltip(self)
     elseif bagID and slotID then
         GameTooltip:SetBagItem(bagID, slotID)
     else
-        return -- Can't show tooltip without valid data
+        return
     end
 
-    -- Add hint text
     if self.spellID then
         local spellName = C_Spell.GetSpellName(self.spellID)
         if spellName then
@@ -389,9 +342,6 @@ end
 SalvageButton:HookScript('OnEnter', ShowTooltip)
 SalvageButton:HookScript('OnLeave', GameTooltip_Hide)
 
----------------------------------------------------------------------------
--- APPLY SPELL ACTION
----------------------------------------------------------------------------
 local MACRO_SALVAGE = '/run C_TradeSkillUI.CraftSalvage(%d, 1, ItemLocation:CreateFromBagAndSlot(%d, %d))'
 
 local function ApplyOwnerRect(self, ownerRect)
@@ -400,7 +350,6 @@ local function ApplyOwnerRect(self, ownerRect)
     local left, bottom, width, height = ownerRect[1], ownerRect[2], ownerRect[3], ownerRect[4]
     if not left or not bottom or not width or not height then return false end
 
-    -- Sanity check to avoid anchoring to nonsense (prevents full-screen glow glitches).
     if width < 5 or height < 5 or width > 256 or height > 256 then return false end
 
     local scaleMultiplier = 1 / UIParent:GetScale()
@@ -418,12 +367,10 @@ function SalvageButton:ApplySpell(bagID, slotID, itemLink, spellID, color, owner
     self._ownerRect = ownerRect
 
     if not ApplyOwnerRect(self, ownerRect) then
-        -- If we can't safely anchor, don't show (prevents mis-sized full-screen glow/click frame).
         self._ownerRect = nil
         return
     end
 
-    -- Determine the correct type prefix based on modifier
     local typePrefix
     if currentModifier == "ALTCTRL" then
         typePrefix = "alt-ctrl-"
@@ -433,25 +380,20 @@ function SalvageButton:ApplySpell(bagID, slotID, itemLink, spellID, color, owner
         typePrefix = "alt-"
     end
 
-    -- Check if spell is in spellbook (for direct spell casting)
     local spellSlot = FindSpellBookSlotBySpellID and FindSpellBookSlotBySpellID(spellID)
 
     if spellSlot then
-        -- Use direct spell casting
         self:SetAttribute('spell', spellID)
         self:SetAttribute(typePrefix .. 'type1', 'spell')
         self:SetAttribute(typePrefix .. 'spell1', spellID)
         self:SetAttribute(typePrefix .. 'macrotext1', nil)
-        -- We intentionally do NOT set type1, so the button can't be clicked without the modifier.
         self:SetAttribute('type1', nil)
     else
-        -- Use macro for salvage API (modern professions)
         local macroText = MACRO_SALVAGE:format(spellID, bagID, slotID)
         self:SetAttribute('macrotext', macroText)
         self:SetAttribute(typePrefix .. 'type1', 'macro')
         self:SetAttribute(typePrefix .. 'macrotext1', macroText)
         self:SetAttribute(typePrefix .. 'spell1', nil)
-        -- We intentionally do NOT set type1, so the button can't be clicked without the modifier.
         self:SetAttribute('type1', nil)
     end
 
@@ -459,11 +401,7 @@ function SalvageButton:ApplySpell(bagID, slotID, itemLink, spellID, color, owner
     SetGlowColor(color)
 end
 
----------------------------------------------------------------------------
--- UPDATE ATTRIBUTE DRIVER
----------------------------------------------------------------------------
 function SalvageButton:UpdateAttributeDriver()
-    -- RegisterStateDriver is protected and cannot be called in combat
     if InCombatLockdown() then return end
 
     local settings = GetSettings()
@@ -473,26 +411,19 @@ function SalvageButton:UpdateAttributeDriver()
     end
 
     currentModifier = settings.modifier or "ALT"
-    -- We manage visibility manually; a visibility state driver can cause the button
-    -- to reappear (and glow) away from the hovered item, which looks like a
-    -- "full screen glow glitch".
     UnregisterStateDriver(self, 'visibility')
 end
 
--- Re-anchor when shown
 SalvageButton:HookScript('OnShow', function(self)
     ApplyOwnerRect(self, self._ownerRect)
 end)
 
--- Set attribute to trigger EnterLeave driver
 SalvageButton:HookScript('OnShow', function(self)
     self:SetAttribute('_entered', true)
 end)
 
--- Use EnterLeave to securely deactivate when the mouse leaves the item
 SalvageButton:SetAttribute('_onleave', 'self:ClearAllPoints();self:Hide()')
 
--- Use attribute driver to securely deactivate when the modifier key is released
 SalvageButton:SetAttribute('_onattributechanged', [[
     if name == 'visibility' and value == 'hide' and self:IsShown() then
         self:ClearAllPoints()
@@ -500,7 +431,6 @@ SalvageButton:SetAttribute('_onattributechanged', [[
     end
 ]])
 
--- Reset attributes when hidden
 SalvageButton:HookScript('OnHide', function(self)
     self.itemLink = nil
     self.spellID = nil
@@ -509,11 +439,9 @@ SalvageButton:HookScript('OnHide', function(self)
         self:SetAttribute('target-bag', nil)
         self:SetAttribute('target-slot', nil)
         self:SetAttribute('_entered', false)
-        -- Clear action attributes
         self:SetAttribute('type1', nil)
         self:SetAttribute('spell', nil)
         self:SetAttribute('macrotext', nil)
-        -- Clear modifier-specific attributes
         self:SetAttribute('alt-type1', nil)
         self:SetAttribute('alt-spell1', nil)
         self:SetAttribute('alt-macrotext1', nil)
@@ -526,9 +454,6 @@ SalvageButton:HookScript('OnHide', function(self)
     end
 end)
 
----------------------------------------------------------------------------
--- TOOLTIP HOOK
----------------------------------------------------------------------------
 local ERR_COLOR = CreateColor(1, 0.125, 0.125)
 
 local function TooltipHelp(msg, color)
@@ -537,7 +462,6 @@ local function TooltipHelp(msg, color)
     GameTooltip:Show()
 end
 
--- Anchoring-restricted owner rect; returns { left, bottom, width, height } or nil.
 local function BuildOwnerRect(owner)
     if owner.GetScaledRect and not (owner.IsAnchoringRestricted and owner:IsAnchoringRestricted()) then
         local left, bottom, width, height = owner:GetScaledRect()
@@ -549,28 +473,22 @@ local function BuildOwnerRect(owner)
 end
 
 local function OnTooltipSetItem(tooltip, data)
-    -- Skip before DB/bag work on the overwhelmingly common no-modifier path.
     if not IsModifierActive() then return end
 
-    -- Skip if disabled or in combat
     local settings = GetSettings()
     if not settings or not settings.enabled then return end
     if InCombatLockdown() then return end
 
-    -- Skip our own tooltips
     if tooltip:GetOwner() == SalvageButton then return end
 
-    -- Skip if in Auction House or vehicle
     if (AuctionFrame or AuctionHouseFrame) and (AuctionFrame or AuctionHouseFrame):IsVisible() then return end
     if UnitHasVehicleUI and UnitHasVehicleUI('player') then return end
 
-    -- Get item info from tooltip data
     local itemID, itemLink
     if data and data.id then
         itemID = data.id
         itemLink = data.hyperlink
     else
-        -- Fallback for older tooltip API
         local _, link = tooltip:GetItem()
         if link then
             itemLink = link
@@ -580,7 +498,6 @@ local function OnTooltipSetItem(tooltip, data)
 
     if not itemID then return end
 
-    -- Get owner (bag slot) info
     local owner = tooltip:GetOwner()
     if not owner then return end
 
@@ -608,7 +525,6 @@ local function OnTooltipSetItem(tooltip, data)
     local ownerRect = BuildOwnerRect(owner)
     if not ownerRect then return end
 
-    -- Check if salvageable
     local spellID, color, actionType, requiredStack, needsMore = GetSalvageInfo(itemID, stackCount)
 
     if not spellID and not SalvageLookupBuilt then
@@ -623,24 +539,18 @@ local function OnTooltipSetItem(tooltip, data)
     end
 
     if spellID then
-        -- Check if player has the spell
         if not PlayerHasSpell(spellID) then
             local spellName = C_Spell.GetSpellName(spellID)
             TooltipHelp(ERR_USE_LOCKED_WITH_SPELL_S:format(spellName or "Unknown"), ERR_COLOR)
             return
         end
 
-        -- Apply the salvage action
         SalvageButton:ApplySpell(bagID, slotID, itemLink, spellID, color, ownerRect)
     end
 end
 
----------------------------------------------------------------------------
--- EVENT HANDLING
----------------------------------------------------------------------------
 local eventFrame = CreateFrame("Frame")
 
--- Register events
 eventFrame:RegisterEvent("BAG_UPDATE_DELAYED")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("MODIFIER_STATE_CHANGED")
@@ -654,16 +564,13 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             SalvageButton:Hide()
         end
     elseif event == "PLAYER_ENTERING_WORLD" then
-        -- Initial setup with delay
         C_Timer.After(1, function()
             SalvageButton:UpdateAttributeDriver()
         end)
-        -- Load cached mappings so prospecting/milling works without opening Professions.
         C_Timer.After(2, function()
             LoadSalvageLookupFromDB()
         end)
     elseif event == "TRADE_SKILL_SHOW" or event == "TRADE_SKILL_LIST_UPDATE" or event == "TRADE_SKILL_DATA_SOURCE_CHANGED" then
-        -- Professions data changed; refresh our dynamic salvageable-item index.
         if not InCombatLockdown() then
             RebuildSalvageLookup()
         end
@@ -671,15 +578,10 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         if SalvageButton:IsShown() then
             ShowTooltip(SalvageButton)
 
-            -- Hide if wrong modifier combo
             if not IsModifierActive() and not InCombatLockdown() then
                 SalvageButton:Hide()
             end
         elseif GameTooltip:IsShown() and IsModifierActive() then
-            -- Re-trigger tooltip hook when modifier pressed.
-            -- Policy: reject-on-secret — an unreadable IsMouseOver folds to
-            -- false, which simply skips the cosmetic re-trigger (no tooltip
-            -- re-show); never manufactures a positive hover.
             local owner = GameTooltip:GetOwner()
             if owner and Helpers.SafeValue(owner:IsMouseOver(), false) then
                 if owner.GetSlotAndBagID then
@@ -705,34 +607,24 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     end
 end)
 
--- LOD catch-up: first PEW already fired before this module loads.
--- ns.WhenLoggedIn is nil only in the headless test harness.
 if ns.WhenLoggedIn then
     ns.WhenLoggedIn(function()
         C_Timer.After(1, function()
             SalvageButton:UpdateAttributeDriver()
         end)
-        -- Load cached mappings so prospecting/milling works without opening Professions.
         C_Timer.After(2, function()
             LoadSalvageLookupFromDB()
         end)
     end)
 end
 
----------------------------------------------------------------------------
--- TOOLTIP HOOK REGISTRATION
----------------------------------------------------------------------------
 TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, OnTooltipSetItem)
 
----------------------------------------------------------------------------
--- GLOBAL REFRESH FUNCTION
----------------------------------------------------------------------------
 function _G.QUI_RefreshQuickSalvage()
     if not InCombatLockdown() then
         SalvageButton:UpdateAttributeDriver()
     end
 end
 
--- Export for other modules
 QuickSalvage.Button = SalvageButton
 QuickSalvage.Refresh = _G.QUI_RefreshQuickSalvage

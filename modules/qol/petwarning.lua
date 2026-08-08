@@ -2,32 +2,18 @@ local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 local SkinBase = ns.SkinBase
 
----------------------------------------------------------------------------
--- PET WARNING
--- Warns pet-spec players when pet is missing or on passive
--- Shows during combat in instances (dungeons/raids)
----------------------------------------------------------------------------
-
 local LCG = LibStub and LibStub("LibCustomGlow-1.0", true)
 local eventFrame = CreateFrame("Frame")
 local combatEventsRegistered = false
 
 local GetSettings = Helpers.CreateDBGetter("general")
 
----------------------------------------------------------------------------
--- PET SPEC DETECTION
----------------------------------------------------------------------------
-
--- Spec IDs that have permanent pets
 local PET_SPEC_IDS = {
-    -- Hunter: Beast Mastery (253), Survival (255)
     [253] = true,
     [255] = true,
-    -- Warlock: Affliction (265), Demonology (266), Destruction (267)
     [265] = true,
     [266] = true,
     [267] = true,
-    -- Death Knight: Unholy (252)
     [252] = true,
 }
 
@@ -52,21 +38,17 @@ local function IsPetOnPassive()
     return false
 end
 
----------------------------------------------------------------------------
--- PET COMBAT WARNING FRAME
----------------------------------------------------------------------------
-
 local PetWarningFrame = CreateFrame("Frame", "QUI_PetWarningFrame", UIParent, "BackdropTemplate")
 PetWarningFrame:SetSize(220, 50)
 PetWarningFrame:SetFrameStrata("HIGH")
 PetWarningFrame:Hide()
 
 do
-    local bgr, bgg, bgb = 0.1, 0.1, 0.1        -- original fallback literals
+    local bgr, bgg, bgb = 0.1, 0.1, 0.1
     if Helpers and Helpers.GetSkinBgColor then
         bgr, bgg, bgb = Helpers.GetSkinBgColor()
     end
-    local sr, sg, sb = 1, 0.3, 0.3              -- semantic warning border: keep as-is
+    local sr, sg, sb = 1, 0.3, 0.3
     if SkinBase and SkinBase.CreateBackdrop then
         SkinBase.CreateBackdrop(PetWarningFrame, sr, sg, sb, 1, bgr, bgg, bgb, 0.9)
     elseif SkinBase and SkinBase.ApplyPixelBackdrop then
@@ -85,7 +67,6 @@ PetWarningFrame.text:SetPoint("RIGHT", PetWarningFrame, "RIGHT", -30, 0)
 PetWarningFrame.text:SetTextColor(1, 0.3, 0.3, 1)
 PetWarningFrame.text:SetText(ns.L["NO PET!"])
 
--- Close button to dismiss warning for rest of fight
 PetWarningFrame.closeBtn = CreateFrame("Button", nil, PetWarningFrame)
 PetWarningFrame.closeBtn:SetSize(20, 20)
 PetWarningFrame.closeBtn:SetPoint("RIGHT", PetWarningFrame, "RIGHT", -8, 0)
@@ -118,12 +99,7 @@ end)
 
 PetWarningFrame.dismissedThisFight = false
 
----------------------------------------------------------------------------
--- POSITIONING
----------------------------------------------------------------------------
-
 local function PositionPetWarningFrame()
-    -- Skip if anchoring system has overridden this frame
     if _G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("petWarning") then return end
 
     local settings = GetSettings()
@@ -135,10 +111,6 @@ local function PositionPetWarningFrame()
 end
 
 PositionPetWarningFrame()
-
----------------------------------------------------------------------------
--- COMBAT POLLING
----------------------------------------------------------------------------
 
 local petWarningTicker = nil
 local currentWarningState = nil
@@ -168,14 +140,12 @@ local function UpdatePetWarningState()
         return false
     end
 
-    -- Only warn in instances
     local inInstance, instanceType = IsInInstance()
     if not inInstance or (instanceType ~= "party" and instanceType ~= "raid") then
         ClearPetWarning()
         return false
     end
 
-    -- Check for missing pet
     if not UnitExists("pet") then
         PetWarningFrame.text:SetText(ns.L["NO PET SUMMONED!"])
         PetWarningFrame.icon:SetTexture(132599)
@@ -189,7 +159,6 @@ local function UpdatePetWarningState()
         return true
     end
 
-    -- Check for passive stance
     if IsPetOnPassive() then
         PetWarningFrame.text:SetText(ns.L["PET IS ON PASSIVE!"])
         PetWarningFrame.icon:SetTexture(132311)
@@ -203,7 +172,6 @@ local function UpdatePetWarningState()
         return true
     end
 
-    -- Pet is fine
     ClearPetWarning()
     return false
 end
@@ -252,10 +220,6 @@ local function UpdatePetWarningEventRegistration()
     end
 end
 
----------------------------------------------------------------------------
--- EVENT HANDLING
----------------------------------------------------------------------------
-
 eventFrame:SetScript("OnEvent", function(_, event)
     if event == "PLAYER_REGEN_DISABLED" then
         StartPetWarningPolling()
@@ -264,10 +228,6 @@ eventFrame:SetScript("OnEvent", function(_, event)
     end
 end)
 
--- Install after login. ns.WhenLoggedIn runs now if already logged in (the
--- post-login LOD case) rather than this addon's own ADDON_LOADED, which is NOT
--- delivered when the core eager-LoadAddOn's the module from OnEnable (see
--- tooltip_provider.lua). Nil only in the headless test harness.
 if ns.WhenLoggedIn then
     ns.WhenLoggedIn(function()
         UpdatePetWarningEventRegistration()
@@ -277,20 +237,15 @@ if ns.WhenLoggedIn then
     end)
 end
 
----------------------------------------------------------------------------
--- GLOBAL API (for options panel)
----------------------------------------------------------------------------
-
 _G.QUI_RepositionPetWarning = PositionPetWarningFrame
 _G.QUI_RefreshPetWarning = function()
     PositionPetWarningFrame()
     UpdatePetWarningEventRegistration()
-    -- Re-apply skin bg color on theme change; keep the semantic red warning border.
     local bgr, bgg, bgb = 0.1, 0.1, 0.1
     if Helpers and Helpers.GetSkinBgColor then
         bgr, bgg, bgb = Helpers.GetSkinBgColor()
     end
-    local sr, sg, sb = 1, 0.3, 0.3             -- semantic warning border
+    local sr, sg, sb = 1, 0.3, 0.3
     if SkinBase and SkinBase.CreateBackdrop then
         SkinBase.CreateBackdrop(PetWarningFrame, sr, sg, sb, 1, bgr, bgg, bgb, 0.9)
     else
@@ -329,9 +284,6 @@ if ns.Registry then
         group = "qol",
         importCategories = { "qol" },
     })
-    -- Companion skinning registration: the warning frame bg tracks the global
-    -- skin, but the "qol" group isn't refreshed on a skin-color change (which
-    -- fires only RefreshAll("skinning")). Re-skin on that too.
     ns.Registry:Register("petWarningSkin", {
         refresh = _G.QUI_RefreshPetWarning,
         priority = 30,

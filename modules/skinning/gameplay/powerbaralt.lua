@@ -1,28 +1,14 @@
 local addonName, ns = ...
 
--- Master skinning gate (skinning.enabled): disabled + /reload installs no QUI
--- skin hooks for this file. Default ON; reload-required. See core/uikit.lua.
 if ns.IsSkinningEnabled and not ns.IsSkinningEnabled() then return end
 
 local GetCore = ns.Helpers.GetCore
 local SkinBase = ns.SkinBase
 local Helpers = ns.Helpers
 
----------------------------------------------------------------------------
--- PLAYER POWER BAR ALT SKINNING
----------------------------------------------------------------------------
--- Replaces the encounter/quest-specific power bar (PlayerPowerBarAlt)
--- with a clean QUI-styled bar. Used for: Atramedes sound, Cho'gall
--- corruption, Darkmoon games, etc.
---
--- Approach: Hide Blizzard's bar, create custom replacement
--- Font facing is owned by SkinBase.SkinFontString (QUI font + CJK fallback + outline).
-
--- Bar dimensions
 local BAR_WIDTH = 250
 local BAR_HEIGHT = 20
 
--- Locals for performance
 local floor = math.floor
 local UnitPower = UnitPower
 local UnitPowerMax = UnitPowerMax
@@ -30,7 +16,6 @@ local GetUnitPowerBarInfo = GetUnitPowerBarInfo
 local GetUnitPowerBarStrings = GetUnitPowerBarStrings
 local ALTERNATE_POWER_INDEX = Enum.PowerType.Alternate or 10
 
--- Module state
 local QUIAltPowerBar = nil
 local isEnabled = false
 
@@ -47,10 +32,6 @@ local function RunAfterFirstFrame(callback, delay)
     return nil
 end
 
----------------------------------------------------------------------------
--- DATABASE ACCESS
----------------------------------------------------------------------------
-
 local function GetDB()
     local core = GetCore()
     return core and core.db and core.db.profile or {}
@@ -64,12 +45,6 @@ end
 local function GetModuleSkinColors()
     return SkinBase.GetSkinColors(GetGeneralSettings(), "powerBarAlt")
 end
-
--- Legacy position helpers removed — frameAnchoring system handles positioning.
-
----------------------------------------------------------------------------
--- TOOLTIP HANDLING
----------------------------------------------------------------------------
 
 local function OnEnter(self)
     if not self:IsVisible() or GameTooltip:IsForbidden() then return end
@@ -88,10 +63,6 @@ local function OnLeave()
     GameTooltip:Hide()
 end
 
----------------------------------------------------------------------------
--- BAR UPDATE
----------------------------------------------------------------------------
-
 local function UpdateBar(self)
     local barInfo = GetUnitPowerBarInfo("player")
 
@@ -100,22 +71,11 @@ local function UpdateBar(self)
         local power = UnitPower("player", ALTERNATE_POWER_INDEX)
         local maxPower = UnitPowerMax("player", ALTERNATE_POWER_INDEX)
 
-        -- UnitPower/UnitPowerMax are SecretWhenUnitPower(Max)Restricted and
-        -- non-nilable (UnitDocumentation) — probe BEFORE any truth-test.
-        -- The old `power or 0`/`maxPower or 0` fallbacks truth-tested the
-        -- raw values in Lua and threw exactly when restricted; non-nilable
-        -- means the fallback was dead code anyway.
         self.powerName = powerName
         self.powerTooltip = powerTooltip
 
         if Helpers.IsSecretValue(power) or Helpers.IsSecretValue(maxPower) then
             -- @secret-policy: sink-passthrough — StatusBar SetMinMaxValues/
-            -- SetValue accept secrets natively (SecretAspect.BarValue); pass
-            -- raw, no Lua-side fallback. Percentage/text are Lua-derived —
-            -- hold last render (defer), never manufacture "0%" from secrecy.
-            -- The powerValue/powerMaxValue/powerPercent mirror fields hold
-            -- their last readable values for the same reason (write-only
-            -- state; nothing reads them mid-combat).
             self:SetMinMaxValues(barInfo.minPower or 0, maxPower)
             self:SetValue(power)
             self:Show()
@@ -166,18 +126,12 @@ local function OnEvent(self, event, arg1, arg2)
     end
 end
 
----------------------------------------------------------------------------
--- BAR CREATION
----------------------------------------------------------------------------
-
 local function CreateQUIAltPowerBar()
     local sr, sg, sb, sa, bgr, bgg, bgb, bga = GetModuleSkinColors()
 
-    -- Create the status bar
     local bar = CreateFrame("StatusBar", "QUI_AltPowerBar", UIParent)
     bar:SetSize(BAR_WIDTH, BAR_HEIGHT)
 
-    -- Default position; ApplyAllFrameAnchors overrides from frameAnchoring DB
     bar:SetPoint("TOP", UIParent, "TOP", 0, -100)
 
     bar:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
@@ -186,11 +140,9 @@ local function CreateQUIAltPowerBar()
     bar:SetValue(0)
     bar:Hide()
 
-    -- Make movable (controlled by mover overlay)
     bar:SetMovable(true)
     bar:SetClampedToScreen(true)
 
-    -- Create backdrop
     bar.backdrop = CreateFrame("Frame", nil, bar, "BackdropTemplate")
     SkinBase.SetExpandedPixelPoints(bar.backdrop, bar, 2)
     local safeLevel = bar:GetFrameLevel() - 1
@@ -202,23 +154,19 @@ local function CreateQUIAltPowerBar()
     Helpers.SetFrameBackdropColor(bar.backdrop, bgr, bgg, bgb, bga)
     Helpers.SetFrameBackdropBorderColor(bar.backdrop, sr, sg, sb, sa)
 
-    -- Create text
     bar.text = bar:CreateFontString(nil, "OVERLAY")
     bar.text:SetPoint("CENTER", bar, "CENTER")
     SkinBase.SkinFontString(bar.text, { size = 11, color = { 1, 1, 1, 1 } })
     bar.text:SetJustifyH("CENTER")
 
-    -- Store colors for refresh and mark as skinned
     SkinBase.SetFrameData(bar, "skinColor", { sr, sg, sb, sa })
     SkinBase.SetFrameData(bar, "bgColor", { bgr, bgg, bgb, bga })
     SkinBase.MarkSkinned(bar)
 
-    -- Tooltip support
     bar:EnableMouse(true)
     bar:SetScript("OnEnter", OnEnter)
     bar:SetScript("OnLeave", OnLeave)
 
-    -- Event handling
     bar:RegisterUnitEvent("UNIT_POWER_UPDATE", "player")
     bar:RegisterUnitEvent("UNIT_POWER_BAR_SHOW", "player")
     bar:RegisterUnitEvent("UNIT_POWER_BAR_HIDE", "player")
@@ -227,10 +175,6 @@ local function CreateQUIAltPowerBar()
 
     return bar
 end
-
----------------------------------------------------------------------------
--- BLIZZARD BAR HIDING
----------------------------------------------------------------------------
 
 local blizzardBarHooked = false
 
@@ -242,9 +186,7 @@ local function HideBlizzardBar()
         bar:SetAlpha(0)
     end
 
-    -- Hook UnitPowerBarAlt_SetUp to catch bar creation/setup during encounters
     if not blizzardBarHooked and _G.UnitPowerBarAlt_SetUp then
-        -- TAINT SAFETY: Defer to break taint chain from secure context.
         hooksecurefunc("UnitPowerBarAlt_SetUp", function(self)
             local bar = self
             C_Timer.After(0, function()
@@ -259,24 +201,9 @@ local function HideBlizzardBar()
     end
 end
 
----------------------------------------------------------------------------
--- POWER BAR WIDGET CARRY-ALONG
----------------------------------------------------------------------------
--- Blizzard parents UIWidgetPowerBarContainerFrame (prey hunt crystal and
--- other encounter widgets) to EncounterBar, a VerticalLayoutFrame whose
--- Layout() re-anchors its children on every widget update — so the
--- container must be reparented out, not just re-pinned. Since QUI replaces
--- PlayerPowerBarAlt with its own bar at the powerBarAlt anchor, the widget
--- container rides along below the QUI bar; otherwise those widgets stay at
--- Blizzard's default bottom-center position while the user's encounter bar
--- lives elsewhere.
-
 local widgetCarryInstalled = false
 
 local function PowerBarWidgetsMoverActive()
-    -- The Blizzard Frame Mover has its own "Power Bar Widgets" entry
-    -- (default off). If the user enabled it, that system owns the
-    -- container's position — don't fight it.
     local mover = GetDB().blizzardMover
     if not mover or not mover.enabled or not mover.frames then return false end
     local row = mover.frames.UIWidgetPowerBarContainerFrame
@@ -289,9 +216,6 @@ local function CarryPowerBarWidgetContainer()
     local container = _G.UIWidgetPowerBarContainerFrame
     if not container or not QUIAltPowerBar then return end
 
-    -- Combat /reload lands Initialize() in combat; the container isn't a
-    -- protected frame, but defer anyway so the reparent never runs while
-    -- Blizzard's encounter layout is live mid-fight.
     if InCombatLockdown() then
         local waiter = CreateFrame("Frame")
         waiter:RegisterEvent("PLAYER_REGEN_ENABLED")
@@ -303,16 +227,11 @@ local function CarryPowerBarWidgetContainer()
     end
 
     container:SetParent(UIParent)
-    -- Non-fixed strata follows the parent on SetParent; keep EncounterBar's
     container:SetFrameStrata("MEDIUM")
     container:ClearAllPoints()
     container:SetPoint("TOP", QUIAltPowerBar, "BOTTOM", 0, -6)
     widgetCarryInstalled = true
 end
-
----------------------------------------------------------------------------
--- REFRESH COLORS
----------------------------------------------------------------------------
 
 local function RefreshPowerBarAltColors()
     if not QUIAltPowerBar then return end
@@ -338,10 +257,6 @@ if ns.Registry then
     })
 end
 
----------------------------------------------------------------------------
--- INITIALIZATION
----------------------------------------------------------------------------
-
 local function Initialize()
     local core = GetCore()
     local settings = core and core.db and core.db.profile and core.db.profile.general
@@ -349,26 +264,17 @@ local function Initialize()
     if not settings or not settings.skinPowerBarAlt then return end
     if isEnabled then return end
 
-    -- Hide Blizzard's bar
     HideBlizzardBar()
 
-    -- Create our bar
     QUIAltPowerBar = CreateQUIAltPowerBar()
 
-    -- Carry the Blizzard power-bar widget container (prey crystal, encounter
-    -- widgets) along with the QUI bar's anchor
     CarryPowerBarWidgetContainer()
 
-    -- Initial update
     UpdateBar(QUIAltPowerBar)
 
     isEnabled = true
 end
 
--- LOD catch-up: first PEW already fired before this module loads, so the old
--- one-shot PLAYER_ENTERING_WORLD init runs via ns.WhenLoggedIn instead.
--- ns.WhenLoggedIn is nil only in the headless test harness, where the old
--- never-firing PEW registration was equally inert.
 if ns.WhenLoggedIn then
     ns.WhenLoggedIn(function()
         RunAfterFirstFrame(function()

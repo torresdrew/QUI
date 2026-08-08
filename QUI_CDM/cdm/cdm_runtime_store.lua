@@ -1,10 +1,4 @@
 local _, ns = ...
----------------------------------------------------------------------------
--- CDM Runtime Store
---
--- Compatibility facade over frame-owned runtime facts. Icons and bars are
--- the runtime store; this module does not keep a central key-indexed cache.
----------------------------------------------------------------------------
 
 local CDMRuntimeStore = {}
 ns.CDMRuntimeStore = CDMRuntimeStore
@@ -60,12 +54,6 @@ local function CopyStateInto(target, state)
             end
         end
     end
-end
-
-function CDMRuntimeStore.BuildEntryKey(entry, fallbackContainer)
-    local containerKey, entryType, entryID, instanceKey = ResolveEntryKeyParts(entry, fallbackContainer)
-    if not containerKey then return nil end
-    return BuildEntryKeyFromParts(containerKey, entryType, entryID, instanceKey)
 end
 
 function CDMRuntimeStore.Version()
@@ -146,9 +134,6 @@ function CDMRuntimeStore.ClearAll()
 end
 
 function CDMRuntimeStore.GetStats()
-    -- Frame-owned store: per-frame states are not centrally tracked, so
-    -- there is no meaningful count to report — only the write version and
-    -- whether the single compat slot is occupied.
     return {
         compatState = _compatState and 1 or 0,
         version = _version,

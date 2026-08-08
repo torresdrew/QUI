@@ -1,14 +1,3 @@
----------------------------------------------------------------------------
--- Bags views: the player bag window (bags 0–5 in one grid).
--- Data source is the Phase-1 cache; refresh is coalesced: ScheduleRefresh
--- arms a one-shot OnUpdate that full-renders. Two presentation modes
--- (bank_window's split):
---   LIVE   (viewedCharacter == nil): full-interaction buttons over the
---          current character's bags; sort/sell-junk available.
---   CACHED (owner selector picked another character): inert CreateCached/
---          DressCached buttons over that character's cached bags; ops are
---          live-only (Sort/Sell Junk hidden), money/free come from the cache.
----------------------------------------------------------------------------
 -- luacheck: read globals BAG_NAME_BACKPACK QUI_BagsToggleBank QUI_BagsToggleGuild
 -- luacheck: read globals TradeFrame SendMailFrame AuctionHouseFrame C_AuctionHouse
 -- luacheck: read globals PutItemInBag PickupBagFromSlot GetInventoryItemTexture GetInventoryItemQuality
@@ -34,37 +23,32 @@ Bags.BagWindow = BagWindow
 
 local PLAYER_BAG_ORDER = { 0, 1, 2, 3, 4, 5 }
 
-local CAT_HEADER_H = 18 -- category-mode section header row height
-local BAG_SLOT_SIZE = 24 -- bag-slot strip button size
+local CAT_HEADER_H = 18
+local BAG_SLOT_SIZE = 24
 
-local win              -- chassis window (lazy)
-local holders = {}     -- bagID → holder frame (live pool)
-local buttons = {}     -- bagID → { [slot] = live button }
-local cachedButtons = {}  -- bagID → { [slot] = cached button } (offline pool)
-local catHeaderPool = {}  -- pooled category header fontstrings (category mode)
-local viewedCharacter = nil -- nil = live current character; key = cached browse
-local focusItemID = nil     -- search-everywhere landing flash (transient)
+local win
+local holders = {}
+local buttons = {}
+local cachedButtons = {}
+local catHeaderPool = {}
+local viewedCharacter = nil
+local focusItemID = nil
 local searchText = ""
 local matcher = nil
 local searchTimer = nil
-local selectMode = false    -- batch-send selection mode (live view only)
-local selectedCells = {}    -- "bag:slot" → { bag, slot, itemID } snapshots
+local selectMode = false
+local selectedCells = {}
 
--- Incremental-repaint state (one table: keeps closure upvalue counts flat
--- under the Lua 5.1 60-upvalue cap). Refresh() — the full path — retains
--- the render it produced; the scheduled runner (below Refresh) consumes
--- the pending scope flags the event subscribers set and picks the
--- narrowest repaint that covers them.
 local repaint = {
-    placed = nil,        -- last full render's { cell, x, y } array
-    index = nil,         -- [bagID][slot] → placed entry (scoped re-dress)
-    sig = nil,           -- RefreshScope.LayoutSignature of that render
-    live = nil,          -- that render's live/cached mode
-    contentW = nil,      -- last SetContentSize args minus the currency bar
+    placed = nil,
+    index = nil,
+    sig = nil,
+    live = nil,
+    contentW = nil,
     contentH = nil,
     pendingFull = false,
     pendingDressAll = false,
-    pendingBags = nil,   -- { [bagID] = true } accumulated across events
+    pendingBags = nil,
     pendingSearch = false,
     pendingCurrency = false,
 }
@@ -80,9 +64,6 @@ local function SelectedCount()
     return n
 end
 
---- The selection-send destination: which open surface can take the batch.
---- Pure resolution lives in Transfers.ResolveSendDestination; this reads
---- the live surfaces (Blizzard frames are nil until their UIs load).
 local function SendDestination()
     local bankType = nil
     if Bags.BankWindow and Bags.BankWindow.GetActiveBankType then
@@ -98,8 +79,6 @@ local function SendDestination()
     })
 end
 
---- Send the current selection to whatever destination is open (the footer
---- send button and the select-catcher right-click share this path).
 local function SendSelection()
     local dest = SendDestination()
     if not dest or SelectedCount() == 0 then return end
@@ -118,9 +97,6 @@ local function SendSelection()
     end)
 end
 
---- Footer batch-send button: destination verb + selection count while a
---- selection exists at an open destination (shared by Refresh and the
---- per-cell selection toggle).
 local function UpdateSendButton()
     if not win then return end
     local sendDest = viewedCharacter == nil and selectMode and SelectedCount() > 0
@@ -135,13 +111,6 @@ local function UpdateSendButton()
     end
 end
 
---- Targeted deposit: right-click while a live bank session shows a SPECIFIC
---- tab routes the item into that tab (an empty slot, plain cursor moves)
---- instead of the server's default first-available placement. Falls back to
---- the stock UseContainerItem deposit — which auto-stacks — when the tab
---- already holds a mergeable partial stack of the same item, when the tab is
---- full, or when the item isn't warband-allowed. (Targeting an empty slot
---- unconditionally would skip the existing stack and burn a fresh slot.)
 local function DepositToSelectedTab(btn)
     local tabID, bankType = Bags.BankWindow.GetSelectedLiveTab()
     if not tabID then return end
@@ -155,9 +124,6 @@ local function DepositToSelectedTab(btn)
             return
         end
     end
-    -- Resolve the landing slot: nil = a same-item partial stack exists (or the
-    -- tab is full), so deposit natively and let the server merge into the
-    -- stack + handle overflow — exactly the stock bag→bank behavior.
     local size = C_Container.GetContainerNumSlots(tabID) or 0
     local maxStack = C_Item.GetItemMaxStackSizeByID(info.itemID)
     local target = Bags.Transfers.ResolveDepositTargetSlot(size,
@@ -173,16 +139,6 @@ local function DepositToSelectedTab(btn)
     ClearCursor()
 end
 
---- Targeted auction post: right-click while the auction house is open stages
---- the item in the sell panel (AuctionHouseFrame:SetPostItem — the same call
---- the stock handler's AH branch makes). The stock branch only fires when a
---- sell screen is up (IsListingAuctions) or the item already passes
---- C_AuctionHouse.IsSellItemValid; everything else falls through to
---- UseContainerItem, which USES the item at the auctioneer (equips/eats it).
---- QUI always attempts the post instead: SetPostItem validates internally
---- (IsSellItemValid with displayError defaulted true, vendored
---- Blizzard_AuctionHouseFrame.lua:608) and surfaces the proper "can't
---- auction that" error rather than consuming the click as a use.
 local function PostToAuctionHouse(btn)
     if not (AuctionHouseFrame and AuctionHouseFrame:IsShown()) then return end
     local bagID, slot = btn:GetBagID(), btn:GetID()
@@ -193,9 +149,6 @@ local function PostToAuctionHouse(btn)
     AuctionHouseFrame:SetPostItem(loc)
 end
 
---- Live right-click route for the per-button catcher: bank-tab deposit or
---- auction post (Transfers.ResolveItemRightClickRoute keeps the priority
---- pure/testable). nil = catcher hidden, template OnClick owns the click.
 local function RightClickRoute()
     return Bags.Transfers.ResolveItemRightClickRoute({
         bankTabSelected = Bags.BankWindow ~= nil
@@ -205,8 +158,6 @@ local function RightClickRoute()
     })
 end
 
---- Category-mode section headers: pooled FontStrings on the body. nil/empty
---- headers (flat mode) just hides the pool.
 local function RenderCategoryHeaders(headers, xOff)
     for _, fs in ipairs(catHeaderPool) do fs:Hide() end
     if not headers then return end
@@ -222,24 +173,16 @@ local function RenderCategoryHeaders(headers, xOff)
         fs:SetTextColor(sr, sg, sb)
         fs:SetText(h.title)
         fs:ClearAllPoints()
-        -- header text sits in the upper portion of its CAT_HEADER_H row
         fs:SetPoint("TOPLEFT", win._body, "TOPLEFT", 1 + (xOff or 0), h.y - 2)
         fs:Show()
     end
 end
 
--- The window's OnUpdate is owned exclusively by ScheduleRefresh (one-shot).
--- The scheduled callback routes through the repaint runner (assigned below
--- Refresh) so coalesced events can pick a narrower repaint than the full
--- Refresh; with no pending scope flags it still runs the full path, so
--- ScheduleRefresh callers that set nothing keep their exact old behavior.
-local RunScheduledRepaint -- forward-declared: closes over Refresh-adjacent helpers
+local RunScheduledRepaint
 local ScheduleRefresh = Bags.Chassis.MakeScheduleRefresh(
     function() return win end,
     function() RunScheduledRepaint() end)
 
---- The record the window renders: the viewed character's cached record, or
---- the current character's (live mode) when no offline owner is selected.
 local function ViewedRecord()
     if viewedCharacter then
         return Storage.Store.GetCharacter(viewedCharacter)
@@ -250,8 +193,6 @@ end
 local function UpdateMoneyText()
     local money
     if viewedCharacter then
-        -- offline: the viewed character's gold as of their last snapshot
-        -- (details.money, refreshed by EnsureCurrentCharacter while they play)
         local rec = ViewedRecord()
         money = rec and rec.details and rec.details.money or 0
     else
@@ -264,10 +205,6 @@ local function UpdateMoneyText()
     end
 end
 
-
---- appearance.hiddenBags: bags 1–4 the user folded out of the grid.
---- Display-only — scanning, search, and sort still cover hidden bags;
---- the backpack (0) and reagent bag (5, reagentDisplay-governed) never hide.
 local function IsBagHidden(bagID)
     if bagID < 1 or bagID > 4 then return false end
     local s = GetSettings()
@@ -275,13 +212,10 @@ local function IsBagHidden(bagID)
     return hb and hb[bagID] and true or false
 end
 
---- Flip a held bag's hidden-from-grid flag and re-render (shared by the
---- bag-slot menu checkbox and the Alt+click shortcut).
 local function ToggleBagHidden(bagID)
     local s = GetSettings()
     if s and s.appearance then
         s.appearance.hiddenBags = s.appearance.hiddenBags or {}
-        -- toggle: true ↔ removed (false and nil both mean visible)
         s.appearance.hiddenBags[bagID] = (not s.appearance.hiddenBags[bagID]) or nil
     end
     BagWindow.Refresh()
@@ -305,12 +239,9 @@ local function EnsureWindow()
         onSearchChanged = function(text)
             searchText = text or ""
             matcher = (searchText ~= "") and Bags.Search.Compile(searchText) or nil
-            -- debounce: re-render at most once per 0.1s typing pause, not per
-            -- keystroke (the timer resets while the user keeps typing)
             if searchTimer then searchTimer:Cancel() end
             searchTimer = C_Timer.NewTimer(0.1, function()
                 searchTimer = nil
-                -- matcher-only: dim/undim the placed buttons, no relayout
                 repaint.pendingSearch = true
                 ScheduleRefresh()
             end)
@@ -319,13 +250,11 @@ local function EnsureWindow()
             w:SetScript("OnUpdate", nil)
             w._updateScheduled = false
         end,
-        -- the X button routes through the sound + opener-clearing path
         onUserClose = function() BagWindow.Hide() end,
         compactSearch = true,
         onChromeChanged = function() ScheduleRefresh() end,
     })
 
-    -- footer: money + free slots
     win._money = win._footer:CreateFontString(nil, "ARTWORK")
     win._money:SetPoint("RIGHT", -8, 0)
     CJKFont(win._money, Helpers.GetGeneralFont() or STANDARD_TEXT_FONT, 12, "OUTLINE")
@@ -333,13 +262,6 @@ local function EnsureWindow()
     win._free:SetPoint("LEFT", 8, 0)
     CJKFont(win._free, Helpers.GetGeneralFont() or STANDARD_TEXT_FONT, 12, "OUTLINE")
 
-    -- Bag-slot strip (equip/swap containers): bags 1-4 + reagent bag 5 as
-    -- plain INSECURE buttons — the whole interaction is the stock
-    -- MainMenuBarBagButtons idiom (vendored MainMenuBarBagButtons.lua:78-96):
-    -- PutItemInBag(invSlot) places/swaps the cursor item, falling back to
-    -- PickupBagFromSlot when the cursor is empty; bag swaps are blocked in
-    -- combat, so clicks are combat-guarded. Live view only; dressed per
-    -- Refresh (BAG_UPDATE → scan → BagsChanged covers equip changes).
     win._bagSlotButtons = {}
     for i = 1, 5 do
         local bagID = i
@@ -357,11 +279,6 @@ local function EnsureWindow()
             return C_Container.ContainerIDToInventoryID
                 and C_Container.ContainerIDToInventoryID(bagID) or nil
         end
-        -- Right-click: per-bag flag menu (house MenuUtil idiom, owner_select
-        -- precedent). Only flags QUI actually honors: DisableAutoSort (sort
-        -- executor skips the bag) + ExcludeJunkSell (junk seller skips it).
-        -- Blizzard's gear-filter assignment is omitted on purpose — it only
-        -- steers Blizzard's own sorter, which never runs under the takeover.
         local function ShowBagSlotMenu(anchor)
             if not (MenuUtil and MenuUtil.CreateContextMenu) then return end
             MenuUtil.CreateContextMenu(anchor, function(_, root)
@@ -437,9 +354,6 @@ local function EnsureWindow()
         win._bagSlotButtons[i] = b
     end
 
-    -- Strip collapse toggle: writes the same appearance.showBagSlots the
-    -- settings checkbox binds; stays visible while collapsed so the strip
-    -- can come back without a settings round-trip.
     local stripToggle = CreateFrame("Button", nil, win._body)
     stripToggle:SetSize(14, 14)
     local stBg = stripToggle:CreateTexture(nil, "BACKGROUND")
@@ -454,7 +368,6 @@ local function EnsureWindow()
     stripToggle:SetScript("OnClick", function()
         local s = GetSettings()
         if s and s.appearance then
-            -- nil means "shown" (default true), so collapse writes false
             s.appearance.showBagSlots = s.appearance.showBagSlots == false
         end
         BagWindow.Refresh()
@@ -467,9 +380,6 @@ local function EnsureWindow()
     stripToggle:SetScript("OnLeave", function() GameTooltip:Hide() end)
     win._stripToggle = stripToggle
 
-    -- header: Sort button left of the search box — compact 18×18 icon
-    -- button (Blizzard autosort atlas, vendored ContainerFrame.xml:314);
-    -- dark bg + QUI border lines recolored per Refresh like the tab strip
     local sort = CreateFrame("Button", nil, win._header)
     local sortBg = sort:CreateTexture(nil, "BACKGROUND")
     sortBg:SetAllPoints()
@@ -506,11 +416,6 @@ local function EnsureWindow()
     sort:SetScript("OnLeave", function() GameTooltip:Hide() end)
     win._sortBtn = sort
 
-    -- header: Bank + Guild cached-browse buttons left of Sort (same
-    -- construction, compact 18×18 glyph chips — tooltips carry the full
-    -- names so the header stays narrower than the grid). They route through
-    -- the shared toggles in bags.lua — live presentation at an open
-    -- session, cached browse anywhere else.
     local function HeaderButton(label, anchorTo, tooltip, onClick)
         local btn = CreateFrame("Button", nil, win._header)
         local bg = btn:CreateTexture(nil, "BACKGROUND")
@@ -547,9 +452,6 @@ local function EnsureWindow()
             BagWindow.Refresh()
         end)
 
-    -- footer: Sell Junk next to the free-slots text (bank CreateFooterButton
-    -- construction). Hidden until Refresh shows it at an open merchant;
-    -- SellJunk self-guards against an in-flight run ("running" refusal).
     local sell = CreateFrame("Button", nil, win._footer)
     local sellBg = sell:CreateTexture(nil, "BACKGROUND")
     sellBg:SetAllPoints()
@@ -570,9 +472,6 @@ local function EnsureWindow()
     sell:Hide()
     win._sellBtn = sell
 
-    -- footer: batch send (Sell Junk construction), right of Sell Junk —
-    -- both can show at a merchant. Hidden until Refresh shows it with a
-    -- destination verb + count while a selection exists.
     local send = CreateFrame("Button", nil, win._footer)
     local sendBg = send:CreateTexture(nil, "BACKGROUND")
     sendBg:SetAllPoints()
@@ -588,12 +487,8 @@ local function EnsureWindow()
     send:Hide()
     win._sendBtn = send
 
-    -- currency bar: footer-adjacent row (settings-listed currencies);
-    -- Refresh drives it and reserves its height via SetContentSize
     Bags.CurrencyBar.Attach(win)
 
-    -- header: owner selector right of the title (the right side is the
-    -- sort/search/close cluster); picking an alt renders their cached bags
     win._ownerSelect = Bags.OwnerSelect.Attach(win, {
         title = ns.L["Characters"],
         tooltip = ns.L["View another character's bags"],
@@ -616,10 +511,6 @@ local function EnsureWindow()
     return win
 end
 
---- ordered flat list of { bagID, slot, entry } across bags 0..5 (incl.
---- empties) — from the viewed record, so cached mode walks the offline
---- character's bags through the exact same shape. Hidden bags contribute
---- nothing (so the free count and category buckets skip them too).
 local function CollectSlots()
     local rec = ViewedRecord()
     local out = {}
@@ -635,28 +526,18 @@ local function CollectSlots()
     return out
 end
 
---- Search verdict for one cell under the active matcher: true (match),
---- false (dim), nil (no active search). Cached entries carry the same
---- shape, so search works identically in both modes (Details.Build over
---- cache slots); pending details count as visible, empty slots dim.
 local function SearchResultFor(cell)
     if not matcher then return nil end
     local details = Bags.Details.Build(cell.entry)
     if details then
-        return matcher(details) ~= false -- pending counts as visible
+        return matcher(details) ~= false
     end
     return false
 end
 
---- Dress one placed cell's button in place: item visuals, search dim,
---- free-count text, focus flash, selection overlay, catcher visibility.
---- Shared by Refresh's placement loop and the scoped repaint paths —
---- everything here is position-independent (no size/point writes).
 local function DressPlacedCell(cell, btn, live, rightClickRoute)
     local result = SearchResultFor(cell)
     if live then
-        -- new-item glow: live bag window only; the GUID was resolved by
-        -- the caller's precompute pass
         Bags.ItemButtons.Dress(btn, cell.entry, result, cell._newGuid)
     else
         Bags.ItemButtons.DressCached(btn, cell.entry, result)
@@ -674,7 +555,6 @@ local function DressPlacedCell(cell, btn, live, rightClickRoute)
     end
     if btn._quiDepositCatcher then
         local dep = btn._quiDepositCatcher
-        -- retry the pass-through arming if creation happened in combat
         if dep._quiPassThroughFailed and not InCombatLockdown() then
             if ns.SafeCallMethod("defer-ooc", dep, "SetPassThroughButtons", "LeftButton") then
                 dep._quiPassThroughFailed = nil
@@ -687,8 +567,6 @@ local function DressPlacedCell(cell, btn, live, rightClickRoute)
     end
 end
 
---- Footer free-slots text from a CollectSlots array (hidden bags already
---- excluded — the count skips them, matching the full render).
 local function UpdateFreeText(slots)
     local free = 0
     for _, cell in ipairs(slots) do
@@ -697,9 +575,6 @@ local function UpdateFreeText(slots)
     win._free:SetText(free .. " " .. ns.L["free"])
 end
 
---- Signature opts for the current appearance (shared by Refresh's retain
---- step and the scoped runner's staleness check). getRecent mirrors the
---- category engine's recent flag: _newGuid resolved by the precompute pass.
 local function SignatureOpts(appearance)
     return {
         layoutMode = appearance.layoutMode,
@@ -709,7 +584,6 @@ local function SignatureOpts(appearance)
     }
 end
 
---- The pooled button standing on a placed cell (mode-matched pool).
 local function ButtonFor(cell, live)
     local pool = live and buttons[cell.bagID] or cachedButtons[cell.bagID]
     return pool and pool[cell.slot]
@@ -722,11 +596,6 @@ function BagWindow.Refresh()
 
     local slots = CollectSlots()
     local live = (viewedCharacter == nil)
-    -- Pixel-snap iconSize/spacing to the window's physical pixel grid before
-    -- layout (actionbars precedent: fractional physical-pixel cells make the
-    -- renderer round each button's edges independently → uneven gaps at
-    -- non-1.0 scales). Snapping at the source keeps every derived offset
-    -- inherently pixel-aligned.
     local core = Helpers.GetCore()
     local snappedSize, snappedGap = appearance.iconSize, appearance.spacing
     local px = core and core.GetPixelSize and core:GetPixelSize(win) or nil
@@ -735,9 +604,6 @@ function BagWindow.Refresh()
         snappedGap = math.floor(appearance.spacing / px + 0.5) * px
     end
 
-    -- new-item glow GUIDs, ONCE per cell (live bag window only): reused by
-    -- the category engine's Recent bucket AND the dress call below, so the
-    -- per-slot GUID read doesn't run twice per render
     if live and Bags.NewItems then
         for _, cell in ipairs(slots) do
             if cell.entry then
@@ -748,15 +614,12 @@ function BagWindow.Refresh()
         end
     end
 
-    -- layout-engine pick (grid_layout's promised interface seam): flat =
-    -- positional grid incl. empty slots; categories = occupied cells
-    -- bucketed under headers (empty slots live in the footer free-count)
     local categoriesMode = appearance.layoutMode == "categories"
     local gridOpts = {
         columns = appearance.columns, iconSize = snappedSize, spacing = snappedGap,
         headerHeight = CAT_HEADER_H,
     }
-    local placed -- array of { cell, x, y }
+    local placed
     local catHeaders, contentW, contentH
     if categoriesMode then
         for _, cell in ipairs(slots) do
@@ -766,17 +629,11 @@ function BagWindow.Refresh()
         local cl = Bags.CategoryLayout.Compute(groups, gridOpts)
         placed, catHeaders = cl.buttons, cl.headers
         contentW, contentH = cl.width, cl.height
-        -- an empty (or all-empty-slot) view still needs a sane window
         if contentW == 0 then
             local empty = Bags.GridLayout.Compute(0, gridOpts)
             contentW, contentH = empty.width, 0
         end
     else
-        -- Flat mode: the reagent bag (bagID 5) renders per reagentDisplay —
-        -- "separate" (own labeled section below the regular bags; its slots
-        -- are otherwise indistinguishable in one merged grid), "merged", or
-        -- "hidden". groupEmptySlots collapses each section's empty cells
-        -- into one counter cell.
         local reagentMode = (appearance and appearance.reagentDisplay) or "separate"
         local mainCells, reagentCells = {}, {}
         for _, cell in ipairs(slots) do
@@ -828,14 +685,8 @@ function BagWindow.Refresh()
         end
     end
 
-    -- Bag-slot strip: live view only (cached browsing has no live inventory
-    -- to swap), gated by appearance.showBagSlots; everything below shifts
-    -- down by the strip's height.
     local stripH = 0
     local showStrip = live and (not appearance or appearance.showBagSlots ~= false)
-    -- collapse toggle: live-only like the strip; renders in BOTH states
-    -- (expanded: vertically centered on the strip row; collapsed: a slim
-    -- 16px row of its own so the strip can be brought back in place)
     if win._stripToggle then
         if live then
             win._stripToggle._label:SetText(showStrip and "-" or "+")
@@ -882,7 +733,7 @@ function BagWindow.Refresh()
         stripH = BAG_SLOT_SIZE + 8
         contentW = math.max(contentW, 18 + 5 * BAG_SLOT_SIZE + 4 * 4)
     elseif live then
-        stripH = 16 -- slim row for the expand toggle
+        stripH = 16
     end
     if stripH > 0 then
         for _, p in ipairs(placed) do p.y = p.y - stripH end
@@ -892,16 +743,10 @@ function BagWindow.Refresh()
         contentH = contentH + stripH
     end
 
-    -- currency bar re-renders inside Refresh: its height joins the content
-    -- accounting so an empty↔non-empty flip resizes the window cleanly
     local currencyH = win._currencyBar
         and win._currencyBar:Update(ViewedRecord(), viewedCharacter == nil) or 0
     win._ownerSelect:Update()
 
-    -- Sort: live-mode only (the executor moves the CURRENT character's
-    -- items — there's nothing to sort in an offline cache); border tracks
-    -- the skin like the bank tab strip (UpdateBorderLines no-ops when
-    -- unchanged)
     if live then
         local sr, sg, sb = Helpers.GetSkinColors()
         UIKit.UpdateBorderLines(win._sortBtn, 1, sr, sg, sb, 0.35)
@@ -910,14 +755,8 @@ function BagWindow.Refresh()
         win._sortBtn:Hide()
     end
 
-    -- Select + batch send: live-mode only (selection sends operate the
-    -- CURRENT character's slots). The select button doubles as the cancel
-    -- affordance; the send button appears once a destination is open and
-    -- at least one slot is marked.
     if not live and selectMode then ClearSelection() end
     if live then
-        -- armed select mode = full-strength border (the chip keeps its
-        -- glyph; the tooltip explains the cancel affordance)
         local sr, sg, sb = Helpers.GetSkinColors()
         UIKit.UpdateBorderLines(win._selectBtn, 1, sr, sg, sb, selectMode and 1 or 0.35)
         win._selectBtn:Show()
@@ -928,8 +767,6 @@ function BagWindow.Refresh()
         win._title, win._ownerSelect, win._selectBtn, win._guildBtn,
         win._bankBtn, win._sortBtn, win._searchBox, win._close,
     }, { leftPad = 8, rightPad = 6, gap = 8 })
-    -- when the header still out-measures the grid (very low column counts),
-    -- center the grid instead of leaving all the slack on the right
     local gridW = contentW
     contentW = math.max(contentW, headerMinW)
     local xOff = 0
@@ -941,16 +778,12 @@ function BagWindow.Refresh()
 
     RenderCategoryHeaders(catHeaders, xOff)
 
-    -- hide both pools (a mode switch must not strand the other pool's
-    -- buttons), re-place the needed ones from the mode's pool
     for _, byBag in pairs(buttons) do
         for _, btn in pairs(byBag) do btn:Hide() end
     end
     for _, byBag in pairs(cachedButtons) do
         for _, btn in pairs(byBag) do btn:Hide() end
     end
-    -- one route resolve per render (the dress loop below reads it per
-    -- button); the catchers' own handlers re-resolve at click/hover time
     local rightClickRoute = RightClickRoute()
     for _, p in ipairs(placed) do
         local cell = p.cell
@@ -961,43 +794,28 @@ function BagWindow.Refresh()
             if not btn then
                 btn = Bags.ItemButtons.CreateLive(holders[cell.bagID], cell.bagID)
                 btn:SetID(cell.slot)
-                -- Selection catcher: while select mode is armed (live view)
-                -- a transparent overlay button above the slot captures the
-                -- click and toggles the batch-send mark. The template's own
-                -- OnClick is NEVER replaced or wrapped — an insecure wrapper
-                -- taints the secure handler chain, and the protected
-                -- UseContainerItem inside ContainerFrameItemButton_OnClick
-                -- then hard-blocks (ADDON_ACTION_FORBIDDEN on right-click).
-                -- The overlay is shown/hidden by the dress loop below as the
-                -- mode flips; hidden, it eats no input.
                 local catcher = CreateFrame("Button", nil, btn)
                 catcher:SetAllPoints()
                 catcher:SetFrameLevel(btn:GetFrameLevel() + 5)
                 catcher:RegisterForClicks("LeftButtonUp", "RightButtonUp")
                 catcher:SetScript("OnClick", function(_, mouseButton)
-                    -- right-click sends the whole selection to the open
-                    -- destination (same path as the footer send button)
                     if mouseButton == "RightButton" then
                         SendSelection()
                         return
                     end
                     local bagID, slot = btn:GetBagID(), btn:GetID()
                     local info = C_Container.GetContainerItemInfo(bagID, slot)
-                    if info then -- empty slots aren't selectable
+                    if info then
                         local key = bagID .. ":" .. slot
                         if selectedCells[key] then
                             selectedCells[key] = nil
                         else
                             selectedCells[key] = { bag = bagID, slot = slot, itemID = info.itemID }
                         end
-                        -- highlight-only: this slot's overlay + the footer
-                        -- send button — nothing else moved
                         Bags.ItemButtons.SetSelectedOverlay(btn, selectedCells[key] ~= nil)
                         UpdateSendButton()
                     end
                 end)
-                -- the catcher owns hover while armed, so it reproduces the
-                -- item tooltip and adds the mode instructions
                 catcher:SetScript("OnEnter", function(self)
                     Bags.ItemButtons.DismissNewItemGlow(btn)
                     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -1007,25 +825,14 @@ function BagWindow.Refresh()
                     local dest = SendDestination()
                     local n = SelectedCount()
                     if dest and n > 0 then
-                        GameTooltip:AddLine((ns.L["Right-click: %s %d selected item%s."]):format(
-                            dest.verb:lower(), n, n == 1 and "" or ns.L["s"]), 0.2, 0.82, 1, true)
+                        GameTooltip:AddLine((ns.L["Right-click: %s %d selected items."]):format(
+                            dest.verb, n), 0.2, 0.82, 1, true)
                     end
                     GameTooltip:Show()
                 end)
                 catcher:SetScript("OnLeave", function() GameTooltip:Hide() end)
                 catcher:Hide()
                 btn._quiSelectCatcher = catcher
-                -- Targeted right-click catcher: while a routed destination
-                -- is open (live bank session showing a SPECIFIC tab, or the
-                -- auction house — RightClickRoute) and select mode is off,
-                -- right-clicks route the item there instead of the template
-                -- fall-through. Left clicks/drags PASS THROUGH to the secure
-                -- template button below (SimpleScriptRegionAPI
-                -- SetPassThroughButtons — protected function but insecurely
-                -- callable out of combat). In-combat creation must not even
-                -- ATTEMPT the call: pcall catches the Lua error but cannot
-                -- suppress the client's ADDON_ACTION_BLOCKED log — flag for
-                -- the dress loop's out-of-combat retry instead.
                 local dep = CreateFrame("Button", nil, btn)
                 dep:SetAllPoints()
                 dep:SetFrameLevel(btn:GetFrameLevel() + 4)
@@ -1048,8 +855,6 @@ function BagWindow.Refresh()
                     GameTooltip:SetBagItem(btn:GetBagID(), btn:GetID())
                     GameTooltip:AddLine(" ")
                     if RightClickRoute() == "auction" then
-                        -- mirror the context fade: a slot dimmed as
-                        -- not-sellable must not advertise the sell click
                         local loc = ItemLocation:CreateFromBagAndSlot(
                             btn:GetBagID(), btn:GetID())
                         if loc and loc:IsValid()
@@ -1090,9 +895,6 @@ function BagWindow.Refresh()
     UpdateFreeText(slots)
     UpdateMoneyText()
 
-    -- Sell Junk visibility lives at the footer-text update point: shown only
-    -- live at an open merchant with the setting on (MerchantChanged pings a
-    -- refresh on both edges); ops are live-only, so cached mode hides it
     local junkCfg = s and s.behavior and s.behavior.junk
     if live and junkCfg and junkCfg.sellButton and Bags.Junk.IsMerchantOpen() then
         win._sellBtn:Show()
@@ -1102,9 +904,6 @@ function BagWindow.Refresh()
 
     UpdateSendButton()
 
-    -- retain this render for the scoped repaint paths (RunScheduledRepaint):
-    -- placed array + per-slot index + the placement signature, plus the
-    -- content size minus the currency bar (the currency scope re-applies it)
     repaint.placed = placed
     repaint.live = live
     repaint.sig = Bags.RefreshScope.LayoutSignature(slots,
@@ -1117,21 +916,13 @@ function BagWindow.Refresh()
         byBag[p.cell.slot] = p
     end
     repaint.index = index
-    -- a full render supersedes anything narrower still pending
     repaint.pendingFull, repaint.pendingDressAll = false, false
     repaint.pendingBags, repaint.pendingSearch, repaint.pendingCurrency = nil, false, false
 end
 
---- Re-dress placed cells in place — no relayout, no pool hide/show, no
---- SetContentSize. only: { [bagID] = true } to scope to changed bags, nil
---- for every placed cell (the synthetic lock/cooldown re-dress ping).
---- Cell entries are re-fetched from the store first: a rescan swaps each
---- bag's table wholesale, so retained cells hold stale entry refs. Live
---- new-item GUIDs are re-resolved the same way the full render does.
 local function RedressCells(only)
     local live = viewedCharacter == nil
     local rec = ViewedRecord()
-    -- one route resolve per pass (Refresh's own idiom)
     local rightClickRoute = RightClickRoute()
     for _, p in ipairs(repaint.placed) do
         local cell = p.cell
@@ -1148,8 +939,6 @@ local function RedressCells(only)
     end
 end
 
---- Matcher-only pass: re-evaluate the search verdict over the placed
---- buttons and re-apply the dim — no layout, no re-dress.
 local function SearchPass()
     local live = viewedCharacter == nil
     for _, p in ipairs(repaint.placed) do
@@ -1160,18 +949,12 @@ local function SearchPass()
     end
 end
 
---- Currency-scope repaint: re-render the bar and re-apply the retained
---- content size so an empty↔non-empty flip still resizes the window —
---- without touching the grid (extends the MoneyChanged footer precedent).
 local function UpdateCurrencyBar()
     local currencyH = win._currencyBar
         and win._currencyBar:Update(ViewedRecord(), viewedCharacter == nil) or 0
     win:SetContentSize(repaint.contentW, repaint.contentH + currencyH)
 end
 
---- Bag-slot strip free-count text — the only strip fact a same-topology
---- bag change can move (equip/size changes always fail the signature
---- check into a full Refresh, which re-dresses the whole strip).
 local function UpdateBagSlotStripCounts()
     if not (win and win._bagSlotButtons) then return end
     for i, b in ipairs(win._bagSlotButtons) do
@@ -1181,11 +964,6 @@ local function UpdateBagSlotStripCounts()
     end
 end
 
---- Scheduled-repaint runner: consumes the pending scope flags and executes
---- the narrowest repaint covering them. Falls back to the full Refresh when
---- asked, when no narrower scope was requested (legacy ScheduleRefresh
---- callers: merchant/AH edges, chrome re-measure), when no render is
---- retained, or when the placement signature went stale.
 RunScheduledRepaint = function()
     local full = repaint.pendingFull
     local dressAll = repaint.pendingDressAll
@@ -1202,14 +980,9 @@ RunScheduledRepaint = function()
         return
     end
     if bagSet and not live then
-        -- a live-bag scan never moves cells in a cached render, but a
-        -- shared item-info arrival can complete pending names/icons for
-        -- the same itemIDs: re-dress everything, keep the layout
         dressAll, bagSet = true, nil
     end
     if bagSet then
-        -- staleness check: identical placement inputs → dress the changed
-        -- bags in place; anything that moves cells → full relayout
         local s = GetSettings()
         local appearance = Bags.Chassis.ClampAppearance((s and s.appearance) or nil)
         local slots = CollectSlots()
@@ -1236,16 +1009,9 @@ RunScheduledRepaint = function()
     if currency then UpdateCurrencyBar() end
 end
 
--- Open/close sounds: Blizzard's lived in ContainerFrame OnShow/OnHide, which
--- never run under takeover. Gate on the actual shown transition (OnShow/
--- OnHide parity) so redundant calls (e.g. ESC's CloseAllWindows sweep while
--- already closed) don't replay them.
 function BagWindow.Show()
     EnsureWindow()
     local wasShown = win:IsShown()
-    -- a fresh open always lands on your own (live) bags — offline browsing
-    -- is a transient inspection, and the autoopen paths (merchant, mail)
-    -- must never come up rendering an alt
     if not wasShown then viewedCharacter = nil end
     win:Show()
     if not wasShown and PlaySound and SOUNDKIT and SOUNDKIT.IG_BACKPACK_OPEN then
@@ -1265,15 +1031,11 @@ function BagWindow.Hide()
     end
 end
 
---- Search-everywhere navigation: open (or keep) the window on the right
---- owner's view and pulse the slots holding itemID. ownerKey nil/current =
---- the live view. Focus is transient — it clears on Hide and ~3s after
---- landing (the timer triggers one clearing re-render).
 function BagWindow.FocusItem(itemID, ownerKey)
     EnsureWindow()
     local wasShown = win:IsShown()
     if not wasShown then
-        win:Show() -- raw show: Show() resets the viewed owner deliberately
+        win:Show()
         if PlaySound and SOUNDKIT and SOUNDKIT.IG_BACKPACK_OPEN then
             PlaySound(SOUNDKIT.IG_BACKPACK_OPEN)
         end
@@ -1288,7 +1050,6 @@ function BagWindow.FocusItem(itemID, ownerKey)
         C_Timer.After(3, function()
             if focusItemID == itemID then
                 focusItemID = nil
-                -- flash-clear is a dress fact (SetFocusFlash), not layout
                 repaint.pendingDressAll = true
                 ScheduleRefresh()
             end
@@ -1305,8 +1066,6 @@ function BagWindow.IsShown()
     return win ~= nil and win:IsShown()
 end
 
---- Owner-selector entry: nil/current key → live mode (your own bags),
---- any other cached character → offline cached render from the store.
 function BagWindow.SetViewedCharacter(key)
     if key == nil or key == Storage.Store.GetCurrentCharacterKey() then
         viewedCharacter = nil
@@ -1316,20 +1075,12 @@ function BagWindow.SetViewedCharacter(key)
     BagWindow.Refresh()
 end
 
---- Profile switched while the module stays enabled: re-anchor + re-render.
 function BagWindow.OnProfileChanged()
     if not win then return end
     win:ApplyPosition()
     if win:IsShown() then BagWindow.Refresh() end
 end
 
--- data refresh: dirty-class routed. The payload's changed-bag array picks
--- the narrowest repaint — nil (unknown scope) → full, {} (synthetic
--- lock/cooldown re-dress ping) → dress-all, bag IDs → signature-checked
--- in-place re-dress. Pending search fields still re-evaluate: item-data
--- loads re-publish BagsChanged via the scanners, and a name arrival flips
--- the categories signature into the full path (GetExtended itself never
--- requests a load).
 Storage.Bus.Subscribe("BagsChanged", function(_, _, changed)
     local scope = Bags.RefreshScope.Classify(changed)
     if scope == "full" then
@@ -1342,32 +1093,20 @@ Storage.Bus.Subscribe("BagsChanged", function(_, _, changed)
     ScheduleRefresh()
 end)
 
--- money-only changes (repairs, flight paths) don't touch bags; update just
--- the footer. Live-only: cached mode shows the VIEWED character's stored
--- gold, which this event doesn't change.
 Storage.Bus.Subscribe("MoneyChanged", function()
     if win and win:IsShown() and win._money and not viewedCharacter then
         UpdateMoneyText()
     end
 end)
 
--- merchant open/close toggles the Sell Junk button; visibility is computed
--- in Refresh next to the footer-text update (ScheduleRefresh no-ops while
--- hidden — the autoopen path re-renders on show anyway)
 Storage.Bus.Subscribe("MerchantChanged", function()
     ScheduleRefresh()
 end)
 
--- auctioneer open/close flips the right-click sell-post catcher; same shape
--- as MerchantChanged, and the deferred refresh reads the live
--- AuctionHouseFrame:IsShown() a frame later, past any event-order ambiguity
 Storage.Bus.Subscribe("AuctionHouseChanged", function()
     ScheduleRefresh()
 end)
 
--- currency-scanner drains land on the currency bar; the currency scope
--- re-runs the bar AND re-applies the retained content size, so an
--- empty↔non-empty bar flip still resizes the window without a grid render
 Storage.Bus.Subscribe("CurrenciesChanged", function()
     repaint.pendingCurrency = true
     ScheduleRefresh()

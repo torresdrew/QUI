@@ -1481,6 +1481,7 @@ local Unit =
 		{
 			Name = "UnitHonorLevel",
 			Type = "Function",
+			SecretWhenUnitIdentityRestricted = true,
 			SecretArguments = "AllowedWhenUntainted",
 
 			Arguments =
@@ -1761,7 +1762,7 @@ local Unit =
 		{
 			Name = "UnitIsCharmed",
 			Type = "Function",
-			SecretWhenAurasRestricted = true,
+			SecretWhenUnitPossessionRestricted = true,
 			SecretArguments = "AllowedWhenUntainted",
 
 			Arguments =
@@ -2194,7 +2195,7 @@ local Unit =
 		{
 			Name = "UnitIsPossessed",
 			Type = "Function",
-			SecretWhenAurasRestricted = true,
+			SecretWhenUnitPossessionRestricted = true,
 			SecretArguments = "AllowedWhenUntainted",
 
 			Arguments =

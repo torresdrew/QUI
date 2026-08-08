@@ -1,8 +1,10 @@
 -- tests/unit/migration_floor_collapse_test.lua
 -- Run: lua5.1 tests/unit/migration_floor_collapse_test.lua
--- Verifies the stable schema-47 floor and the single direct schema-59 gate:
---   - stored < 47 → floored (wiped, _needsStarterReseed, stamped 59)
---   - stored == 47 → NOT floored; the complete 5.0 transform runs and stamps 59
+-- Verifies the stable schema-47 floor and the single direct schema-60 gate:
+--   - stored < 47 → floored (wiped, _needsStarterReseed, stamped 60)
+--   - stored == 47 → NOT floored; the complete transform runs and stamps 60
+--   - stored == 59 → burned alpha stamp; re-enters the same gate, rebrand
+--     included, and the transform is idempotent against already-final data
 local ns = dofile("tools/_addon_env.lua").LoadCore()
 local M = ns.Migrations
 
@@ -18,7 +20,7 @@ do
     M.RunOnProfile(profile)
     check("below-floor (46) wiped: user data gone", profile.someModule == nil, tostring(profile.someModule))
     check("below-floor (46) flagged _needsStarterReseed", profile._needsStarterReseed == true, tostring(profile._needsStarterReseed))
-    check("below-floor (46) stamped to CURRENT (59)", profile._schemaVersion == 59, tostring(profile._schemaVersion))
+    check("below-floor (46) stamped to CURRENT (60)", profile._schemaVersion == 60, tostring(profile._schemaVersion))
 end
 
 -- 2) At-floor profile (47) is NOT floored; the squash runs RestoreBuffDebuffSplit +
@@ -36,7 +38,7 @@ do
     check("at-floor (47) flat buffIconSize pruned by the elements seed", profile.buffBorders.buffIconSize == nil, tostring(profile.buffBorders.buffIconSize))
     check("at-floor (47) NOT flagged for reseed", profile._needsStarterReseed == nil, tostring(profile._needsStarterReseed))
     check("at-floor (47) debuffFrame restored", profile.frameAnchoring.debuffFrame ~= nil, "debuffFrame nil")
-    check("at-floor (47) stamped to current (59)", profile._schemaVersion == 59, tostring(profile._schemaVersion))
+    check("at-floor (47) stamped to current (60)", profile._schemaVersion == 60, tostring(profile._schemaVersion))
 end
 
 -- 2b) PrunePrivateAuras on the stable schema-47 path: stored
@@ -70,8 +72,75 @@ do
         and profile.quiUnitFrames.player.portrait.enabled == true, "portrait clobbered")
     check("prune preserves sibling group settings", profile.quiGroupFrames.party.frames
         and profile.quiGroupFrames.party.frames.width == 90, "frames clobbered")
-    check("stable path stamps to CURRENT (59)", profile._schemaVersion == 59,
+    check("stable path stamps to CURRENT (60)", profile._schemaVersion == 60,
         tostring(profile._schemaVersion))
+end
+
+-- 3) Burned alpha stamp 59 (the QUI 5.0 squash number, folded into v60).
+do
+    local profile = {
+        _schemaVersion = 59,
+        quiUnitFrames = { player = { width = 220 } },
+        fonts = { global = "__QUI_GLOBAL__" },
+    }
+    M.RunOnProfile(profile)
+    check("alpha stamp (59) quiUnitFrames preserved",
+        profile.quiUnitFrames and profile.quiUnitFrames.player
+        and profile.quiUnitFrames.player.width == 220, tostring(profile.quiUnitFrames))
+    check("alpha stamp (59) font sentinel preserved",
+        profile.fonts.global == "__QUI_GLOBAL__", tostring(profile.fonts.global))
+    check("alpha stamp (59) NOT floored", profile._needsStarterReseed == nil,
+        tostring(profile._needsStarterReseed))
+    check("alpha stamp (59) stamped to CURRENT (60)", profile._schemaVersion == 60,
+        tostring(profile._schemaVersion))
+end
+
+-- 4) The collapsed gate is idempotent against already-final data: a profile
+-- re-stamped back to 59 after a full run comes out byte-identical (the backup
+-- container excepted, which legitimately records the new fromVersion).
+do
+    local function deepcopy(v, seen)
+        if type(v) ~= "table" then return v end
+        seen = seen or {}
+        if seen[v] then return seen[v] end
+        local t = {}
+        seen[v] = t
+        for k, val in pairs(v) do t[deepcopy(k, seen)] = deepcopy(val, seen) end
+        return t
+    end
+    local function ser(v, indent)
+        indent = indent or ""
+        if type(v) ~= "table" then return tostring(v) end
+        local keys = {}
+        for k in pairs(v) do keys[#keys + 1] = k end
+        table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+        local out = {}
+        for _, k in ipairs(keys) do
+            out[#out + 1] = indent .. tostring(k) .. " = " .. ser(v[k], indent .. "  ")
+        end
+        return "{\n" .. table.concat(out, "\n") .. "\n" .. indent .. "}"
+    end
+
+    local profile = {
+        _schemaVersion = 47,
+        quiUnitFrames = { player = { auras = { filters = { NOT_CANCELABLE = true } } } },
+        quiGroupFrames = { defensiveIndicator = { enabled = true, iconSize = 20 } },
+        buffBorders = { enableBuffs = true, buffIconSize = 35, privateAuras = { enabled = true } },
+        frameAnchoring = { buffFrame = { parent = "minimap" } },
+        fonts = { global = "__QUI_GLOBAL__" },
+    }
+    M.RunOnProfile(profile)
+
+    local first = deepcopy(profile)
+    first._migrationBackup = nil
+
+    profile._schemaVersion = 59
+    M.RunOnProfile(profile)
+    local second = deepcopy(profile)
+    second._migrationBackup = nil
+
+    check("re-entry from 59 leaves final data unchanged", ser(first) == ser(second),
+        "migration is not idempotent against already-final data")
 end
 
 print("migration_floor_collapse_test " .. (failures == 0 and "OK" or "FAILED"))

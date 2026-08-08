@@ -1,25 +1,3 @@
----------------------------------------------------------------------------
--- Bags views: the guild bank window. One 98-slot grid per guild tab
--- (tabs 1..MAX_GUILDBANK_TABS, cached on the per-guild record) behind a
--- tab strip under the header. Two presentation modes:
---   LIVE   (at the vault, GuildTakeover.IsLive()): cursor-API guild buttons
---          (ItemButtons.CreateGuildLive — _tab/_slot protocol, no bag IDs),
---          money deposit/withdraw with per-tab withdraw limits, tab
---          purchase and rename, item/money log panel.
---   CACHED (browse anywhere): inert CreateCached/DressCached buttons,
---          live-only footer widgets hidden, no log access (log data is
---          server-resident and only streams at the vault). The owner
---          selector / ShowCached(guildKey) can point this mode at ANY
---          cached guild record, not just the character's own.
--- Data source is the per-guild cache (scan_guild drains at the vault);
--- refresh is coalesced exactly like the bank window (ScheduleRefresh owns
--- the window's one-shot OnUpdate).
---
--- Close routing: the chassis onClose fires on ANY hide (X, ESC via
--- UISpecialFrames, cinematics), so the live-session close is routed from
--- there — GuildTakeover.UserClosedWindow() no-ops when not live and latches
--- against re-entry (same shape as the bank window).
----------------------------------------------------------------------------
 -- luacheck: read globals MAX_GUILDBANK_TABS QueryGuildBankLog QueryGuildBankTab GetGuildBankTabCost
 -- luacheck: read globals ACCEPT CANCEL BuyGuildBankTab SetGuildBankTabInfo StaticPopup_OnClick
 -- luacheck: read globals DepositGuildBankMoney CanWithdrawGuildBankMoney WithdrawGuildBankMoney
@@ -53,46 +31,29 @@ end
 local GuildWindow = {}
 Bags.GuildWindow = GuildWindow
 
--- MAX_GUILDBANK_TABS = 8 (vendored Blizzard_FrameXMLBase/Constants.lua:308);
--- the fallback keeps the pure BuildTabList headless-testable.
 local MAX_TABS = MAX_GUILDBANK_TABS or 8
 local TAB_H = 22
 local TAB_GAP = 4
-local TAB_STRIP_H = TAB_H + 6         -- reserved above the grid in the body
-local LOG_MODE_ROW_H = 20             -- item/money switch row in the log panel
-local MIN_BODY_W = 320                -- floor when the cache has no tabs yet
-local MIN_LOG_H = 240                 -- log panel floor (grid height wins when bigger)
+local TAB_STRIP_H = TAB_H + 6
+local LOG_MODE_ROW_H = 20
+local MIN_BODY_W = 320
+local MIN_LOG_H = 240
 
-local win                  -- chassis window (lazy)
-local liveMode = false     -- LIVE vs CACHED presentation
-local viewedGuildKey = nil -- nil = current guild; key = offline browse
-local selectedTab = nil    -- currently selected guild tab index (1..8)
-local focusItemID = nil    -- search-everywhere landing flash (transient)
-local bodyMode = "grid"    -- "grid" | "log" (footer Logs toggle; live only)
-local logMode = "item"     -- "item" | "money" (log panel switch row)
-local tabButtons = {}      -- index → tab-strip button (pooled)
-local liveButtons = {}     -- tab → { [slot] = guild live button }
-local cachedButtons = {}   -- tab → { [slot] = cached button }
+local win
+local liveMode = false
+local viewedGuildKey = nil
+local selectedTab = nil
+local focusItemID = nil
+local bodyMode = "grid"
+local logMode = "item"
+local tabButtons = {}
+local liveButtons = {}
+local cachedButtons = {}
 local searchText = ""
 local matcher = nil
 local searchTimer = nil
-local hoverTabIndex = nil  -- tab button under the cursor: its slots highlight (All grid)
+local hoverTabIndex = nil
 
----------------------------------------------------------------------------
--- Pure: tab-strip assembly (headless-tested)
----------------------------------------------------------------------------
-
---- Assemble the ordered tab list from the guild cache record.
---- rec: guild record (uses rec.tabs[1..MAX_TABS], scan_guild shape:
---- { size, slots, name, icon, withdrawals }); opts (live mode only):
---- { liveViewable = {[tab]=bool}, canPurchase }. liveViewable[tab] == false
---- drops that tab (live GetGuildBankTabInfo says non-viewable); absent keys
---- default to viewable, so cached mode (nil opts) keeps the browse-anywhere
---- full list. canPurchase appends a { purchase = true } marker last.
---- ≥2 real tabs (after the filter) prepend a synthetic All entry
---- ({ all = true }, bank-window precedent) — one tab has nothing to unify;
---- the selection sentinel is the string "all".
---- Returns an array of { tab, name, icon, withdrawals }.
 function GuildWindow.BuildTabList(rec, opts)
     local list = {}
     local tabs = rec and rec.tabs
@@ -116,18 +77,10 @@ function GuildWindow.BuildTabList(rec, opts)
     return list
 end
 
----------------------------------------------------------------------------
--- State helpers
----------------------------------------------------------------------------
-
--- The window's OnUpdate is owned exclusively by ScheduleRefresh (one-shot).
 local ScheduleRefresh = Bags.Chassis.MakeScheduleRefresh(
     function() return win end,
     function() GuildWindow.Refresh() end)
 
---- The guild record the window renders: the viewed guild (offline browse
---- via the owner selector / ShowCached key), falling back to the current
---- character's guild.
 local function ViewedGuildKey()
     return viewedGuildKey or Storage.Store.GetCurrentGuildKey()
 end
@@ -137,11 +90,6 @@ local function GetGuildRecord()
     return key and Storage.Store.GetGuild(key) or nil
 end
 
---- Keep the selection when its tab still exists (the "all" sentinel stays
---- valid while its list has ≥2 real tabs), else fall back to the first
---- real tab in the list (nil when the cache has no tabs at all).
---- Returns true when the selection changed (caller re-syncs the server tab
---- when the new selection is numeric).
 local function EnsureSelection(tabs)
     local first, realTabs = nil, 0
     for _, entry in ipairs(tabs) do
@@ -157,10 +105,6 @@ local function EnsureSelection(tabs)
     return changed
 end
 
---- Prime the server-side log for the current log mode. Item log is per
---- selected tab; money log rides the MAX_TABS+1 convention (vendored
---- Blizzard_GuildBankUI.lua:600-605). GUILDBANKLOG_UPDATE then routes to
---- OnLogUpdate via bags.lua.
 local function QueryLog()
     if not liveMode then return end
     if logMode == "money" then
@@ -170,14 +114,7 @@ local function QueryLog()
     end
 end
 
----------------------------------------------------------------------------
--- Popups (registered at click time, composer idiom)
----------------------------------------------------------------------------
-
 local function ShowPurchasePopup()
-    -- GetGuildBankTabCost() → copper, nil when all tabs are bought
-    -- (vendored Blizzard_GuildBankUI.lua:252-268); callers gate, this
-    -- re-checks (cost can vanish between render and click).
     local cost = GetGuildBankTabCost()
     if not cost then return end
     local costText = GetMoneyString and GetMoneyString(cost, true) or tostring(cost)
@@ -186,10 +123,6 @@ local function ShowPurchasePopup()
         button1 = ACCEPT,
         button2 = CANCEL,
         OnAccept = function()
-            -- BuyGuildBankTab() is called DIRECTLY from this OnAccept (the
-            -- popup button's OnClick chain qualifies as the hardware event)
-            -- — Blizzard's CONFIRM_BUY_GUILDBANK_TAB does exactly this
-            -- (GameDialogDefs.lua:490-496); never defer it.
             BuyGuildBankTab()
         end,
         timeout = 0,
@@ -201,10 +134,6 @@ local function ShowPurchasePopup()
 end
 
 local function ShowRenamePopup(entry)
-    -- Live-only, CanEditGuildBankTabInfo-gated (callers gate). The cached
-    -- icon is passed through unchanged — SetGuildBankTabInfo(tab, name,
-    -- icon) takes all three (vendored Blizzard_GuildBankUI.lua:901); an
-    -- icon-picker UI is deferred (Blizzard uses the full IconSelector).
     local rec = GetGuildRecord()
     local tab = rec and rec.tabs and rec.tabs[entry.tab]
     if not tab then return end
@@ -214,7 +143,7 @@ local function ShowRenamePopup(entry)
         button1 = ACCEPT,
         button2 = CANCEL,
         hasEditBox = true,
-        maxLetters = 15, -- guild tab names cap shorter than bank tabs
+        maxLetters = 15,
         OnShow = function(self)
             local box = self.editBox or self.EditBox
             if box then
@@ -242,7 +171,6 @@ local function ShowRenamePopup(entry)
     StaticPopup_Show("QUI_GUILDBANK_RENAME_TAB")
 end
 
---- kind: "deposit" | "withdraw". Whole-gold input (v1), amount * 10000.
 local function ShowMoneyPopup(kind)
     local depositing = (kind == "deposit")
     StaticPopupDialogs["QUI_GUILDBANK_MONEY"] = {
@@ -262,11 +190,9 @@ local function ShowMoneyPopup(kind)
             local gold = tonumber(text)
             if not gold then return end
             gold = math.floor(gold)
-            if gold <= 0 then return end -- numeric validation: reject <= 0
-            local amount = gold * 10000  -- whole gold → copper
+            if gold <= 0 then return end
+            local amount = gold * 10000
             if depositing then
-                -- no Can* API for guild deposits; Blizzard's GUILDBANK_DEPOSIT
-                -- popup deposits unconditionally (GameDialogDefs.lua:471-489)
                 DepositGuildBankMoney(amount)
             else
                 if CanWithdrawGuildBankMoney() then
@@ -288,12 +214,6 @@ local function ShowMoneyPopup(kind)
     StaticPopup_Show("QUI_GUILDBANK_MONEY")
 end
 
----------------------------------------------------------------------------
--- Log rendering (live only; ScrollingMessageFrame — house precedent:
--- modules/chat/display_layer.lua:131; Blizzard's own guild log is one too,
--- Blizzard_GuildBankUI.xml:682)
----------------------------------------------------------------------------
-
 local function ColorName(name)
     name = name or UNKNOWN or "Unknown"
     return (NORMAL_FONT_COLOR_CODE or "|cffffd200") .. name
@@ -301,11 +221,6 @@ local function ColorName(name)
 end
 
 local function LogTimeSuffix(year, month, day, hour)
-    -- GUILD_BANK_LOG_TIME + the recent-time formatter Blizzard appends
-    -- (Blizzard_GuildBankUI.lua:775). 12.1 moved the global RecentTimeDate to
-    -- TimeUtil.GetRecentTimeDate (Blizzard_SharedXML/TimeUtil.lua:24); keep
-    -- the old global as a fallback for older clients, plain "" when both are
-    -- missing.
     local recent = (TimeUtil and TimeUtil.GetRecentTimeDate) or RecentTimeDate
     if GUILD_BANK_LOG_TIME and recent then
         return GUILD_BANK_LOG_TIME:format(recent(year, month, day, hour))
@@ -313,12 +228,7 @@ local function LogTimeSuffix(year, month, day, hour)
     return ""
 end
 
---- Item log for the selected tab (GetGuildBankTransaction shape and format
---- globals per vendored Blizzard_GuildBankUI.lua:748-778). Each format
---- global is guarded with a plain-text fallback.
 local function RenderItemLog(smf)
-    -- the item log is per-tab server data — the All grid has no single tab
-    -- to query, so show a hint instead of a misleading/stale log
     if type(selectedTab) ~= "number" then
         smf:AddMessage(ns.L["Select a tab to view its item log."])
         return
@@ -335,7 +245,6 @@ local function RenderItemLog(smf)
             msg = GUILDBANK_WITHDRAW_FORMAT and format(GUILDBANK_WITHDRAW_FORMAT, name, itemLink)
                 or (name .. " withdrew " .. tostring(itemLink))
         elseif kind == "move" then
-            -- GetGuildBankTabInfo's first return is the tab name
             local name1 = GetGuildBankTabInfo(tab1)
             local name2 = GetGuildBankTabInfo(tab2)
             msg = GUILDBANK_MOVE_FORMAT
@@ -352,9 +261,6 @@ local function RenderItemLog(smf)
     end
 end
 
--- transaction type → format global taking (name, money); buyTab and
--- depositSummary are special-cased below (different arities/branches).
--- Built lazily so missing globals fall through to the plain-text fallback.
 local function MoneyLogFormat(kind)
     if kind == "deposit" then return GUILDBANK_DEPOSIT_MONEY_FORMAT end
     if kind == "withdraw" then return GUILDBANK_WITHDRAW_MONEY_FORMAT end
@@ -365,8 +271,6 @@ local function MoneyLogFormat(kind)
     return nil
 end
 
---- Money log (GetGuildBankMoneyTransaction shape and format globals per
---- vendored Blizzard_GuildBankUI.lua:780-819).
 local function RenderMoneyLog(smf)
     for i = 1, GetNumGuildBankMoneyTransactions() do
         local kind, name, amount, year, month, day, hour = GetGuildBankMoneyTransaction(i)
@@ -391,7 +295,7 @@ local function RenderMoneyLog(smf)
         elseif kind then
             local fmt = MoneyLogFormat(kind)
             msg = fmt and fmt:format(name, money)
-                or (name .. " " .. tostring(kind) .. " " .. money) -- plain fallback
+                or (name .. " " .. tostring(kind) .. " " .. money)
         end
         if msg then
             smf:AddMessage(msg .. LogTimeSuffix(year, month, day, hour))
@@ -410,14 +314,6 @@ local function RenderLog()
     smf:ScrollToBottom()
 end
 
----------------------------------------------------------------------------
--- Frame construction (lazy)
----------------------------------------------------------------------------
-
---- Tab-hover highlight: light up every rendered slot belonging to tab
---- (nil clears). Sweeps the shown buttons directly — no re-render — and
---- PlaceGridButton applies the same state on refresh so a mid-hover
---- re-render can't strand or miss highlights. (Bank-window precedent.)
 local function ApplyTabHover(tab)
     hoverTabIndex = tab
     local function sweep(pool)
@@ -451,11 +347,9 @@ local function CreateTabButton()
                 selectedTab = "all"
                 GuildWindow.Refresh()
             end
-            return -- no rename on the synthetic All entry
+            return
         end
         if mouseButton == "RightButton" then
-            -- rename: live only + permission-gated (Blizzard parity:
-            -- CanEditGuildBankTabInfo at Blizzard_GuildBankUI.lua:628)
             if liveMode and CanEditGuildBankTabInfo() then
                 ShowRenamePopup(entry)
             end
@@ -463,17 +357,12 @@ local function CreateTabButton()
         end
         selectedTab = entry.tab
         if liveMode then
-            -- withdraw limits are per-tab server-side current-tab state:
-            -- sync the server tab, then re-query its data
             SetCurrentGuildBankTab(entry.tab)
             QueryGuildBankTab(entry.tab)
             if bodyMode == "log" and logMode == "item" then
                 QueryGuildBankLog(entry.tab)
             end
         end
-        -- leaving the All grid: drop the hover highlight (OnLeave won't
-        -- fire while the cursor stays on the tab, and the single-tab view
-        -- doesn't use it)
         ApplyTabHover(nil)
         GuildWindow.Refresh()
     end)
@@ -490,8 +379,6 @@ local function CreateTabButton()
                 or ("Tab " .. tostring(entry.tab))
             GameTooltip:SetText(label)
             if liveMode then
-                -- fresh per-tab meta at the vault: viewability, deposit
-                -- permission, remaining withdrawals (-1 = unlimited)
                 local _, _, isViewable, canDeposit, _, remainingWithdrawals =
                     GetGuildBankTabInfo(entry.tab)
                 GameTooltip:AddLine(isViewable and ns.L["Viewable"] or ns.L["Not viewable"], 0.8, 0.8, 0.8)
@@ -502,7 +389,6 @@ local function CreateTabButton()
                     GameTooltip:AddLine(ns.L["Withdrawals left: "] .. remainingWithdrawals, 0.8, 0.8, 0.8)
                 end
             elseif entry.withdrawals then
-                -- cached copy from the last vault visit
                 if entry.withdrawals == -1 then
                     GameTooltip:AddLine(ns.L["Withdrawals: no limit"], 0.8, 0.8, 0.8)
                 else
@@ -511,9 +397,6 @@ local function CreateTabButton()
             end
         end
         GameTooltip:Show()
-        -- membership highlight: light up this tab's slots. Only meaningful
-        -- on the unified All grid — a single open tab already shows just
-        -- its own slots, so highlighting there is noise.
         if not entry.purchase and not entry.all and selectedTab == "all" then
             ApplyTabHover(entry.tab)
         end
@@ -552,8 +435,6 @@ local function EnsureWindow()
         onSearchChanged = function(text)
             searchText = text or ""
             matcher = (searchText ~= "") and Bags.Search.Compile(searchText) or nil
-            -- debounce: re-render at most once per 0.1s typing pause, not per
-            -- keystroke (the timer resets while the user keeps typing)
             if searchTimer then searchTimer:Cancel() end
             searchTimer = C_Timer.NewTimer(0.1, function()
                 searchTimer = nil
@@ -563,29 +444,21 @@ local function EnsureWindow()
         onClose = function(w)
             w:SetScript("OnUpdate", nil)
             w._updateScheduled = false
-            -- ANY hide of a live session (X, ESC, cinematic) must close the
-            -- vault server-side. UserClosedWindow no-ops when not live —
-            -- server-driven closes clear live BEFORE OnBankClosed → Hide().
             if Bags.GuildTakeover and Bags.GuildTakeover.IsLive() then
                 Bags.GuildTakeover.UserClosedWindow()
             end
         end,
-        -- the X button routes through the sound path; the live-session close
-        -- itself rides the OnHide → onClose chain above
         onUserClose = function() GuildWindow.Hide() end,
         compactSearch = true,
         onChromeChanged = function() ScheduleRefresh() end,
     })
 
-    -- tab strip: header-adjacent row at the top of the body; the grid/log
-    -- renders below it (TAB_STRIP_H reserved in SetContentSize)
     local strip = CreateFrame("Frame", nil, win._body)
     strip:SetPoint("TOPLEFT", 0, 0)
     strip:SetPoint("TOPRIGHT", 0, 0)
     strip:SetHeight(TAB_H)
     win._tabStrip = strip
 
-    -- log panel (hidden until the footer Logs toggle; live only)
     local log = CreateFrame("Frame", nil, win._body)
     log:SetPoint("TOPLEFT", 0, -TAB_STRIP_H)
     log:SetPoint("BOTTOMRIGHT", 0, 0)
@@ -605,14 +478,13 @@ local function EnsureWindow()
     end)
     win._moneyLogBtn:SetPoint("LEFT", win._itemLogBtn, "RIGHT", 4, 0)
 
-    -- ScrollingMessageFrame (house precedent: chat display_layer.lua:131)
     local smf = CreateFrame("ScrollingMessageFrame", nil, log)
     smf:SetPoint("TOPLEFT", 0, -LOG_MODE_ROW_H - 4)
     smf:SetPoint("BOTTOMRIGHT", 0, 0)
     smf:SetFontObject(ChatFontNormal)
     smf:SetJustifyH("LEFT")
     smf:SetFading(false)
-    smf:SetMaxLines(128) -- the server caps guild logs well below this
+    smf:SetMaxLines(128)
     smf:SetHyperlinksEnabled(true)
     smf:SetScript("OnHyperlinkClick", function(self, link, text, button)
         if SetItemRef then SetItemRef(link, text, button, self) end
@@ -622,7 +494,6 @@ local function EnsureWindow()
     end)
     win._logFrame = smf
 
-    -- footer (live mode only; hidden while browsing cached)
     win._guildMoney = win._footer:CreateFontString(nil, "ARTWORK")
     win._guildMoney:SetPoint("RIGHT", -8, 0)
     CJKFont(win._guildMoney, Helpers.GetGeneralFont() or STANDARD_TEXT_FONT, 12, "OUTLINE")
@@ -645,10 +516,6 @@ local function EnsureWindow()
     end)
     win._logsBtn:SetPoint("LEFT", win._withdrawBtn, "RIGHT", 4, 0)
 
-    -- header: owner selector right of the title; picking another cached
-    -- guild renders it offline. The "(current)" mark only applies when the
-    -- character's own guild has a cache record — an uncached current guild
-    -- is unselectable (nothing to render), so nil is passed instead.
     win._ownerSelect = Bags.OwnerSelect.Attach(win, {
         title = ns.L["Guilds"],
         tooltip = ns.L["View another guild bank"],
@@ -659,8 +526,6 @@ local function EnsureWindow()
         end,
         current = ViewedGuildKey,
         onSelect = function(key)
-            -- selecting your own guild while the vault session is open
-            -- returns to live mode; everything else is an offline render
             if Bags.GuildTakeover and Bags.GuildTakeover.IsLive()
                 and key == Storage.Store.GetCurrentGuildKey() then
                 GuildWindow.ShowLive()
@@ -674,11 +539,6 @@ local function EnsureWindow()
     return win
 end
 
----------------------------------------------------------------------------
--- Rendering
----------------------------------------------------------------------------
-
---- Lay out the tab strip from the assembled list; returns the strip width.
 local function RenderTabStrip(tabs)
     for _, btn in ipairs(tabButtons) do btn:Hide() end
     local sr, sg, sb = Helpers.GetSkinColors()
@@ -703,7 +563,6 @@ local function RenderTabStrip(tabs)
         btn:SetSize(w, TAB_H)
         btn:ClearAllPoints()
         btn:SetPoint("TOPLEFT", win._tabStrip, "TOPLEFT", x, 0)
-        -- selected tab gets the full-strength accent border
         local selected = (entry.all and selectedTab == "all")
             or (not entry.purchase and not entry.all and entry.tab == selectedTab)
         UIKit.UpdateBorderLines(btn, 1, sr, sg, sb, selected and 1 or 0.35)
@@ -735,7 +594,6 @@ local function AcquireGridButton(tab, slot)
     return btn
 end
 
---- Shared place+dress for one grid cell (single-tab and All render paths).
 local function PlaceGridButton(tab, slot, entry, x, y, snappedSize)
     local btn = AcquireGridButton(tab, slot)
     btn:SetSize(snappedSize, snappedSize)
@@ -746,9 +604,9 @@ local function PlaceGridButton(tab, slot, entry, x, y, snappedSize)
         local details = Bags.Details.Build(entry)
         if details then
             local m = matcher(details)
-            result = (m ~= false) -- pending counts as visible
+            result = (m ~= false)
         else
-            result = false -- empty slots dim while a search is active
+            result = false
         end
     end
     if liveMode then
@@ -779,10 +637,6 @@ local function RenderFooter()
         win._guildMoney:SetText(tostring(money))
     end
     win._guildMoney:Show()
-    -- per-tab withdraw limit for the server-side current tab;
-    -- -1 = unlimited (plan-verified GetGuildBankWithdrawMoney contract).
-    -- Meaningless on the mixed All grid (it reflects whichever tab was last
-    -- synced) — hidden there; tab tooltips carry per-tab withdrawals.
     if selectedTab == "all" then
         win._withdrawLimit:Hide()
     else
@@ -807,9 +661,6 @@ function GuildWindow.Refresh()
     local s = GetSettings()
     local appearance = Bags.Chassis.ClampAppearance((s and s.appearance) or nil)
 
-    -- tab list: cache-driven; live mode drops tabs the vault reports
-    -- non-viewable and appends the purchase "+" while tabs remain buyable
-    -- (GetGuildBankTabCost() ~= nil — nil means all bought)
     local rec = GetGuildRecord()
     local opts = nil
     if liveMode then
@@ -824,9 +675,6 @@ function GuildWindow.Refresh()
         }
     end
     local tabs = GuildWindow.BuildTabList(rec, opts)
-    -- search-focus tab autoselect: jump to the first tab holding the focused
-    -- item when the current selection doesn't (one-shot per focus).
-    -- the All grid already shows every slot, so it never jumps away
     if focusItemID and selectedTab ~= "all" then
         local cur = rec and rec.tabs and selectedTab and rec.tabs[selectedTab]
         local found = false
@@ -841,18 +689,11 @@ function GuildWindow.Refresh()
         end
     end
     if EnsureSelection(tabs) and liveMode and type(selectedTab) == "number" then
-        -- first render / selected tab vanished: re-sync the server tab so
-        -- the footer's withdraw limit tracks what the grid shows
         SetCurrentGuildBankTab(selectedTab)
         QueryGuildBankTab(selectedTab)
     end
     local stripW = RenderTabStrip(tabs)
 
-    -- Pixel-snap iconSize/spacing to the window's physical pixel grid before
-    -- layout (actionbars precedent: fractional physical-pixel cells make the
-    -- renderer round each button's edges independently → uneven gaps at
-    -- non-1.0 scales). Snapping at the source keeps every derived offset
-    -- inherently pixel-aligned.
     local core = Helpers.GetCore()
     local snappedSize, snappedGap = appearance.iconSize, appearance.spacing
     local px = core and core.GetPixelSize and core:GetPixelSize(win) or nil
@@ -861,18 +702,9 @@ function GuildWindow.Refresh()
         snappedGap = math.floor(appearance.spacing / px + 0.5) * px
     end
 
-    -- two-pass render: collect placements first so the centering offset
-    -- (final width vs grid width) is known before any SetPoint. "all"
-    -- sentinel — every listed tab's slots flatten into ONE continuous grid
-    -- at DOUBLE the per-tab column count (bank-window precedent: width
-    -- stays bounded and the merge halves the height versus stacking
-    -- per-tab sections; tab membership stays discoverable via the
-    -- tab-hover highlight). Log mode never renders the grid, so the All
-    -- flatten is skipped there (the log panel sizes to MIN_LOG_H instead
-    -- of the giant merged grid).
     local cols = appearance.guildColumns or appearance.columns
     local renderAll = selectedTab == "all" and not (bodyMode == "log" and liveMode)
-    local pending = {} -- { tab, slot, entry, x, y }
+    local pending = {}
     local gridW, gridH
     if renderAll then
         local cells = {}
@@ -916,8 +748,6 @@ function GuildWindow.Refresh()
         win._title, win._ownerSelect, win._searchBox, win._close,
     }, { leftPad = 8, rightPad = 6, gap = 8 })
     local bodyW = math.max(gridW, stripW, headerMinW, MIN_BODY_W)
-    -- when the header/strip out-measures the grid, center the grid instead
-    -- of leaving all the slack on the right (log panel stays full-width)
     local xOff = 0
     if bodyW > gridW and gridW > 0 then
         xOff = (bodyW - gridW) / 2
@@ -925,12 +755,10 @@ function GuildWindow.Refresh()
     end
     local bodyH = gridH
     if bodyMode == "log" then
-        bodyH = math.max(bodyH, MIN_LOG_H) -- log stays readable with an empty cache
+        bodyH = math.max(bodyH, MIN_LOG_H)
     end
     win:SetContentSize(bodyW, TAB_STRIP_H + bodyH)
 
-    -- hide both pools (a mode/tab switch must not strand the other pool's
-    -- buttons), then place + dress the collected cells
     HideAllGridButtons()
     if bodyMode == "log" and liveMode then
         win._logPanel:Show()
@@ -945,16 +773,9 @@ function GuildWindow.Refresh()
     RenderFooter()
 end
 
----------------------------------------------------------------------------
--- Public surface
----------------------------------------------------------------------------
-
--- Open/close sounds: the guild vault pair, Blizzard parity (vendored
--- Blizzard_GuildBankUI.lua:121,130; SoundKitConstants.lua:88-89), gated on
--- the actual shown transition like every other bags window.
 local function Show()
     EnsureWindow()
-    bodyMode = "grid" -- a fresh open always lands on the grid
+    bodyMode = "grid"
     local wasShown = win:IsShown()
     win:Show()
     if not wasShown and PlaySound and SOUNDKIT and SOUNDKIT.GUILD_VAULT_OPEN then
@@ -963,26 +784,18 @@ local function Show()
     GuildWindow.Refresh()
 end
 
---- At the vault (GuildTakeover.OnOpened): cursor buttons + money/log row.
---- A live session is always the current character's guild — drop any
---- offline view key.
 function GuildWindow.ShowLive()
     liveMode = true
     viewedGuildKey = nil
     Show()
 end
 
---- Browse anywhere: inert cached buttons, live-only widgets hidden.
---- guildKey selects which cached guild to render (owner selector / future
---- callers); nil defaults to the current character's guild.
 function GuildWindow.ShowCached(guildKey)
     liveMode = false
     viewedGuildKey = guildKey
     Show()
 end
 
---- GUILDBANKFRAME_CLOSED (server-driven). v1: hide; a "stay open, fold back
---- to cached mode" refinement is a later phase (bank-window parity).
 function GuildWindow.OnBankClosed()
     GuildWindow.Hide()
 end
@@ -990,15 +803,13 @@ end
 function GuildWindow.Hide()
     focusItemID = nil
     if win and win:IsShown() then
-        win:Hide() -- OnHide → chassis onClose routes the live-session close
+        win:Hide()
         if PlaySound and SOUNDKIT and SOUNDKIT.GUILD_VAULT_CLOSE then
             PlaySound(SOUNDKIT.GUILD_VAULT_CLOSE)
         end
     end
 end
 
---- First tab index holding itemID (ascending; sparse slots). Pure — drives
---- the search-focus tab autoselect. → tab index or nil.
 function GuildWindow.FindTabForItem(rec, itemID)
     local map = rec and rec.tabs
     if not map then return nil end
@@ -1016,10 +827,6 @@ function GuildWindow.FindTabForItem(rec, itemID)
     return nil
 end
 
---- Search-everywhere navigation: open the right guild view (live only when
---- the vault session is open AND the target is the current guild) and
---- pulse + tab-select the item. Focus is transient — cleared on Hide and
---- ~3s after landing.
 function GuildWindow.FocusItem(itemID, guildKey)
     focusItemID = itemID
     if C_Timer and C_Timer.After then
@@ -1043,36 +850,26 @@ function GuildWindow.IsShown()
     return win ~= nil and win:IsShown()
 end
 
---- GUILDBANKLOG_UPDATE (routed by bags.lua, gated IsShown there too): the
---- queried log data landed — re-render when the log panel is what's showing.
 function GuildWindow.OnLogUpdate()
     if win and win:IsShown() and bodyMode == "log" and liveMode then
         RenderLog()
     end
 end
 
---- The window frame, or nil before first show (the guild takeover keeps its
---- name-proxy opener; this accessor is for callers that need the real frame).
 function GuildWindow.GetFrame()
     return win
 end
 
---- Profile switched while the module stays enabled: re-anchor + re-render.
 function GuildWindow.OnProfileChanged()
     if not win then return end
     win:ApplyPosition()
     if win:IsShown() then GuildWindow.Refresh() end
 end
 
--- data refresh: coalesced re-render on guild cache changes (tab metadata —
--- purchase, rename — also lands here via the scanner's drain)
 Storage.Bus.Subscribe("GuildChanged", function()
     ScheduleRefresh()
 end)
 
--- money/limit freshness: GUILDBANK_UPDATE_MONEY / _WITHDRAWMONEY (routed by
--- the core storage collector as GuildMoneyChanged). Cached mode renders no money row, so the
--- ping is live-only; ScheduleRefresh already no-ops while hidden.
 Storage.Bus.Subscribe("GuildMoneyChanged", function()
     if liveMode then ScheduleRefresh() end
 end)

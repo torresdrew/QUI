@@ -1,17 +1,5 @@
---[[
-    QUI Options V2 — Auras hub, Buff/Debuff Frames sub-page.
-
-    Simplest of the three surface mounts: no context selector, no preview.
-    The buff/debuff editor already exists as a self-contained tab body
-    (QUI_BuffDebuffOptions.BuildBuffDebuffTab, the exact tab the Action Bars
-    tile's own "Buff/Debuff" inner tab renders) that anchors its rows
-    directly to the frame passed in and sets that frame's height itself.
-    This file just mounts it as-is.
-]]
-
 local ADDON_NAME, ns = ...
 local QUI = QUI
-local GUI = QUI.GUI
 local Settings = ns.Settings
 local Registry = Settings and Settings.Registry
 local Schema = Settings and Settings.Schema
@@ -23,25 +11,24 @@ end
 
 local function BuildAurasActionBarContent(host, ctx, section)
     local AB = ns.QUI_BuffDebuffOptions
-    if AB and type(AB.BuildBuffDebuffTab) == "function" then
-        AB.BuildBuffDebuffTab(host) -- self-contained; sets host:SetHeight itself
-    end
+    local SearchRoute = Settings and Settings.SearchRoute
 
-    -- BuildBuffDebuffTab (above) already tags its own widgets with this hub
-    -- route (action_bars_buffdebuff_content.lua), carrying the
-    -- actionBarsBuffDebuff featureId so Layout Mode's buffFrame/debuffFrame
-    -- lookups keep resolving. Re-assert the route LAST with this page's own
-    -- featureId so the tab/subtab nav entry resolves to aurasActionBarPage.
-    if GUI and type(GUI.SetSearchContext) == "function" then
-        GUI:SetSearchContext({
-            tabIndex = 21,
-            tabName = ns.L["Auras"],
-            subTabIndex = 4,
-            subTabName = ns.L["Buff/Debuff Frames"],
-            tileId = "auras",
-            subPageIndex = 4,
-            featureId = "aurasActionBarPage",
-        })
+    local HUB_ROUTE = {
+        tabIndex = 21,
+        tabName = ns.L["Auras"],
+        subTabIndex = 4,
+        subTabName = ns.L["Buff/Debuff Frames"],
+        tileId = "auras",
+        subPageIndex = 4,
+        featureId = "aurasActionBarPage",
+    }
+
+    if AB and type(AB.BuildBuffDebuffTab) == "function" then
+        if SearchRoute and type(SearchRoute.With) == "function" then
+            SearchRoute.With(HUB_ROUTE, AB.BuildBuffDebuffTab, host)
+        else
+            AB.BuildBuffDebuffTab(host)
+        end
     end
 
     return host:GetHeight() or 80
@@ -51,6 +38,7 @@ Registry:RegisterFeature(Schema.Feature({
     id = "aurasActionBarPage",
     category = "frames",
     nav = { tileId = "auras", subPageIndex = 4 },
+    noSearch = true,
     sections = {
         Schema.Section({
             id = "settings",

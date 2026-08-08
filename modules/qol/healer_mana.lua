@@ -1,26 +1,6 @@
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 
----------------------------------------------------------------------------
--- HEALER MANA WATCHER (GRP-03)
---
--- A small movable frame listing your group's healers with a mana bar each,
--- so DPS/tanks can see drink breaks coming.
---
--- 12.x SECRET RULES (why bars, not text): UnitPower/UnitPowerMax are
--- SecretWhenUnitPowerRestricted — in combat their returns can be secret
--- values that support NO arithmetic or comparisons. The one sanctioned
--- render path is forwarding them into a StatusBar (SetMinMaxValues /
--- SetValue forward secrets). So the display is bars only — no percentage
--- text. UnitGroupRolesAssigned is a plain cstring (doc-verified, never
--- secret). Names render via the group-frames playbook: pcall +
--- IsSecretValue guard, never destructively cleared.
---
--- Roster (which units are healers) rebuilds only OUT of combat + on
--- GROUP_ROSTER_UPDATE / role changes; UNIT_POWER_UPDATE just forwards
--- values into existing bars.
----------------------------------------------------------------------------
-
 local GetSettings = Helpers.CreateDBGetter("general")
 
 local MAX_HEALERS = 5
@@ -29,7 +9,7 @@ local ROW_GAP = 3
 
 local container
 local rows = {}
-local tracked = {} -- unit token -> row index
+local tracked = {}
 local inCombat = false
 
 local function Cfg()
@@ -86,14 +66,11 @@ local function ApplyPosition()
 end
 
 local function SetRowName(row, unit)
-    -- Group-frames playbook: pcall + secret guard; on secret keep old text.
     local okName, name = pcall(UnitName, unit)
     if okName and not Helpers.IsSecretValue(name) and name then
         local classColor
         local okClass, _, class = pcall(UnitClass, unit)
         if not okClass then class = nil end
-        -- Probe FIRST — a secret class throws on the truth-test and the
-        -- RAID_CLASS_COLORS table index.
         -- @secret-policy: collapse-only — white name text fallback below
         if Helpers.IsSecretValue(class) then class = nil end
         if class then
@@ -112,12 +89,9 @@ local function UpdateBar(unit)
     local idx = tracked[unit]
     local row = idx and rows[idx]
     if not row then return end
-    -- Forward-only: secrets ride into the StatusBar untouched.
     local okMax, maxPower = pcall(UnitPowerMax, unit, 0)
     local okCur, curPower = pcall(UnitPower, unit, 0)
     if not okMax or not okCur then return end
-    -- Presence probe: an opaque value is present and rides raw into the
-    -- StatusBar sink; only a readable nil skips the update.
     if not Helpers.IsSecretValue(maxPower) then
         if maxPower == nil then return end
     end
@@ -129,7 +103,7 @@ local function UpdateBar(unit)
 end
 
 local function RebuildRoster()
-    if InCombatLockdown() then return end -- roster changes settle post-combat
+    if InCombatLockdown() then return end
     EnsureContainer()
     wipe(tracked)
 
@@ -150,8 +124,6 @@ local function RebuildRoster()
     for _, unit in ipairs(units) do
         if shown >= MAX_HEALERS then break end
         local role = UnitGroupRolesAssigned(unit)
-        -- PTR7: UnitGroupRolesAssigned can return a secret — probe before
-        -- the == comparison (comparing a secret throws).
         -- @secret-policy: collapse-only — secret-role units are not tracked
         if Helpers.IsSecretValue(role) then role = nil end
         if UnitExists(unit) and role == "HEALER" then
@@ -175,7 +147,6 @@ local function RebuildRoster()
 end
 
 local frame = CreateFrame("Frame")
--- Literal RegisterEvent calls so tools/generate_event_allowlist.lua detects them.
 frame:RegisterEvent("GROUP_ROSTER_UPDATE")
 frame:RegisterEvent("PLAYER_ROLES_ASSIGNED")
 frame:RegisterEvent("PLAYER_ENTERING_WORLD")
@@ -198,7 +169,6 @@ end)
 
 ns.RefreshHealerMana = RebuildRoster
 
--- Layout-mode preview: fake two healer rows so the mover has a body.
 local previewActive = false
 ns.ToggleHealerManaPreview = function(show)
     EnsureContainer()

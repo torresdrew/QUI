@@ -1,18 +1,3 @@
---[[
-    QUI Bags Shared Settings Provider
-    Owns provider-backed settings content for the Bags surface in the shared
-    settings layer (minimap_providers precedent: V3 body pattern —
-    CreateAccentDotLabel + CreateSettingsCardGroup + BuildSettingRow).
-
-    API notes (vendored docs):
-      • C_CurrencyInfo.GetCurrencyInfo(type) → CurrencyInfo { name, ... },
-        MayReturnNothing (CurrencyInfoDocumentation.lua:249) — nil return is
-        the "unknown currency ID" signal for the add-by-ID validation.
-      • C_Item.GetItemInfo(itemInfo) → itemName first return,
-        MayReturnNothing (ItemDocumentation.lua:589) — uncached items fall
-        back to a numeric label.
-]]
-
 local _, ns = ...
 
 local Settings = ns.Settings
@@ -21,16 +6,11 @@ if not ProviderPanels or type(ProviderPanels.RegisterAfterLoad) ~= "function" th
     return
 end
 
--- NOTE: ns.QUI_Options keeps ONE table identity for the whole session —
--- core/gui_shell.lua installs the stub and QUI_Options/shared.lua ADOPTS it
--- (`ns.QUI_Options or {}`), never replaces it. Call-time resolution inside
--- MakeLayout / row / build bodies is convention, not a staleness guard.
 ProviderPanels:RegisterAfterLoad(function(ctx)
     local GUI = ctx.GUI
     local U = ctx.U
     local NotifyProviderFor = ctx.NotifyProviderFor
 
-    -- Shared provider-panel layout scaffold (core/settings_layout_shared.lua).
     local function MakeLayout(content)
         return ns.QUI_SettingsLayoutShared.MakeLayout(content, U)
     end
@@ -39,7 +19,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         return ns.QUI_Options.BuildSettingRow(parent, label, widget, desc)
     end
 
-    -- Muted inline note (minimap's drawer empty-state idiom, word-wrapped).
     local function PlaceNote(L, content, text, height)
         local holder = CreateFrame("Frame", nil, content)
         local lbl = holder:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -52,10 +31,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         L.placeCustom(holder, height or 30)
     end
 
-    ---------------------------------------------------------------------------
-    -- Label helper. C_Item.GetItemInfo MayReturnNothing; nil-guarded so the
-    -- headless search-cache harness (no C_* namespaces) renders fallbacks.
-    ---------------------------------------------------------------------------
     local function ItemLabel(itemID)
         local name = C_Item and C_Item.GetItemInfo and C_Item.GetItemInfo(itemID)
         if name and name ~= "" then
@@ -64,12 +39,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         return ns.L["Item"] .. " " .. tostring(itemID)
     end
 
-    ---------------------------------------------------------------------------
-    -- Dropdown option builders (sorted for deterministic order; the DBs are
-    -- unordered maps). Store access is build-time-guarded: ns.Storage.Store is
-    -- absent in the headless harness, and reads are re-resolved per call so
-    -- delete refreshes see live data.
-    ---------------------------------------------------------------------------
     local function BuildExclusionOptions(junk)
         local ids = {}
         for id in pairs((junk and junk.exclusions) or {}) do ids[#ids + 1] = id end
@@ -81,12 +50,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         return opts
     end
 
-    -- Currency bar config uses the shared currency-section model
-    -- (currencyOrder array + currencyEnabled map, STRING ids — the same
-    -- shape the datatext/Info Bar Currencies section edits). One-time
-    -- migration folds the legacy [id]=true set in as enabled rows; the
-    -- lists are authoritative afterwards (currency_bar.lua renders
-    -- order ∩ enabled).
     local function EnsureCurrencyBarLists(cfg)
         if type(cfg.currencyOrder) ~= "table" then cfg.currencyOrder = {} end
         if type(cfg.currencyEnabled) ~= "table" then cfg.currencyEnabled = {} end
@@ -106,11 +69,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             cfg.currencies = nil
         end
     end
-
-    -- (The section's row pool is the Blizzard backpack-tracked list — the
-    -- shared builder's default, the same pool the Info Bar/datatext pages
-    -- list. Legacy configured-but-untracked IDs survive in currencyEnabled
-    -- but only get a row/render while tracked.)
 
     local function BuildCharacterOptions()
         local Store = ns.Storage and ns.Storage.Store
@@ -137,9 +95,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         return opts
     end
 
-    ---------------------------------------------------------------------------
-    -- BAGS PROVIDER
-    ---------------------------------------------------------------------------
     ctx.RegisterShared("bags", { build = function(content, _key, _width)
         local db = U.GetProfileDB()
         if not db or not db.bags or not ns.QUI_Options then return 80 end
@@ -152,20 +107,11 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         if not behavior.junk.exclusions then behavior.junk.exclusions = {} end
         if not behavior.newItemGlow then behavior.newItemGlow = {} end
         if not bags.currencyBar then bags.currencyBar = {} end
-        -- (currencyOrder/currencyEnabled are ensured by EnsureCurrencyBarLists
-        -- at the Currency Bar section below; the legacy `currencies` set is
-        -- migrated there and must NOT be re-created here.)
 
         local function Refresh() if _G.QUI_RefreshBags then _G.QUI_RefreshBags() end end
 
         local L = MakeLayout(content)
 
-        -- GENERAL: master enable toggle, parity with the Module Addons row
-        -- (moduleAddon_QUI_Bags) — the OTHER surface that flips this module.
-        -- Both move the addon enable-state AND the bags.enabled dormant-guard
-        -- flag together; reload is prompted exactly when that row prompts
-        -- (always on disable; on enable when the addon needs a reload or the
-        -- guard flag was explicitly false).
         local function ShowBagsReloadPrompt()
             local Q = _G.QUI
             local G2 = Q and Q.GUI
@@ -200,10 +146,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 ShowBagsReloadPrompt()
             end
         end
-        -- Proxy "db" for the checkbox: reads compute the combined module
-        -- state; writes apply it. The widget writes the current value back
-        -- at creation (SetValue(GetValue())), so unchanged writes must be
-        -- no-ops or page build would re-run the enable path.
         local moduleProxy = setmetatable({}, {
             __index = function(_, k)
                 if k == "enabled" then return ModuleIsOn() end
@@ -222,7 +164,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         g0.AddRow(row(g0.frame, ns.L["Enable Bags Module"], moduleW))
         L.closeSection(g0)
 
-        -- APPEARANCE
         L.headerAt(ns.L["Appearance"])
         local s1 = L.sectionAt()
         local iconSizeW = GUI:CreateFormSlider(s1.frame, nil, 24, 48, 1, "iconSize", bags.appearance, Refresh,
@@ -274,8 +215,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             { description = ns.L["Show the bag-slot strip at the top of the bag window: your four bag slots plus the reagent bag slot. Drag a container onto a slot (or click with one on the cursor) to equip or swap it; click an equipped bag to pick it up."] })
         s1.AddRow(row(s1.frame, ns.L["Context Fading"], contextFadeW), row(s1.frame, ns.L["Show Bag Slots"], bagSlotsW))
 
-        -- Per-bag hiding (bags 1–4): display-only, mirrors Alt+click on the
-        -- bag-slot strip. Numeric keys into the hiddenBags scalar map.
         local hiddenBags = bags.appearance.hiddenBags
         local hide1W = GUI:CreateFormCheckbox(s1.frame, nil, 1, hiddenBags, Refresh,
             { description = ns.L["Hide bag 1's slots from the bag window grid. Display-only: search and sort still cover it."] })
@@ -289,7 +228,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s1.AddRow(row(s1.frame, ns.L["Hide Bag 3"], hide3W), row(s1.frame, ns.L["Hide Bag 4"], hide4W))
         L.closeSection(s1)
 
-        -- CORNER WIDGETS (per-corner primary + fallback pick)
         L.headerAt(ns.L["Icon Corners"])
         local sc = L.sectionAt()
         local CORNER_OPTS = {
@@ -334,7 +272,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         sc.AddRow(row(sc.frame, ns.L["Quality-Colored Text"], qualityTextW))
         L.closeSection(sc)
 
-        -- BEHAVIOR
         local sortOptions = {
             { value = "quality", text = ns.L["Quality"] },
             { value = "type", text = ns.L["Type"] },
@@ -369,7 +306,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s2.AddRow(row(s2.frame, ns.L["New Item Highlight"], glowEnableW), row(s2.frame, ns.L["Highlight Timeout (min)"], glowTimeoutW))
         L.closeSection(s2)
 
-        -- AUTO-OPEN
         L.headerAt(ns.L["Auto-Open"])
         local s3 = L.sectionAt()
         local autoOpenRows = {
@@ -400,7 +336,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         end
         L.closeSection(s3)
 
-        -- JUNK
         L.headerAt(ns.L["Junk"])
         local s4 = L.sectionAt()
         local junkDimW = GUI:CreateFormCheckbox(s4.frame, nil, "dim", behavior.junk, Refresh,
@@ -422,9 +357,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         end, { description = ns.L["Items excluded from junk dimming, the Sell Junk button, and vendor auto-sell. Selecting one removes the exclusion."] })
         s4.AddRow(row(s4.frame, ns.L["Remove Exclusion"], exclusionDropdown))
 
-        -- Add-by-ID cell (the currency-bar idiom below): validate via
-        -- GetItemInfoInstant (MayReturnNothing per ItemDocumentation — nil
-        -- = no such item; instant, no async wait), write exclusions[id]=true.
         local exclAddInput = GUI:CreateFormEditBox(s4.frame, nil, nil, nil, nil, {
             commitOnEnter = false, commitOnFocusLost = false,
             onEscapePressed = function(self) self:ClearFocus() end,
@@ -459,7 +391,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             ns.L["Exclusions protect specific items from junk dimming, the Sell Junk button, and vendor auto-sell. Add by item ID above; remove via the dropdown."],
             26)
 
-        -- CURRENCY BAR
         L.headerAt(ns.L["Currency Bar"])
         local s5 = L.sectionAt()
         local cbar = bags.currencyBar
@@ -468,12 +399,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s5.AddRow(row(s5.frame, ns.L["Enable Currency Bar"], cbarEnableW))
         L.closeSection(s5)
 
-        -- Currency list: the shared toggle+reorder section — the same view
-        -- AND the same Blizzard backpack-tracked pool as the Info Bar/
-        -- datatext Currencies settings; only the edited config differs
-        -- (bags.currencyBar). The builder is exported by the QUI_Datatexts
-        -- settings page — guarded because QUI_Bags does not depend on that
-        -- module addon.
         if ns.QUI_BuildCurrencyOrderSection then
             EnsureCurrencyBarLists(cbar)
             ns.QUI_BuildCurrencyOrderSection(L, content, {
@@ -496,7 +421,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             L.placeCustom(noteRow, 18)
         end
 
-        -- CACHED DATA
         L.headerAt(ns.L["Cached Data"])
         local s6 = L.sectionAt()
         local charWrapper = { selected = "" }

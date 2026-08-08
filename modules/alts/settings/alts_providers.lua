@@ -1,15 +1,3 @@
---[[
-    QUI Alts Shared Settings Provider
-    Owns provider-backed settings content for the Alts surface in the shared
-    settings layer (bags_providers precedent: MakeLayout with
-    headerAt/sectionAt/closeSection/placeCustom, the `row` helper via
-    ns.QUI_Options.BuildSettingRow, DB writes calling _G.QUI_RefreshAlts).
-
-    Loaded cross-addon from QUI_Options.toc (LoD), NOT from QUI_Alts.toc —
-    the shared settings layer only exists once QUI_Options loads, so the
-    ProviderPanels guard returns early in any other context.
-]]
-
 local _, ns = ...
 
 local Settings = ns.Settings
@@ -18,17 +6,11 @@ if not ProviderPanels or type(ProviderPanels.RegisterAfterLoad) ~= "function" th
     return
 end
 
--- NOTE: do NOT capture `ns.QUI_Options` as a local in this outer closure.
--- QUI_Options/shared.lua REPLACES the stub table installed by
--- core/gui_shell.lua, so any captured local would be stale. Re-resolve
--- ns.QUI_Options at call time inside MakeLayout / row / build bodies
--- (bags_providers precedent).
 ProviderPanels:RegisterAfterLoad(function(ctx)
     local GUI = ctx.GUI
     local U = ctx.U
     local NotifyProviderFor = ctx.NotifyProviderFor
 
-    -- Shared provider-panel layout scaffold (core/settings_layout_shared.lua).
     local function MakeLayout(content)
         return ns.QUI_SettingsLayoutShared.MakeLayout(content, U)
     end
@@ -37,7 +19,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         return ns.QUI_Options.BuildSettingRow(parent, label, widget, desc)
     end
 
-    -- Muted inline note (bags_providers idiom, word-wrapped).
     local function PlaceNote(L, content, text, height)
         local holder = CreateFrame("Frame", nil, content)
         local lbl = holder:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -50,9 +31,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         L.placeCustom(holder, height or 30)
     end
 
-    ---------------------------------------------------------------------------
-    -- ALTS PROVIDER
-    ---------------------------------------------------------------------------
     ctx.RegisterShared("alts", { build = function(content, _key, _width)
         local db = U.GetProfileDB()
         if not db or not db.alts or not ns.QUI_Options then return 80 end
@@ -60,9 +38,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         if not alts.columns then alts.columns = {} end
         if not alts.scanners then alts.scanners = {} end
 
-        -- Roster columns refresh live: QUI_RefreshAlts reflows an open window
-        -- via Window.OnProfileChanged; also poke RefreshActive so the active
-        -- tab re-renders immediately.
         local function Refresh()
             if _G.QUI_RefreshAlts then _G.QUI_RefreshAlts() end
             local Window = ns.Alts and ns.Alts.Window
@@ -70,17 +45,10 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 Window.RefreshActive()
             end
         end
-        -- Scanner toggles only write the DB: the collector reads each flag
-        -- live (ScannerEnabled in core/storage/collector.lua); no refresh.
         local function NoRefresh() end
 
         local L = MakeLayout(content)
 
-        ---------------------------------------------------------------------
-        -- ALTS MODULE (master toggle — chat_frame1_provider parity: the flip
-        -- writes the manifest legacyFlag live, then offers a reload so the
-        -- LoD addon actually loads/unloads)
-        ---------------------------------------------------------------------
         local function ShowAltsModuleReloadPrompt()
             local Q = _G.QUI
             local G = Q and Q.GUI
@@ -103,9 +71,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s0.AddRow(row(s0.frame, ns.L["Enable Alts Module"], enableW))
         L.closeSection(s0)
 
-        ---------------------------------------------------------------------
-        -- ROSTER COLUMNS
-        ---------------------------------------------------------------------
         L.headerAt(ns.L["Roster Columns"])
         local s1 = L.sectionAt()
         local columnRows = {
@@ -135,9 +100,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         end
         L.closeSection(s1)
 
-        ---------------------------------------------------------------------
-        -- SCANNERS
-        ---------------------------------------------------------------------
         L.headerAt(ns.L["Scanners"])
         local s2 = L.sectionAt()
         local repW = GUI:CreateFormCheckbox(s2.frame, nil, "reputations", alts.scanners, NoRefresh,
@@ -151,15 +113,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s2.AddRow(row(s2.frame, ns.L["Lockouts"], lockW))
         L.closeSection(s2)
 
-        ---------------------------------------------------------------------
-        -- TAB FILTERS (currencies + reputations visibility; same db keys as
-        -- the in-window Filter buttons: [id] = false hides, absent = show).
-        -- One dropdown button per tab opening the shared searchable popup
-        -- (filter_popup.lua, floating mode — the settings scrollframe clips
-        -- child frames). List builders live in the LoD view files — guard
-        -- and fall back to a note when QUI_Alts isn't loaded (LoD-symbol
-        -- rule); the data itself comes from always-loaded core Storage.
-        ---------------------------------------------------------------------
         if not alts.currencyFilter then alts.currencyFilter = {} end
         if not alts.reputationFilter then alts.reputationFilter = {} end
 
@@ -173,8 +126,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             end
         end
 
-        -- dropdown-style button (alts-window selector chrome) opening the
-        -- shared filter popup; label shows a visible/hidden summary
         local function MakeFilterDropdown(parentFrame)
             local UIKit = ns.UIKit
             local b = CreateFrame("Button", nil, parentFrame)
@@ -228,7 +179,7 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 if type(rec.currencies) == "table" then
                     for id in pairs(rec.currencies) do
                         if curNames[id] == nil and C_CurrencyInfo and C_CurrencyInfo.GetCurrencyInfo then
-                            local info = C_CurrencyInfo.GetCurrencyInfo(id) -- MayReturnNothing
+                            local info = C_CurrencyInfo.GetCurrencyInfo(id)
                             curNames[id] = (info and info.name) or false
                         end
                     end
@@ -295,7 +246,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                     floating = true,
                     anchorButton = btn,
                     getRows = function()
-                        -- full row list incl. group headers (gold rows)
                         local popupRows = {}
                         for _, e in ipairs(repRows) do
                             if e.kind == "group" then
@@ -322,10 +272,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             end
         end
 
-        ---------------------------------------------------------------------
-        -- CACHE (character list + delete — alt-tracking design doc scope:
-        -- "character-cache management (list + delete)")
-        ---------------------------------------------------------------------
         L.headerAt(ns.L["Cache"])
         local Store = ns.Storage and ns.Storage.Store
         local keys = (Store and Store.IsInitialized and Store.IsInitialized()
@@ -347,7 +293,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 nameFS:SetPoint("TOPLEFT", holder, "TOPLEFT", 6, y0 - 6)
                 nameFS:SetJustifyH("LEFT")
                 nameFS:SetText(key)
-                -- RAID_CLASS_COLORS read directly (roster view precedent)
                 local c = d.class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[d.class]
                 if c then nameFS:SetTextColor(c.r, c.g, c.b, 1) end
 
@@ -366,7 +311,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                     delBtn = GUI:CreateButton(holder, ns.L["Delete"], 60, 18, function()
                         if Store.DeleteCharacter then Store.DeleteCharacter(key) end
                         Refresh()
-                        -- structural: the row set changed — rebuild the panel
                         NotifyProviderFor(delBtn, { structural = true })
                     end, "ghost")
                     delBtn:SetPoint("TOPRIGHT", holder, "TOPRIGHT", -6, y0 - 3)

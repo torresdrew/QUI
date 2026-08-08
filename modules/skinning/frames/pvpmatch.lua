@@ -1,19 +1,5 @@
----------------------------------------------------------------------------
--- PVP MATCH SKINNING (opt-in, default OFF)
---
--- Skins the post-match scoreboard frames (LOD Blizzard_PVPMatch):
---   - PVPMatchScoreboard
---   - PVPMatchResults
---
--- Both are bare custom Frames (no standard template) with a UIPanelCloseButton.
--- Defensive baseline: QUI backdrop + close button + themed fonts. The scoreboard
--- team tables / pooled stat rows are left for a follow-up in-game visual pass.
----------------------------------------------------------------------------
-
 local addonName, ns = ...
 
--- Master skinning gate (skinning.enabled): disabled + /reload installs no QUI
--- skin hooks for this file. Default ON; reload-required. See core/uikit.lua.
 if ns.IsSkinningEnabled and not ns.IsSkinningEnabled() then return end
 local SkinBase = ns.SkinBase
 local GetCore = ns.Helpers.GetCore
@@ -26,7 +12,7 @@ end
 
 local function SkinPVPMatchFrame(frame)
     if not frame or SkinBase.IsSkinned(frame) then return end
-    SkinBase.SkinWindow(frame, { depth = 5 }) -- chrome + backdrop + close (static-text face from global font-object override)
+    SkinBase.SkinWindow(frame, { depth = 5 })
     SkinBase.MarkSkinned(frame)
 end
 

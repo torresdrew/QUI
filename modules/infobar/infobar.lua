@@ -1,8 +1,3 @@
---- QUI Info Bar — full-width top/bottom bar hosting datatext widgets in
---- three zones (left / center / right). Each zone is an ordered, unbounded
---- list of widget ids; widgets auto-size to content (per-widget minWidth),
---- and trailing widgets hide instead of overlapping a neighbor zone.
-
 local _, ns = ...
 local QUICore = ns.Addon
 local Helpers = ns.Helpers
@@ -26,10 +21,7 @@ local function GetDB()
     return db and db.infobar
 end
 
--- Set whenever a reflow attempt lands in combat; drained at regen by the
--- regen watcher below.
 local reflowPendingCombat = false
--- Set whenever ApplyAll lands in combat; drained at regen likewise.
 local applyPendingCombat = false
 
 local reflowQueued = false
@@ -42,15 +34,6 @@ local function QueueReflow()
     end)
 end
 
--- Persistent regen watcher draining both combat-deferred flags: rebuild
--- (ApplyAll) first, then layout. Layout goes through QueueReflow (next
--- frame) rather than a direct ReflowAll because with hideInCombat the
--- visibility state driver may not have re-shown the bar yet at
--- PLAYER_REGEN_ENABLED — a direct call would bail on IsShown with the
--- flag already consumed. Created at file scope (not in CreateBar) so an
--- ApplyAll deferred by a combat /reload, before any bar exists, still
--- replays at regen. Each flag is cleared before invoking its action, so
--- a re-deferral from inside the action re-arms cleanly.
 local regenWatcher = CreateFrame("Frame")
 regenWatcher:RegisterEvent("PLAYER_REGEN_ENABLED")
 regenWatcher:SetScript("OnEvent", function()
@@ -64,9 +47,6 @@ regenWatcher:SetScript("OnEvent", function()
     end
 end)
 
----------------------------------------------------------------------------
--- FRAME CONSTRUCTION
----------------------------------------------------------------------------
 local function ApplyBackdrop()
     local db = GetDB()
     if not db then return end
@@ -76,8 +56,6 @@ local function ApplyBackdrop()
         UIKit.DisablePixelSnap(bar.bg)
     end
 
-    -- Only border drawn is on the screen-inner edge (below a TOP bar,
-    -- above a BOTTOM bar).
     local borderSize = db.borderSize or 1
     local bR, bG, bB, bA = Helpers.GetSkinBorderColor(db, "")
     local edge = bar.borderEdge
@@ -116,8 +94,6 @@ local function CreateBar()
     bar = CreateFrame("Frame", "QUI_InfoBar", UIParent)
     bar:SetFrameStrata("HIGH")
 
-    -- Width is anchor-derived from UIParent, so resolution/UI-scale changes
-    -- arrive here as OnSizeChanged; re-run overflow on the new width.
     bar:SetScript("OnSizeChanged", QueueReflow)
 
     bar.bg = bar:CreateTexture(nil, "BACKGROUND")
@@ -131,19 +107,12 @@ local function CreateBar()
         zoneFrames[key] = zf
     end
 
-    -- Hand-rolled 1px edge goes sub-pixel after login scale changes unless
-    -- re-applied on scale refresh.
     if UIKit and UIKit.RegisterScaleRefresh then
         UIKit.RegisterScaleRefresh(bar, "infobarBackdrop", function()
             if GetDB() then ApplyBackdrop() end
         end)
     end
 
-    -- Layout Mode anchor target: other frames can anchor to the bar ("Info
-    -- Bar" under Display). Registered even while the bar is disabled — the
-    -- anchoring engine chain-walks hidden parents, and its visibility hooks
-    -- re-anchor children when the bar shows/hides. The re-apply below picks
-    -- up saved anchors that referenced the bar before this LOD addon loaded.
     if ns.FRAME_ANCHOR_INFO and not ns.FRAME_ANCHOR_INFO.infoBar then
         ns.FRAME_ANCHOR_INFO.infoBar = {
             displayName = ns.L["Info Bar"], category = "Display", order = 11,
@@ -160,29 +129,14 @@ local function CreateBar()
     end
 end
 
----------------------------------------------------------------------------
--- SLOTS (pooled: WoW never GCs frames, so abandoning slots on every rebuild
--- leaks them for the session)
----------------------------------------------------------------------------
-
--- Free list shared by all three zones. Released slots stay parented to their
--- old zone frame (zone frames live as long as the bar, so a hidden child
--- there pins nothing extra); CreateSlot re-parents on reuse. Capped so
--- pathological settings churn stays bounded — beyond the cap a slot is
--- unparented and abandoned exactly as before pooling.
 local slotPool = {}
 local SLOT_POOL_CAP = 32
 
 local function ReleaseSlots(zf)
     for _, slot in ipairs(zf.slots) do
         if QUICore.Datatexts then
-            -- Clears datatextInstance + provider OnClick/OnEnter/OnLeave.
             QUICore.Datatexts:DetachFromSlot(slot)
         end
-        -- Field-clearing contract: every per-widget field any host or
-        -- provider sets on a slot must be cleared here, or it leaks into the
-        -- next widget that reuses this frame. (_quiFixedWidth/_quiLdbName are
-        -- already cleared by provider OnDisable; cleared again defensively.)
         slot._quiWidgetId = nil
         slot._quiMinWidth = nil
         slot._quiXOffset = nil
@@ -197,11 +151,6 @@ local function ReleaseSlots(zf)
         slot.text._quiHideText = nil
         slot.clickThrough = nil
         slot.text:SetText("")
-        -- Drag-reorder dims the slot to 0.4 alpha mid-drag; a release-during-
-        -- drag can pool it dimmed, so reset alpha here as part of the clearing
-        -- contract. (Do NOT clear slot._quiDragWired — its OnDragStart/OnDragStop
-        -- HookScripts persist across pool reuse and HookScript stacks; the flag
-        -- must persist so WireSlotDrag stays a true once-only attach.)
         slot:SetAlpha(1)
         slot:Hide()
         if #slotPool < SLOT_POOL_CAP then
@@ -218,9 +167,6 @@ local function CreateSlot(zf, widgetId)
     local slot = table.remove(slotPool)
     if slot then
         slot:SetParent(zf)
-        -- Pooled slots were hidden on release; fresh frames show by default.
-        -- Show here so a state-driver-hidden bar can't strand reused slots
-        -- invisible until the 1s ticker reflow.
         slot:Show()
     else
         slot = CreateFrame("Button", nil, zf)
@@ -228,13 +174,6 @@ local function CreateSlot(zf, widgetId)
         slot.text:SetPoint("LEFT", slot, "LEFT", 4, 0)
         slot.text:SetJustifyH("LEFT")
         slot.text:SetWordWrap(false)
-        -- "Hide Text" (icon-only) override: strip everything but texture
-        -- escapes (|T..|t) from whatever a provider renders. LDB/spec widgets
-        -- embed their icon inside the text string, so this keeps the icon and
-        -- drops the label+value; text-only widgets blank out. Wrapped once per
-        -- fontstring (pooled frames keep theirs); the live flag is read off the
-        -- fontstring. pcall-guarded — a secret-valued string cannot be pattern-
-        -- scanned, so it falls back to rendering unchanged.
         local origSetText = slot.text.SetText
         local origSetFormatted = slot.text.SetFormattedText
         local function IconsOnly(s)
@@ -263,8 +202,6 @@ local function CreateSlot(zf, widgetId)
     slot:SetHeight(db.height or 22)
     slot:EnableMouse(true)
 
-    -- Re-applied on pooled reuse too: the profile font/size/outline can
-    -- change between rebuilds.
     local general = QUICore.db.profile.general or {}
     local fontPath = LSM:Fetch("font", general.font or "Quazii") or "Fonts\\FRIZQT__.TTF"
     if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
@@ -277,19 +214,9 @@ local function CreateSlot(zf, widgetId)
     local ws = db.widgetSettings and db.widgetSettings[widgetId]
     slot.shortLabel = ws and ws.shortLabel or false
     slot.noLabel = ws and ws.noLabel or false
-    -- Consumed by icon-rendering providers we own (ldb bridge, specswap,
-    -- professions). Micromenu/travel are icon-only compound widgets and
-    -- deliberately ignore it (hiding their icon would blank them).
     slot.hideIcon = ws and ws.hideIcon or false
-    -- Icon-only override; consumed centrally by the slot.text SetText wrapper
-    -- (live flag lives on the fontstring) and by travel's own label.
     slot.hideText = ws and ws.hideText or false
     slot.text._quiHideText = slot.hideText
-    -- Click-through disables clicks AND tooltips for this widget (both ride
-    -- on slot mouse input). Applied after AttachToSlot in ApplyAll because
-    -- providers re-EnableMouse(true) in OnEnable; the flag here is the record.
-    -- Micromenu/travel create their own child Buttons which keep mouse — the
-    -- toggle targets text datatexts, that partial coverage is acceptable.
     slot.clickThrough = ws and ws.clickThrough or false
     slot._quiMinWidth = ws and ws.minWidth or 0
     slot._quiXOffset = ws and ws.xOffset or 0
@@ -299,9 +226,6 @@ local function CreateSlot(zf, widgetId)
     return slot
 end
 
----------------------------------------------------------------------------
--- LAYOUT
----------------------------------------------------------------------------
 local function SlotNaturalWidth(slot)
     local w = slot._quiFixedWidth
     if not w then
@@ -322,11 +246,6 @@ local function ReflowZone(key)
             slot:SetWidth(max(1, floor(w + 0.5)))
             slot:SetHeight(db.height or 22)
             slot:ClearAllPoints()
-            -- Per-widget xOffset is a pure visual nudge: positive always
-            -- moves the widget toward screen-right (the right zone anchors
-            -- RIGHT with a negated accumulator, so the offset stays ADDED).
-            -- It is excluded from the running x accumulator, so neighbor
-            -- spacing is unaffected.
             local off = slot._quiXOffset or 0
             if key == "right" then
                 slot:SetPoint("RIGHT", zf, "RIGHT", -x + off, 0)
@@ -343,9 +262,6 @@ local function ReflowZone(key)
     zf:SetHeight(db.height or 22)
 end
 
--- Hide trailing widgets of zones that would collide. Pure arithmetic on the
--- widths we just computed — no GetLeft/GetRight (avoids one-frame staleness).
--- Assumes ReflowAll just reset _quiOverflowHidden and reflowed all zones.
 local function ResolveOverflow()
     local db = GetDB()
     if not db then return end
@@ -389,27 +305,17 @@ local function ResolveOverflow()
     end
 end
 
--- Exposed for the drag-reorder companion (dragreorder.lua): it walks live
--- slots after each ApplyAll to attach Shift-drag handlers. Returns the live
--- zoneFrames table (zoneFrames[key].slots[i] mirrors db.zones[key][i]).
 function InfoBar:GetZoneFrames()
     return zoneFrames
 end
 
 function InfoBar:ReflowAll()
     if not bar then return end
-    -- Protected secure children (travel's hearth button / flyout) make their
-    -- ancestors' geometry combat-locked: the SetWidth/ClearAllPoints/SetPoint/
-    -- Show/Hide below on slots would be ADDON_ACTION_BLOCKED. Defer the whole
-    -- pass to regen (flag drained by the file-scope regen watcher). Always set
-    -- the flag so the bar self-heals even if no further dirty events arrive.
     if InCombatLockdown() then
         reflowPendingCombat = true
         return
     end
     if not bar:IsShown() then return end
-    -- Fresh pass: unhide everything, lay out at natural widths, then let
-    -- ResolveOverflow trim trailing widgets until nothing collides.
     for _, key in ipairs(ZONES) do
         for _, slot in ipairs(zoneFrames[key].slots) do
             slot._quiOverflowHidden = nil
@@ -419,9 +325,6 @@ function InfoBar:ReflowAll()
     ResolveOverflow()
 end
 
----------------------------------------------------------------------------
--- VISIBILITY: mouseover fade + combat hide (state driver — secure children)
----------------------------------------------------------------------------
 local function ApplyVisibilityRules()
     local db = GetDB()
     if not db then return end
@@ -436,13 +339,6 @@ local function ApplyVisibilityRules()
     if fadeTicker then fadeTicker:Cancel(); fadeTicker = nil end
     if db.mouseoverFade then
         local rest = (db.fadeRestOpacity or 0) / 100
-        -- Polling is deliberate: slot providers SetScript their own
-        -- OnEnter/OnLeave after attach (wiping creation-time hooks) and
-        -- micromenu/travel add child buttons that swallow enter/leave, so
-        -- IsMouseOver rect-testing is the only reliable hover signal.
-        -- `settledAt` collapses the steady-state tick (~99% of the time)
-        -- to one IsMouseOver call and a compare; the alpha work only runs
-        -- while the hover state and alpha disagree.
         local settledAt = nil
         fadeTicker = C_Timer.NewTicker(0.1, function()
             local target = bar:IsMouseOver() and 1 or rest
@@ -461,20 +357,9 @@ local function ApplyVisibilityRules()
     end
 end
 
----------------------------------------------------------------------------
--- APPLY / REFRESH
----------------------------------------------------------------------------
-
--- One-time starter layout. Defaults ship zones EMPTY because AceDB's
--- removeDefaults strips array entries equal-by-index to defaults at
--- logout/profile-switch — a user-shortened list matching a default prefix
--- would be wiped and the full default layout would resurrect next login.
--- The seeded flag (false in defaults) persists fine and gates this forever.
 local function SeedDefaultZones(db)
     if db.zonesSeeded then return end
     db.zones = db.zones or {}
-    -- Respects zone edits made before the first ApplyAll (e.g. while the
-    -- module addon was disabled): never overwrite a non-empty layout.
     for _, key in ipairs(ZONES) do
         local list = db.zones[key]
         if list and #list > 0 then
@@ -492,12 +377,8 @@ function InfoBar:ApplyAll()
     local db = GetDB()
     if not db then return end
 
-    -- Seed before the enabled check so the settings page (same db) shows the
-    -- starter layout even while the bar is still disabled.
     SeedDefaultZones(db)
 
-    -- Secure widget providers (travel) write secure attributes during attach.
-    -- Defer to regen; drained by the file-scope regen watcher.
     if InCombatLockdown() then
         applyPendingCombat = true
         return
@@ -535,8 +416,6 @@ function InfoBar:ApplyAll()
             if Datatexts then
                 Datatexts:AttachToSlot(slot, widgetId, db)
             end
-            -- After attach: providers EnableMouse(true) in OnEnable, so the
-            -- click-through disable only sticks when applied last.
             if slot.clickThrough then slot:EnableMouse(false) end
             zf.slots[#zf.slots + 1] = slot
         end
@@ -545,10 +424,8 @@ function InfoBar:ApplyAll()
     bar:Show()
     ApplyVisibilityRules()
     InfoBar:ReflowAll()
-    QueueReflow()  -- second pass next frame: strings settle after first render
+    QueueReflow()
 
-    -- width re-check piggybacks the shared 1s datatext ticker (covers
-    -- built-in providers that don't call the width-dirty hook)
     if Datatexts then
         Datatexts:RegisterSharedTicker(bar, function()
             if bar:IsShown() then InfoBar:ReflowAll() end
@@ -567,11 +444,6 @@ if ns.Registry then
         group = "data",
         importCategories = { "infobar" },
     })
-    -- Companion skinning registration (see skin_refresh_group_companion_test):
-    -- the bar's edge border tracks the global skin via GetSkinBorderColor, but
-    -- a live skin/accent recolor fires only Registry:RefreshAll("skinning") —
-    -- group "data" would stay stale until /reload. Light repaint only (no
-    -- slot rebuild): ApplyBackdrop re-reads the border color.
     ns.Registry:Register("infobarSkin", {
         refresh = function()
             if bar and GetDB() then ApplyBackdrop() end
@@ -582,11 +454,8 @@ if ns.Registry then
     })
 end
 
--- LOD catch-up init (PEW already fired before this addon loads). The bar
--- reads no game APIs at build time, so no warm-up delay is needed.
 if ns.WhenLoggedIn then
     ns.WhenLoggedIn(function()
-        -- next frame: let same-login sibling files finish registering providers
         C_Timer.After(0, function() InfoBar:ApplyAll() end)
     end)
 end

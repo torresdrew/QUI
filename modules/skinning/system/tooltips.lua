@@ -3,9 +3,6 @@ local Helpers = ns.Helpers
 local SkinBase = ns.SkinBase
 local UIKit = ns.UIKit
 local GetCore = Helpers.GetCore
--- Captured as a local: several functions below shadow the module `ns` with
--- a `local ns = tooltip.NineSlice`, so `ns.SafeCall` would resolve to the
--- wrong (NineSlice) table inside them. Reference SafeCall directly instead.
 local SafeCall = ns.SafeCall
 
 local function TooltipDebugCount(name, amount)
@@ -35,16 +32,6 @@ local function TooltipDebugEnd(dbg, name, startMS, detail, startHeapKB)
     end
 end
 
----------------------------------------------------------------------------
--- TOOLTIP SKINNING
--- Hides Blizzard's NineSlice via :Hide(), renders QUI-owned
--- manual chrome (background + border lines). Falls back to NineSlice when styling fails
--- (combat secret values, forbidden frames, errors).
----------------------------------------------------------------------------
-
--- Settings
----------------------------------------------------------------------------
-
 local function GetSettings()
     local core = GetCore()
     return core and core.db and core.db.profile and core.db.profile.tooltip
@@ -62,10 +49,6 @@ local function ShouldHideHealthBar()
     local settings = GetSettings()
     return settings and settings.enabled and settings.hideHealthBar
 end
-
----------------------------------------------------------------------------
--- Colors & Border
----------------------------------------------------------------------------
 
 local function GetEffectiveColors()
     local settings = GetSettings()
@@ -93,21 +76,12 @@ local function GetEffectiveBorderThickness()
     return (settings and settings.borderThickness) or 1
 end
 
----------------------------------------------------------------------------
--- Aura button tooltips (12.1.0.68914 re-patch)
--- AuraButtonTooltip itself stays forbidden/hidden from _G; Blizzard now
--- publishes a narrow push-style bridge (AuraContainerInbound.SetTooltipBackdrop
--- et al, Blizzard_AuraContainerInbound.lua) that restyles it engine-side.
--- QUI never touches the tooltip object — it only hands over an options
--- table mirroring the QUI chrome (flat background + hairline border).
----------------------------------------------------------------------------
-
 local AURA_TOOLTIP_BG = "Interface\\Buttons\\WHITE8x8"
 
 local function ApplyAuraTooltipStyle()
     local bridge = _G.AuraContainerInbound
     if not bridge or type(bridge.SetTooltipBackdrop) ~= "function" then
-        return false -- pre-re-patch client: no bridge, engine default stands
+        return false
     end
     if not IsEnabled() then
         if type(bridge.ResetTooltipStyle) == "function" then
@@ -128,20 +102,6 @@ local function ApplyAuraTooltipStyle()
     return true
 end
 
----------------------------------------------------------------------------
--- Font Sizing
--- TAINT SAFETY: GameTooltip uses Font-object-level sizing ONLY.
--- Calling SetFont() directly on GameTooltipTextLeft* FontStrings taints
--- them permanently; Blizzard's secure code (QuestMapLogTitleButton_OnEnter
--- etc.) later calls GetStringWidth() on those FontStrings and gets secret
--- values during combat → arithmetic errors. Modifying the Font objects
--- (GameTooltipHeaderText, GameTooltipText) instead propagates the size
--- change to derived FontStrings WITHOUT tainting them individually.
--- Other tooltips (ItemRefTooltip, ShoppingTooltip, etc.) are safe to
--- modify per-FontString since Blizzard doesn't call GetStringWidth() on
--- their lines from secure code.
----------------------------------------------------------------------------
-
 local function GetEffectiveFontSize()
     local settings = GetSettings()
     local size = (settings and settings.fontSize) or 12
@@ -157,7 +117,7 @@ local function SetFontStringSize(fs, size)
         path = Helpers.GetGeneralFont and Helpers.GetGeneralFont() or STANDARD_TEXT_FONT
         flags = Helpers.GetGeneralFontOutline and Helpers.GetGeneralFontOutline() or ""
     elseif type(curSize) == "number" and math.abs(curSize - size) < 0.5 then
-        return  -- already at target size; skip SetFont to avoid relayout
+        return
     end
     if Helpers and Helpers.ApplyFontWithFallback then
         SafeCall("best-effort-style", Helpers.ApplyFontWithFallback, fs, path, size, flags or "")
@@ -166,16 +126,8 @@ local function SetFontStringSize(fs, size)
     end
 end
 
--- Cache default Font object metrics for reset
 local defaultHeaderFont, defaultHeaderSize, defaultHeaderFlag
 local defaultBodyFont, defaultBodySize, defaultBodyFlag
--- Track the QUI CJK font-family object last assigned to each GameTooltip font
--- object so the size/flags fast-skip below cannot bypass the very first
--- family application. On a non-CJK client Blizzard's stock GameTooltipText /
--- GameTooltipHeaderText resolve to the same roman path+size we target, which
--- made the metrics guard skip before our CJK-capable family was ever applied,
--- leaving CJK glyphs blank when a CJK locale is selected. Comparing against
--- the family we actually set guarantees one application without re-running it.
 local appliedHeaderFamily, appliedBodyFamily, appliedSmallFamily
 local defaultSmallFont, defaultSmallSize, defaultSmallFlag
 local function CacheDefaultFontMetrics()
@@ -191,28 +143,15 @@ local function CacheDefaultFontMetrics()
     end
 end
 
--- Apply font size via Font objects for GameTooltip (taint-safe).
--- Modifying the Font object propagates to derived FontStrings without
--- tainting them individually, so GetStringWidth() remains non-secret.
 local function ApplyFontSizeViaFontObjects(size)
     CacheDefaultFontMetrics()
     local headerSize = size + 2
     local font = (Helpers.GetGeneralFont and Helpers.GetGeneralFont()) or defaultBodyFont or STANDARD_TEXT_FONT
     local outline = Helpers.GetGeneralFontOutline and Helpers.GetGeneralFontOutline()
-    -- Prefer a per-script font family (modifying the Font object, the
-    -- documented taint-safe layer) so CJK tooltip text — item names, NPC
-    -- names, CJK player names — falls back to Blizzard fonts instead of
-    -- rendering blank. Degrade to the single-file SetFont when unavailable.
     if GameTooltipHeaderText and defaultHeaderFont then
         local curFont, curSize, curFlags = GameTooltipHeaderText:GetFont()
         local targetFlags = outline or curFlags or defaultHeaderFlag or ""
         local family = Helpers.GetFontFamilyObject and Helpers.GetFontFamilyObject(font, headerSize, targetFlags)
-        -- Apply when metrics differ OR when our CJK family has not yet been
-        -- assigned to this font object (idempotent once set). The latter forces
-        -- the CJK-capable family on even when Blizzard's stock object already
-        -- resolves to the same roman path+size, so CJK glyphs stop rendering
-        -- blank for CJK-locale users on a non-CJK client. Roman appearance is
-        -- unchanged: the family keeps the same roman path/size we pass in.
         local needsApply = curFont ~= font or curFlags ~= targetFlags or not curSize
             or math.abs(curSize - headerSize) >= 0.5
             or (family ~= nil and appliedHeaderFamily ~= family)
@@ -243,11 +182,6 @@ local function ApplyFontSizeViaFontObjects(size)
             end
         end
     end
-    -- GameTooltipTextSmall backs SmallTextTooltip and small lines. Blizzard
-    -- owns its size, so keep its current height and only swap in a CJK-capable
-    -- family (same roman path/size) so its CJK members are present. Without
-    -- this, small tooltip text renders blank under a CJK locale on a non-CJK
-    -- client. Font-object level (taint-safe, like header/body above).
     if GameTooltipTextSmall and defaultSmallFont then
         local curFont, curSize, curFlags = GameTooltipTextSmall:GetFont()
         local smallSize = (type(curSize) == "number" and curSize > 0 and curSize)
@@ -272,7 +206,6 @@ local function ApplyFontSize(tooltip)
     if not tooltip then return end
     local base = GetEffectiveFontSize()
 
-    -- GameTooltip: use Font-object-level sizing to avoid tainting FontStrings
     if tooltip == GameTooltip then
         ApplyFontSizeViaFontObjects(base)
         return
@@ -305,7 +238,6 @@ local function ApplyFontSize(tooltip)
         end
     end
 
-    -- Fallback: iterate regions
     local n = tooltip.GetNumRegions and tooltip:GetNumRegions() or 0
     local first = true
     for i = 1, n do
@@ -317,48 +249,20 @@ local function ApplyFontSize(tooltip)
     end
 end
 
----------------------------------------------------------------------------
--- State Tables
----------------------------------------------------------------------------
-
-local styleFrames = Helpers.CreateStateTable()   -- tooltip → chrome frame
-local hookedTooltips = Helpers.CreateStateTable() -- tooltip → true
-local hookedNineSlices = Helpers.CreateStateTable() -- NineSlice → true
-local suppressNSHook = false                      -- suppress NineSlice hook during intentional re-show
-local StyleGameTooltip                            -- forward decl; defined after the shopping-sync helpers
-local HasActiveWidgetContainer                    -- forward decl; defined before RefreshTooltipLayout
-
----------------------------------------------------------------------------
--- NineSlice Management
----------------------------------------------------------------------------
+local styleFrames = Helpers.CreateStateTable()
+local hookedTooltips = Helpers.CreateStateTable()
+local hookedNineSlices = Helpers.CreateStateTable()
+local suppressNSHook = false
+local StyleGameTooltip
+local HasActiveWidgetContainer
 
 local function HideNineSlice(tooltip)
     local ns = tooltip.NineSlice
     if not ns then return end
     SafeCall("best-effort-style", ns.Hide, ns)
-    -- Drop NineSlice below the tooltip's frame level so that even if
-    -- Blizzard briefly re-shows it (before our hook re-hides it), its
-    -- textures render behind QUI's overlay at the tooltip's own level.
     SafeCall("best-effort-style", ns.SetFrameLevel, ns, 0)
-    -- TAINT SAFETY: Do NOT write to ns.layoutType / ns.layoutTextureKit /
-    -- ns.backdropInfo from addon code.  Writing nil here taints those keys;
-    -- the taint persists across Show() cycles and can propagate into
-    -- Blizzard's widget-layout code (LayoutFrame.lua GetExtents), causing
-    -- "attempt to compare a secret number value" errors when the tainted
-    -- execution context makes GetScaledRect() return secret values.
-    -- NineSliceUtil.ApplyLayout already overwrites these keys from secure
-    -- code before reading them, so the nil write is unnecessary.  Hiding
-    -- the NineSlice frame (C-side Hide above) is sufficient; QUI's
-    -- SharedTooltip_SetBackdropStyle hook re-hides it on every restyle.
-    -- Do NOT call SetAlpha(0) here — it can propagate taint into
-    -- Blizzard's layout code, making GetWidth() return secret values
-    -- even after combat ends.
 end
 
--- Hook NineSlice:Show() directly so that ANY Blizzard code path that
--- re-shows NineSlice (not just SharedTooltip_SetBackdropStyle) is caught
--- and immediately reversed.  C-side Hide/Show/SetFrameLevel do not taint,
--- so this is safe even inside a secure call stack.
 local function HookNineSlice(tooltip)
     local ns = tooltip and tooltip.NineSlice
     if not ns or hookedNineSlices[ns] then return end
@@ -375,10 +279,6 @@ local function HookNineSlice(tooltip)
         if sf then SafeCall("best-effort-style", sf.Show, sf) end
     end)
 end
-
----------------------------------------------------------------------------
--- Style Frame
----------------------------------------------------------------------------
 
 local function HideStyleFrame(tooltip)
     local frame = tooltip and styleFrames[tooltip]
@@ -467,7 +367,6 @@ local function GetStyleFrame(tooltip)
     return frame
 end
 
--- Is this tooltip embedded inside a visible parent tooltip?
 local function IsEmbedded(tooltip)
     local ok, parent = pcall(tooltip.GetParent, tooltip)
     if not ok or not parent then return false end
@@ -477,11 +376,6 @@ local function IsEmbedded(tooltip)
             or (parent.NineSlice and parent ~= UIParent and parent ~= WorldFrame))
 end
 
--- GameTooltip.ItemTooltip is Blizzard's embedded quest reward card. During
--- world quest hover, Blizzard shows the card and its child GameTooltip
--- (GameTooltipTooltip), then immediately reads their widths in
--- EmbeddedItemTooltip_UpdateSize. Any addon Show/backdrop/font work inside
--- that build can make those GetWidth() calls return secret values.
 local function IsInternalEmbeddedItemRoot(root, tooltip)
     if not root or not tooltip then return false end
     if tooltip == root or tooltip == root.Tooltip or tooltip == root.FollowerTooltip then
@@ -528,16 +422,11 @@ local function StyleShoppingCompareHeader(header, sr, sg, sb, sa, bgr, bgg, bgb,
     end
 end
 
----------------------------------------------------------------------------
--- Skin Application
----------------------------------------------------------------------------
-
 local function ApplyTooltipChrome(tooltip)
     if not tooltip then return end
     if IsInternalEmbeddedItemTooltipFrame(tooltip) then return end
     TooltipDebugCount("skin.applyChrome")
 
-    -- Embedded tooltips: strip border, no overlay (parent has one)
     if IsEmbedded(tooltip) then
         HideNineSlice(tooltip)
         if tooltip.SetBackdrop then SafeCall("best-effort-style", tooltip.SetBackdrop, tooltip, nil) end
@@ -546,14 +435,7 @@ local function ApplyTooltipChrome(tooltip)
     end
 
     HideNineSlice(tooltip)
-    -- Do NOT call tooltip:SetBackdrop(nil) here.  Clearing the tooltip's
-    -- own backdrop triggers Blizzard to re-call SharedTooltip_SetBackdropStyle,
-    -- which re-shows NineSlice and re-enters this styler — a per-frame restyle
-    -- loop.  Our chrome frame at the same frame level covers the tooltip's own
-    -- backdrop anyway.
 
-    -- Fall back to NineSlice if dimensions are inaccessible (secret values).
-    -- Suppress the NineSlice:Show hook so we don't fight our own fallback.
     if not HasAccessibleDimensions(tooltip) then
         FallbackToNineSlice(tooltip)
         return
@@ -577,11 +459,6 @@ local function ApplyTooltipChrome(tooltip)
         frame.bg:SetVertexColor(bgr, bgg, bgb, bga)
     end
     UIKit.UpdateBorderLines(frame, thickness, sr, sg, sb, sa, sa <= 0)
-    -- Chrome is SetAllPoints(tooltip) (set once in GetStyleFrame), so it tracks
-    -- the tooltip's own size live. On 12.0.7 the tooltip sizes itself via the
-    -- internal padding API (GameTooltip_CalculatePadding / SetPadding), including
-    -- after AddLine — so there is nothing for the addon to measure or extend.
-    -- This mirrors the reference suite's frame-relative backdrop.
     frame:Show()
 
     if tooltip.CompareHeader then
@@ -602,36 +479,16 @@ local function StyleTooltip(tooltip)
     TooltipDebugCount("skin.style")
     local dbg, dbgStart, dbgHeap = TooltipDebugBegin()
     ns.SafeCall("best-effort-style", ApplyTooltipChrome, tooltip)
-    -- ItemRefTooltip (the item-link tooltip) carries a
-    -- UIPanelCloseButtonNoScripts at .CloseButton (ItemRef.xml). Without
-    -- restyling it the stock red Blizzard X shows through the otherwise-skinned
-    -- chrome, so route it through the shared QUI close-button skinner.
-    -- Idempotent (closeStyled flag) and only acts when a CloseButton exists, so
-    -- it is a no-op for the rest of the tooltip family. StyleTooltip never runs
-    -- in combat (the Show hook and RefreshAllColors gate it out), so the
-    -- first-call frame creation inside SkinCloseButton stays taint-safe.
     if tooltip.CloseButton and SkinBase.SkinCloseButton then
         local closeButton = tooltip.CloseButton
         ns.SafeCall("best-effort-style", SkinBase.SkinCloseButton, closeButton)
-        -- The stock button is anchored TOPRIGHT +2,+2 (ItemRef.xml), so it
-        -- overhangs the tooltip's corner. The original red-X atlas masked that
-        -- with transparent padding; the solid QUI box would otherwise poke out
-        -- above and to the right of the skinned chrome. Re-anchor it to tuck
-        -- just inside the corner. (Panel close buttons keep the overhanging
-        -- look, so this stays tooltip-local instead of living in
-        -- SkinCloseButton.) Idempotent — re-asserting the same point each show
-        -- is harmless, and the tooltip only shows on an item-link click.
         if closeButton.ClearAllPoints and closeButton.SetPoint then
-            -- Scale-stable re-anchor: SetPixelPoint stores the offset in a weak side table
-            -- and re-applies (ClearAllPoints + SetPoint) on every scale refresh. pcall-wrapped
-            -- for protected-frame safety; the side table itself is taint-safe.
             SafeCall("best-effort-style", SkinBase.SetPixelPoint, closeButton, "TOPRIGHT", tooltip, "TOPRIGHT", -2, -2)
         end
     end
     TooltipDebugEnd(dbg, "skin.style", dbgStart, nil, dbgHeap)
 end
 
--- Combat-safe: refresh addon-owned chrome without touching Blizzard's backdrop.
 local function CombatRefreshTooltip(tooltip)
     if not tooltip then return end
     if IsInternalEmbeddedItemTooltipFrame(tooltip) then return end
@@ -644,9 +501,6 @@ local function CombatRefreshTooltip(tooltip)
     TooltipDebugEnd(dbg, "skin.combatRefresh", dbgStart, nil, dbgHeap)
 end
 
--- Quest/world map reward tooltips can attach Blizzard MoneyFrame children to
--- GameTooltip. Mutating the tooltip frame while those children are active can
--- taint MoneyFrame_Update width arithmetic.
 local function HasActiveMoneyFrame(tooltip)
     if not tooltip or not tooltip.GetChildren or not tooltip.GetNumChildren then return false end
     TooltipDebugCount("skin.moneyScan")
@@ -706,9 +560,6 @@ HasActiveWidgetContainer = function(tooltip)
 
             local shownWidgetCount = child.shownWidgetCount
             if shownWidgetCount ~= nil then
-                -- ACTION POLICY: an unreadable count is INDETERMINATE, not
-                -- "widgets present" — treat-as-widgeted keeps the skin on
-                -- the safe (non-clobbering) path.
                 if Helpers.IsSecretValue(shownWidgetCount) then
                     TooltipDebugCount("skin.widgetHit")
                     return true -- @secret-policy: keep-native-when-unknown
@@ -762,12 +613,9 @@ local function RefreshTooltipLayout(tooltip)
     end
 end
 
--- Dispatch: combat vs normal path
 local function OnTooltipShow(tooltip)
     if not IsEnabled() then return end
     if IsInternalEmbeddedItemTooltipFrame(tooltip) then return end
-    -- MoneyFrame children can taint tooltip width arithmetic on some Blizzard
-    -- GameTooltip update paths, so keep the conservative show-existing-chrome path.
     if tooltip == GameTooltip then
         if HasActiveWidgetContainer(tooltip) then
             FallbackToNineSlice(tooltip)
@@ -785,19 +633,12 @@ local function OnTooltipShow(tooltip)
     end
 end
 
----------------------------------------------------------------------------
--- Tooltip Lists
----------------------------------------------------------------------------
-
 local gameTooltipFamily = {
     "GameTooltip", "ItemRefTooltip",
     "ItemRefShoppingTooltip1", "ItemRefShoppingTooltip2",
     "ShoppingTooltip1", "ShoppingTooltip2",
-    -- GameTooltipTooltip is GameTooltip.ItemTooltip.Tooltip; leave it fully
-    -- Blizzard-owned so world quest reward sizing can read safe widths.
     "SmallTextTooltip",
     "ReputationParagonTooltip",
-    -- NamePlateTooltip intentionally omitted: skinning it causes taint.
     "FriendsTooltip", "SettingsTooltip",
     "GameSmallHeaderTooltip", "QuickKeybindTooltip",
 }
@@ -844,14 +685,8 @@ local function ResolveDotPath(path)
     return obj
 end
 
----------------------------------------------------------------------------
--- Hooking
----------------------------------------------------------------------------
-
--- Forward-declare so upvalues are captured by functions defined below
 local SafeHookTooltipOnShow, HookTooltipOnShow
 
--- Pre-allocated callback tables to avoid closure allocation in C_Timer.After
 local _pendingHookQueue = {}
 local _pendingHookTimerActive = false
 local function _FlushHookQueue()
@@ -905,8 +740,6 @@ SafeHookTooltipOnShow = function(tooltip)
     end
 end
 
--- Detect protected/forbidden tooltip context (world map secure code, etc.).
--- Non-GameTooltip frames still use this as a hard stop before installing hooks.
 local GetTooltipOwnerRestriction
 local function IsProtectedTooltip(tip)
     if not tip then return true end
@@ -935,23 +768,6 @@ HookTooltipOnShow = function(tooltip)
     if not tooltip or hookedTooltips[tooltip] then return end
     if IsInternalEmbeddedItemTooltipFrame(tooltip) then return end
 
-    -- GameTooltip: reference-suite parity model — NO GameTooltip:Show hook and NO deferred
-    -- restyle watcher. GameTooltip chrome is driven entirely by the isolated
-    -- securehooks installed in SetupBackdropStyleHooks (SharedTooltip_SetBackdropStyle,
-    -- GameTooltip_SetBackdropStyle, GameTooltip_SetDefaultAnchor) plus the data
-    -- post-calls, all routed through StyleGameTooltip().
-    --
-    -- WHY the Show hook + watcher were removed: AreaPOI map pins set
-    -- self.UpdateTooltip so GameTooltip_OnUpdate re-runs AreaPoiUtil.TryShowTooltip
-    -- (-> GameTooltip_AddWidgetSet -> UIWidgetTemplate:Setup) every frame while
-    -- hovered. The old per-show Show hook + OnUpdate restyle watcher mutated
-    -- GameTooltip in between those re-runs, tainting the live widget-processing
-    -- stack — Blizzard's secret-value arithmetic (textHeight/GetWidth) then
-    -- threw "tainted by QUI_Skinning". The reference suite mutates the same
-    -- shared font objects and parents the same kind of insecure backdrop child,
-    -- yet does NOT crash — the difference is exactly that it has no Show hook and
-    -- no restyle watcher. NineSlice re-shows are still caught by HookNineSlice
-    -- below (C-side, taint-free), so dropping the watcher costs no flash safety.
     if tooltip == GameTooltip then
         hookedTooltips[tooltip] = true
         HookNineSlice(tooltip)
@@ -965,15 +781,11 @@ HookTooltipOnShow = function(tooltip)
             return
         end
 
-        -- Synchronous: hide NineSlice + apply overlay (no 1-frame flash)
         if InCombatLockdown() then
             CombatRefreshTooltip(self)
             return
         end
 
-        -- Skip if already styled — prevents the same restyle loop that
-        -- affects GameTooltip (StyleTooltip side-effects can re-trigger
-        -- SharedTooltip_SetBackdropStyle → Show hook → StyleTooltip).
         local _ns = self.NineSlice
         local _sf = styleFrames[self]
         if _sf and _sf:IsShown() and (not _ns or not _ns:IsShown()) then
@@ -981,8 +793,6 @@ HookTooltipOnShow = function(tooltip)
         end
 
         StyleTooltip(self)
-        -- Defer font sizing out of the securecall chain to avoid tainting
-        -- tooltip width calculations
         QueueFontUpdate(self)
     end)
 
@@ -1034,10 +844,6 @@ local function QueueExtraTooltipDiscovery()
     end
 end
 
----------------------------------------------------------------------------
--- Backdrop Style Hooks (Blizzard re-applies styles on show/restyle)
----------------------------------------------------------------------------
-
 local function SetupBackdropStyleHooks()
     if SharedTooltip_SetBackdropStyle then
         hooksecurefunc("SharedTooltip_SetBackdropStyle", function(tooltip, style, isEmbedded)
@@ -1047,12 +853,6 @@ local function SetupBackdropStyleHooks()
             local ok, objType = pcall(tooltip.GetObjectType, tooltip)
             if not ok or objType ~= "GameTooltip" then return end
 
-            -- GameTooltip is styled synchronously inside this isolated securehook
-            -- (reference-suite model). AreaPoiUtil calls AddWidgetSet BEFORE
-            -- SharedTooltip_SetBackdropStyle, so the widget Setup has already run
-            -- by the time this fires — styling here cannot taint it. StyleGameTooltip
-            -- handles the stable-skip, MoneyFrame bail, protected fallback, and the
-            -- once-per-cycle chrome reset internally.
             if tooltip == GameTooltip then
                 StyleGameTooltip(tooltip)
                 return
@@ -1064,7 +864,6 @@ local function SetupBackdropStyleHooks()
                 local sf = styleFrames[tooltip]
                 if sf then sf:Hide() end
             else
-                -- Skip if already styled (same guard as GameTooltip watcher)
                 local _ns2 = tooltip.NineSlice
                 local _sf2 = styleFrames[tooltip]
                 if not (_sf2 and _sf2:IsShown() and (not _ns2 or not _ns2:IsShown())) then
@@ -1075,7 +874,6 @@ local function SetupBackdropStyleHooks()
         end)
     end
 
-    -- Blizzard can call this directly, bypassing SharedTooltip
     if GameTooltip_SetBackdropStyle then
         hooksecurefunc("GameTooltip_SetBackdropStyle", function(tooltip, style)
             TooltipDebugCount("skin.gameBackdrop")
@@ -1083,7 +881,6 @@ local function SetupBackdropStyleHooks()
             if IsInternalEmbeddedItemTooltipFrame(tooltip) then return end
             local ok, objType = pcall(tooltip.GetObjectType, tooltip)
             if not ok or objType ~= "GameTooltip" then return end
-            -- GameTooltip styled synchronously in this isolated securehook.
             if tooltip == GameTooltip then
                 StyleGameTooltip(tooltip)
                 return
@@ -1097,11 +894,6 @@ local function SetupBackdropStyleHooks()
         end)
     end
 
-    -- Broad show coverage (reference-suite parity): default-anchored GameTooltip
-    -- shows (mouseover units, many frames) route through GameTooltip_SetDefaultAnchor,
-    -- which need not emit a backdrop-style or data post-call. Style there too so
-    -- dropping the Show hook doesn't leave those tooltips on Blizzard NineSlice.
-    -- securehook = isolated taint context; StyleGameTooltip self-guards.
     if GameTooltip_SetDefaultAnchor then
         hooksecurefunc("GameTooltip_SetDefaultAnchor", function(tooltip)
             if not IsEnabled() or not tooltip then return end
@@ -1110,12 +902,6 @@ local function SetupBackdropStyleHooks()
         end)
     end
 
-    -- Plain hover tooltips often use GameTooltip:SetOwner(...), then
-    -- SetText/AddLine/Show without passing through GameTooltip_SetDefaultAnchor
-    -- or TooltipDataProcessor. GameTooltip still cannot use a broad Show hook
-    -- or restyle watcher, so SetOwner is the narrowest trigger that catches those
-    -- safe plain-text hovers. Protected owners defer to the later data post-call;
-    -- forbidden owners still fall back, and combat routes through CombatRefreshTooltip.
     if GameTooltip then
         hooksecurefunc(GameTooltip, "SetOwner", function(self)
             if not IsEnabled() or self ~= GameTooltip then return end
@@ -1127,15 +913,10 @@ local function SetupBackdropStyleHooks()
         end)
     end
 
-    -- EmbeddedItemTooltip: lives inside GameTooltip for world quest rewards
-    -- but also shows standalone (objective tracker)
     if EmbeddedItemTooltip then
         hooksecurefunc(EmbeddedItemTooltip, "Show", function(self)
             if not IsEnabled() then return end
             if IsEmbedded(self) then
-                -- World-quest reward path: GameTooltip is mid-build with a
-                -- MoneyFrame child.  Mutating the embedded child's backdrop
-                -- here can taint MoneyFrame_Update's width arithmetic.
                 if HasActiveMoneyFrame(GameTooltip) then return end
                 HideNineSlice(self)
                 if self.SetBackdrop then SafeCall("best-effort-style", self.SetBackdrop, self, nil) end
@@ -1145,7 +926,6 @@ local function SetupBackdropStyleHooks()
                 OnTooltipShow(self)
             end
         end)
-        -- Initial strip for embedded context
         if IsEnabled() then
             HideNineSlice(EmbeddedItemTooltip)
             if EmbeddedItemTooltip.SetBackdrop then
@@ -1154,14 +934,7 @@ local function SetupBackdropStyleHooks()
         end
     end
 
-    -- Do not hook GameTooltip.ItemTooltip:Show. That frame is shown inside
-    -- Blizzard's quest reward sizing path before EmbeddedItemTooltip_UpdateSize
-    -- performs width arithmetic.
 end
-
----------------------------------------------------------------------------
--- TooltipDataProcessor
----------------------------------------------------------------------------
 
 local function SetupPostProcessor()
     if not TooltipDataProcessor or not TooltipDataProcessor.AddTooltipPostCall then return end
@@ -1185,13 +958,6 @@ local function SetupPostProcessor()
             return
         end
         if IsProtectedTooltip(tooltip) then
-            -- AuraButtonTooltip is defined in Blizzard_AuraContainer's secure
-            -- environment with forbidden=true and hideFromGlobalEnv=true —
-            -- direct skinning stays impossible. Since the 68914 re-patch its
-            -- LOOK is pushed through AuraContainerInbound.SetTooltipBackdrop
-            -- (see ApplyAuraTooltipStyle); the frame itself remains entirely
-            -- Blizzard-owned, so still skip any protected or forbidden
-            -- non-GameTooltip here.
             TooltipDebugCount("skin.protectedTooltipSkipped")
             return
         end
@@ -1222,7 +988,6 @@ local function SetupPostProcessor()
     end
     TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Unit, function(tooltip)
         RunHandlePostCall(tooltip)
-        -- Health bar hiding (independent of skinning)
         if ShouldHideHealthBar() and tooltip and not InCombatLockdown() then
             local bar = tooltip.StatusBar or (tooltip == GameTooltip and GameTooltipStatusBar)
             if bar and not (bar.IsForbidden and bar:IsForbidden()) then
@@ -1243,10 +1008,6 @@ ns.QUI_GetAuraTooltipProbeStatus = function()
     }
 end
 
----------------------------------------------------------------------------
--- Health Bar
----------------------------------------------------------------------------
-
 local function SetupHealthBarHook()
     if not GameTooltip then return end
     local bar = GameTooltip.StatusBar or GameTooltipStatusBar
@@ -1257,28 +1018,20 @@ local function SetupHealthBarHook()
     end)
 end
 
----------------------------------------------------------------------------
--- Refresh Functions (called from settings UI)
----------------------------------------------------------------------------
-
 local function RefreshAllColors()
     if InCombatLockdown() then return end
-    -- Re-style all visible tooltips
     for tooltip in pairs(styleFrames) do
         if not (tooltip.IsForbidden and tooltip:IsForbidden())
             and tooltip.IsShown and tooltip:IsShown() then
             StyleTooltip(tooltip)
         end
     end
-    -- Handle embedded tooltip
     if EmbeddedItemTooltip and IsEnabled() and IsEmbedded(EmbeddedItemTooltip) then
         HideNineSlice(EmbeddedItemTooltip)
         if EmbeddedItemTooltip.SetBackdrop then
             SafeCall("best-effort-style", EmbeddedItemTooltip.SetBackdrop, EmbeddedItemTooltip, nil)
         end
     end
-    -- Aura button tooltip bridge rides the same refresh (OOC-only via the
-    -- combat gate above; the push is idempotent).
     ApplyAuraTooltipStyle()
 end
 
@@ -1318,14 +1071,6 @@ local function QueueShoppingTooltipSync()
     C_Timer.After(0, FlushShoppingTooltipSync)
 end
 
----------------------------------------------------------------------------
--- GameTooltip styling entry (synchronous, reference-suite model)
----------------------------------------------------------------------------
--- Single funnel for every GameTooltip styling trigger (SharedTooltip_SetBackdropStyle,
--- GameTooltip_SetBackdropStyle, GameTooltip_SetDefaultAnchor, the data post-calls).
--- Runs synchronously inside the caller's isolated securehook — NOT a Show hook and
--- NOT a deferred OnUpdate watcher — so QUI stays out of the live AreaPOI widget
--- reprocessing stack that re-runs GameTooltip_AddWidgetSet every frame.
 StyleGameTooltip = function(tooltip)
     if not tooltip or tooltip ~= GameTooltip then return end
     if IsInternalEmbeddedItemTooltipFrame(tooltip) then return end
@@ -1336,38 +1081,28 @@ StyleGameTooltip = function(tooltip)
         return
     end
 
-    -- Forbidden owners are not safe to inspect/style. Protected owners are common
-    -- for action/unit/aura hovers; those are handled by the later data post-call
-    -- path so base GameTooltip chrome can still be refreshed in and out of combat.
     if GetTooltipOwnerRestriction(tooltip) == "forbidden" then
         FallbackToNineSlice(tooltip)
         return
     end
 
-    -- AreaPOI/world quest tooltips register UI widget sets on GameTooltip and
-    -- Blizzard lays that widget container out again during Hide/Unregister.
-    -- Keep the whole cycle Blizzard-owned so LayoutFrame never sees addon-
-    -- tainted geometry or point counts on cleanup.
     if HasActiveWidgetContainer(tooltip) then
         FallbackToNineSlice(tooltip)
         return
     end
 
-    -- Reused-chrome fast path: already shown with NineSlice hidden. Chrome is
-    -- SetAllPoints so it already tracks the (re-sized) tooltip — nothing to redo.
+    if HasActiveWidgetContainer(tooltip) then
+        FallbackToNineSlice(tooltip)
+        return
+    end
+
     if IsChromeStable(tooltip) then
         TooltipDebugCount("skin.backdropStableSkip")
         return
     end
 
-    -- Full chrome (combat-aware; re-checks MoneyFrame, falls back to NineSlice
-    -- when dimensions are secret). Chrome is pure
-    -- SetAllPoints — no manual extent measuring; the 12.0.7 tooltip sizes itself.
     OnTooltipShow(tooltip)
 
-    -- Font + CJK family + shopping sync: deferred out of the secure chain.
-    -- QueueFontUpdate fast-skips when the size already matches, so calling it on
-    -- every fresh style is cheap.
     QueueFontUpdate(tooltip)
     QueueShoppingTooltipSync()
     if ns.QUI_EnsureTooltipCJKFallback then
@@ -1375,34 +1110,27 @@ StyleGameTooltip = function(tooltip)
     end
 end
 
----------------------------------------------------------------------------
--- Initialization
----------------------------------------------------------------------------
-
 local eventFrame = CreateFrame("Frame")
 local initialized = false
 local function SetupDebugInstrumentation()
     ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
     ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "Tooltips_Skin", frame = eventFrame }
 end
-if ns.DebugRegister then -- gate contract: core/debug_gate.lua
+if ns.DebugRegister then
     ns.DebugRegister(SetupDebugInstrumentation)
 else
-    SetupDebugInstrumentation() -- standalone test harness: no gate, run eagerly
+    SetupDebugInstrumentation()
 end
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:SetScript("OnEvent", function(self, event, arg1)
-    -- After initialization, discover addon tooltips on each ADDON_LOADED
     if event == "ADDON_LOADED" and initialized then
         QueueExtraTooltipDiscovery()
         return
     end
 
-    -- Post-combat: restore full tooltip styling and deferred font/layout sync.
     if event == "PLAYER_REGEN_ENABLED" then
         _FlushHookQueue()
         if IsEnabled() then
-            -- Full restyle of all visible tooltips (both named and dynamic)
             for _, name in ipairs(tooltipsToSkin) do
                 local tooltip = _G[name]
                 if tooltip and not (tooltip.IsForbidden and tooltip:IsForbidden())
@@ -1423,30 +1151,12 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
     end
 end)
 
--- Install the tooltip hooks reliably AFTER login via ns.WhenLoggedIn (runs now
--- if already logged in — the LOD case after the suite split — else on
--- PLAYER_LOGIN). It is NOT gated on this addon's own ADDON_LOADED: in the
--- monolith ADDON_NAME was "QUI" and that startup event drove init, but this
--- file now lives in QUI_Skinning (LoadOnDemand) and its "QUI_Skinning"
--- self-ADDON_LOADED does not fire the init in time, leaving GameTooltip unhooked
--- (Blizzard NineSlice everywhere). Every other skinning file installs at load
--- the same way (see popups.lua). The eventFrame above still handles post-init
--- addon-tooltip discovery and the post-combat restyle restore.
 local function InitializeTooltipSkinning()
-    if ns.IsSkinningEnabled and not ns.IsSkinningEnabled() then return end -- master skinning gate
+    if ns.IsSkinningEnabled and not ns.IsSkinningEnabled() then return end
     if initialized then return end
 
     RebuildTooltipList()
 
-    -- No deferred-restyle watcher: GameTooltip is styled synchronously from the
-    -- isolated securehooks via StyleGameTooltip (reference-suite parity). The old
-    -- OnUpdate watcher interleaved with AreaPOI widget reprocessing and tainted
-    -- Blizzard's secret-value widget arithmetic. NineSlice re-shows are caught by
-    -- HookNineSlice (C-side). Chrome is pure SetAllPoints — the 12.0.7 tooltip
-    -- sizes itself (GameTooltip_CalculatePadding / SetPadding), so there is no
-    -- addon-side extent refit to drive.
-
-    -- Hook + initial skin
     HookAllTooltips()
     if IsEnabled() then
         RefreshAllFonts()
@@ -1464,29 +1174,13 @@ local function InitializeTooltipSkinning()
     initialized = true
 end
 
--- ns.WhenLoggedIn is nil only in the headless test harness.
 if ns.WhenLoggedIn then
     ns.WhenLoggedIn(InitializeTooltipSkinning)
 end
 
----------------------------------------------------------------------------
--- Public API
----------------------------------------------------------------------------
-
 ns.QUI_RefreshTooltipSkinColors = RefreshAllColors
 ns.QUI_RefreshTooltipFontSize = RefreshAllFonts
 
----------------------------------------------------------------------------
--- CJK tooltip font fallback (locale-driven, INDEPENDENT of tooltip skinning)
----------------------------------------------------------------------------
--- ApplyFontSizeViaFontObjects only runs when tooltip skinning is enabled.
--- CJK glyph rendering, though, is a correctness requirement for ANY user on a
--- CJK locale (e.g. a non-CJK client with QUI's language set to zhCN) whether
--- or not they use QUI's tooltip skin. This applies a CJK-capable font family
--- to the shared GameTooltip font objects using their CURRENT font/size, so
--- appearance is unchanged but CJK glyphs render. Covers every GameTooltip
--- consumer (QUI chat-button tooltips, mover tooltips, item/unit tooltips, ...)
--- because they all inherit these font objects.
 local CJK_LOCALES = { koKR = true, zhCN = true, zhTW = true }
 local function SelectedLocaleNeedsCJK()
     local loc = (QUIDB and QUIDB.global and QUIDB.global.selectedLocale)
@@ -1502,9 +1196,7 @@ local function EnsureFontObjectCJK(fontObj)
     if not (path and type(size) == "number" and size > 0) then return end
     local family = Helpers.GetFontFamilyObject(path, size, flags or "")
     if not family then return end
-    if cjkAppliedFont[fontObj] == family then return end   -- idempotent
-    -- Font-OBJECT mutation only (never per-line FontStrings): taint-safe, per
-    -- the notes in core/font_system.lua.
+    if cjkAppliedFont[fontObj] == family then return end
     if SafeCall("best-effort-style", fontObj.SetFontObject, fontObj, family) then
         cjkAppliedFont[fontObj] = family
     end
@@ -1519,11 +1211,6 @@ end
 ns.QUI_EnsureTooltipCJKFallback = EnsureTooltipCJKFallback
 
 do
-    -- NOTE: tooltips.lua is a load-on-demand module, so PLAYER_LOGIN may have
-    -- already fired by the time it loads. Drive CJK off a one-shot login/timer
-    -- pass; the first styled GameTooltip also re-asserts it via StyleGameTooltip
-    -- -> ns.QUI_EnsureTooltipCJKFallback (idempotent). NO GameTooltip:Show hook
-    -- here — see StyleGameTooltip for why QUI no longer hooks Show.
     if ns.WhenLoggedIn then
         ns.WhenLoggedIn(EnsureTooltipCJKFallback)
     elseif C_Timer and C_Timer.After then
@@ -1532,8 +1219,6 @@ do
 end
 
 do
-    -- One-shot aura-tooltip bridge push at login (same LOD caveat as the CJK
-    -- pass above); settings changes re-push via RefreshAllColors.
     if ns.WhenLoggedIn then
         ns.WhenLoggedIn(ApplyAuraTooltipStyle)
     elseif C_Timer and C_Timer.After then
@@ -1541,9 +1226,6 @@ do
     end
 end
 
--- Register in the standard skinning refresh path so a global skin-color change
--- (RefreshAll("skinning")) recolors open tooltips. The ns.QUI_* globals above
--- remain for tooltip-specific changes driven from the tooltip settings page.
 if ns.Registry then
     ns.Registry:Register("tooltips", {
         refresh = RefreshAllColors,

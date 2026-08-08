@@ -1,30 +1,16 @@
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 
----------------------------------------------------------------------------
--- CURSOR TRAIL
--- Fading afterimage dots behind the mouse cursor — helps track the cursor
--- in hectic combat. Optional combat-only mode; class or custom color.
---
--- Cursor math: GetCursorPosition (InputDocumentation: posX/posY, screen
--- coordinates) divided by UIParent:GetEffectiveScale() — deliberately NOT
--- GetScaledCursorPosition, which 12.1 removes. Dots are a fixed ring-buffer
--- pool on a TOOLTIP-strata frame (level below the QUI cursor ring's 9500);
--- a new dot is placed after the cursor moves the density spacing, and every
--- active dot fades linearly over the configured duration. OnUpdate only
--- runs while the trail is active (enabled + combat gate satisfied).
----------------------------------------------------------------------------
-
 local GetSettings = Helpers.CreateDBGetter("general")
 
 local TRAIL_MAX = 24
-local FRAME_LEVEL = 9490 -- just below the cursor reticle ring (9500)
+local FRAME_LEVEL = 9490
 local DOT_TEXTURE = Helpers.AssetPath .. "cursor\\qui_reticle_dot.tga"
 
 local DENSITY_SPACING = { low = 24, medium = 14, high = 8 }
 
 local trailFrame
-local dots         -- ring buffer of { tex, alpha }
+local dots
 local nextDot = 1
 local lastX, lastY = 0, 0
 local running = false
@@ -33,8 +19,6 @@ local inCombat = false
 local function GetTrailColor(cfg)
     if cfg.useClassColor ~= false then
         local _, class = UnitClass("player")
-        -- Probe FIRST — a secret class throws on the truth-test and the
-        -- RAID_CLASS_COLORS table index.
         -- @secret-policy: collapse-only — custom color / white fallback below
         if Helpers.IsSecretValue(class) then class = nil end
         local color = class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
@@ -71,7 +55,6 @@ local function TrailOnUpdate(_, elapsed)
     if duration <= 0.05 then duration = 0.05 end
     local decay = elapsed / duration
 
-    -- Fade all active dots.
     for i = 1, TRAIL_MAX do
         local dot = dots[i]
         if dot.alpha > 0 then
@@ -85,7 +68,6 @@ local function TrailOnUpdate(_, elapsed)
         end
     end
 
-    -- Place a new dot after enough cursor travel.
     local px, py = GetCursorPosition()
     local scale = UIParent:GetEffectiveScale()
     if scale <= 0 then return end

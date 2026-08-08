@@ -963,6 +963,7 @@ return {
           yOffset = -150
         },
         configPanelAlpha = 0.96999999999999997,
+        configPanelHeight = 850,
         configPanelScale = 1,
         configPanelWidth = 750,
         cooldownEffects = {
@@ -2852,6 +2853,7 @@ return {
             openOnMouseover = true,
             padding = 6,
             showTooltip = true,
+            toggleIcon = "qui",
             toggleOffsetX = 0,
             toggleOffsetY = 0
           },
@@ -3044,250 +3046,1759 @@ return {
           showTimer = true
         },
         nameplates = {
-          absorbs = {
-            color = {
-              [1] = 1,
-              [2] = 1,
-              [3] = 1
-            },
-            enabled = true,
-            opacity = 0.29999999999999999
-          },
-          auras = {
-            buffs = {
-              allowList = {},
-              blockList = {},
-              enabled = true,
-              growth = "RIGHT",
-              limit = 4,
-              offsetX = 0,
-              offsetY = 50,
-              point = "BOTTOM",
-              relativePoint = "TOP",
-              size = 24,
-              spacing = 2,
-              textSize = 12
-            },
-            cc = {
-              allowList = {},
-              blockList = {},
-              enabled = true,
-              growth = "LEFT",
-              limit = 3,
-              offsetX = -4,
-              offsetY = 0,
-              point = "RIGHT",
-              relativePoint = "LEFT",
-              size = 24,
-              spacing = 2,
-              textSize = 12
-            },
-            debuffs = {
-              allowList = {},
-              blockList = {},
-              enabled = true,
-              growth = "RIGHT",
-              limit = 5,
-              offsetX = 0,
-              offsetY = 20,
-              point = "BOTTOM",
-              relativePoint = "TOP",
-              size = 26,
-              spacing = 2,
-              textSize = 11
-            },
-            dispelBorders = true,
-            duration = {
-              decimals = false,
-              enabled = true,
-              offsetX = 0,
-              offsetY = 0,
-              point = "CENTER",
-              size = 12
-            },
-            enableDungeon = true,
-            enableRaid = true,
-            enableWorld = true,
-            enabled = true,
-            importantList = {},
-            importantScale = 1.3,
-            mineOnly = true,
-            pandemicGlow = true
-          },
-          castbar = {
-            enabled = true,
-            gap = 0,
-            height = 17,
-            interruptedHoldTime = 1,
-            kickTick = true,
-            liftOverlay = false,
-            nameSize = 10,
-            showIcon = true,
-            showSpellName = true,
-            showTimer = true,
-            timerSize = 10
-          },
-          colors = {
-            castInterrupted = {
-              [1] = 0.80000000000000004,
-              [2] = 0,
-              [3] = 0
-            },
-            castInterruptible = {
-              [1] = 0.69999999999999996,
-              [2] = 0.40000000000000002,
-              [3] = 0.90000000000000002
-            },
-            castUninterruptible = {
-              [1] = 0.45000000000000001,
-              [2] = 0.45000000000000001,
-              [3] = 0.45000000000000001
-            },
-            classColorEnemyPlayers = true,
-            dpsHasAggro = {
-              [1] = 1,
-              [2] = 0.5,
-              [3] = 0
-            },
-            dpsNearAggro = {
-              [1] = 0.81000000000000005,
-              [2] = 0.71999999999999997,
-              [3] = 0.19
-            },
-            execute = {
-              [1] = 1,
-              [2] = 0.10000000000000001,
-              [3] = 0.10000000000000001
-            },
-            executeEnabled = false,
-            executeThreshold = 35,
-            focus = {
-              [1] = 0.050999999999999997,
-              [2] = 0.81999999999999995,
-              [3] = 0.62
-            },
-            focusEnabled = true,
-            friendly = {
-              [1] = 0.314,
-              [2] = 0.80000000000000004,
-              [3] = 0.40799999999999997
-            },
-            hostile = {
-              [1] = 0.39000000000000001,
-              [2] = 0.11,
-              [3] = 0.089999999999999997
-            },
-            neutral = {
-              [1] = 0.81000000000000005,
-              [2] = 0.71999999999999997,
-              [3] = 0.19
-            },
-            offTankAggro = {
-              [1] = 0.188,
-              [2] = 0.76100000000000001,
-              [3] = 0.81200000000000006
-            },
-            oocDarken = true,
-            oocDarkenFactor = 0.75,
-            quest = {
-              [1] = 1,
-              [2] = 0.81999999999999995,
-              [3] = 0
-            },
-            questEnabled = true,
-            tankHasAggro = {
-              [1] = 0.050000000000000003,
-              [2] = 0.81999999999999995,
-              [3] = 0.62
-            },
-            tankNoAggro = {
-              [1] = 1,
-              [2] = 0.22,
-              [3] = 0.17000000000000001
-            },
-            tapped = {
-              [1] = 0.5,
-              [2] = 0.5,
-              [3] = 0.5
-            },
-            target = {
-              [1] = 1,
-              [2] = 1,
-              [3] = 1
-            },
-            targetEnabled = false,
-            threatEnabled = true
-          },
           cvars = {
+            clickthroughEnemy = false,
+            clickthroughFriendly = false,
             hitboxScaleX = 100,
             hitboxScaleY = 100,
             hitboxVisualizer = false,
             maxDistance = 60,
+            showEnemies = true,
+            showEnemyGuardians = true,
+            showEnemyMinions = true,
+            showEnemyMinus = true,
+            showEnemyPets = true,
+            showEnemyTotems = true,
+            showFriendlyGuardians = true,
+            showFriendlyMinions = true,
+            showFriendlyPets = true,
+            showFriendlyTotems = true,
             stackingEnemy = true,
             stackingFriendly = false,
             stackingSpacing = 1
           },
           enabled = false,
+          fading = {
+            nonTargetAlpha = 1,
+            occludedAlphaMult = 0.40000000000000002
+          },
           friendly = {
-            barHeight = 12,
-            barWidth = 150,
-            classColorNames = true,
-            mode = "nameonly",
-            nameSize = 12,
-            showInInstances = false,
-            showInWorld = true
-          },
-          health = {
-            bgAlpha = 1,
-            bgColor = {
-              [1] = 0.12,
-              [2] = 0.12,
-              [3] = 0.12
-            },
-            borderSize = 1,
-            height = 24,
-            texture = "Quazii",
-            width = 210
-          },
-          healthText = {
             enabled = true,
-            hidePercentSymbol = false,
-            justify = "RIGHT",
-            offsetX = -2,
-            offsetY = 0,
-            point = "RIGHT",
-            relativePoint = "RIGHT",
-            size = 10,
-            style = "percent"
+            showInInstances = "never",
+            showInWorld = true,
+            showNPCs = true
           },
-          highlight = {
-            mouseover = true,
-            mouseoverAlpha = 0.29999999999999999,
-            targetGlow = true,
-            targetGlowAlpha = 1,
-            targetGlowColor = {
-              [1] = 0.41199999999999998,
-              [2] = 0.66700000000000004,
-              [3] = 1
-            }
+          layout = {
+            targetScale = 1,
+            verticalOffset = 0
           },
-          name = {
-            classColorPlayers = true,
-            enabled = true,
-            justify = "CENTER",
-            offsetX = 0,
-            offsetY = 4,
-            point = "BOTTOM",
-            relativePoint = "TOP",
-            size = 11
-          },
-          raidMarker = {
-            enabled = true,
-            position = "TOPRIGHT",
-            size = 24
+          simplified = {
+            scale = 1
           },
           specAutoSwitch = false,
-          specPresets = {}
+          specPresets = {},
+          types = {
+            bossElite = {
+              absorbs = {
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                opacity = 0.29999999999999999,
+                showText = false,
+                textSize = 9
+              },
+              auras = {
+                elements = {},
+                enableDungeon = true,
+                enableRaid = true,
+                enableWorld = true,
+                enabled = true
+              },
+              castbar = {
+                castTargetSize = 9,
+                enabled = true,
+                gap = 0,
+                height = 17,
+                interruptReadyTint = false,
+                interruptedHoldTime = 1,
+                kickTick = true,
+                liftOverlay = false,
+                nameSize = 10,
+                showCastTarget = false,
+                showIcon = true,
+                showSpellName = true,
+                showTimer = true,
+                texture = "",
+                timerSize = 10
+              },
+              colors = {
+                castChannel = {
+                  [1] = 0.34999999999999998,
+                  [2] = 0.59999999999999998,
+                  [3] = 0.90000000000000002
+                },
+                castEmpowered = {
+                  [1] = 0.90000000000000002,
+                  [2] = 0.55000000000000004,
+                  [3] = 0.14999999999999999
+                },
+                castImportant = {
+                  [1] = 1,
+                  [2] = 0.25,
+                  [3] = 0.25
+                },
+                castImportantEnabled = false,
+                castInterruptReady = {
+                  [1] = 0.29999999999999999,
+                  [2] = 0.84999999999999998,
+                  [3] = 0.40000000000000002
+                },
+                castInterrupted = {
+                  [1] = 0.80000000000000004,
+                  [2] = 0,
+                  [3] = 0
+                },
+                castInterruptible = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.40000000000000002,
+                  [3] = 0.90000000000000002
+                },
+                castUninterruptible = {
+                  [1] = 0.45000000000000001,
+                  [2] = 0.45000000000000001,
+                  [3] = 0.45000000000000001
+                },
+                classColorEnemyPlayers = true,
+                dpsHasAggro = {
+                  [1] = 1,
+                  [2] = 0.5,
+                  [3] = 0
+                },
+                dpsNearAggro = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                execute = {
+                  [1] = 1,
+                  [2] = 0.10000000000000001,
+                  [3] = 0.10000000000000001
+                },
+                executeAuto = true,
+                executeEnabled = false,
+                executeThreshold = 35,
+                focus = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                focusEnabled = true,
+                friendly = {
+                  [1] = 0.314,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.40799999999999997
+                },
+                hostile = {
+                  [1] = 0.39000000000000001,
+                  [2] = 0.11,
+                  [3] = 0.089999999999999997
+                },
+                neutral = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                offTankAggro = {
+                  [1] = 0.188,
+                  [2] = 0.76100000000000001,
+                  [3] = 0.81200000000000006
+                },
+                oocDarken = true,
+                oocDarkenFactor = 0.75,
+                quest = {
+                  [1] = 1,
+                  [2] = 0.81999999999999995,
+                  [3] = 0
+                },
+                questEnabled = true,
+                tankHasAggro = {
+                  [1] = 0.050000000000000003,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                tankNoAggro = {
+                  [1] = 1,
+                  [2] = 0.22,
+                  [3] = 0.17000000000000001
+                },
+                tapped = {
+                  [1] = 0.5,
+                  [2] = 0.5,
+                  [3] = 0.5
+                },
+                target = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetEnabled = false,
+                threatEnabled = true,
+                threatInstancesOnly = true
+              },
+              font = {
+                face = "",
+                outline = "OUTLINE"
+              },
+              healPrediction = {
+                color = {
+                  [1] = 0.25,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.25
+                },
+                enabled = false,
+                opacity = 0.40000000000000002
+              },
+              health = {
+                bgAlpha = 1,
+                bgColor = {
+                  [1] = 0.12,
+                  [2] = 0.12,
+                  [3] = 0.12
+                },
+                borderColor = {
+                  [1] = 0,
+                  [2] = 0,
+                  [3] = 0
+                },
+                borderSize = 1,
+                height = 24,
+                smooth = false,
+                texture = "Quazii",
+                width = 210
+              },
+              healthText = {
+                bothFormat = "bar",
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                hidePercentSymbol = false,
+                justify = "RIGHT",
+                offsetX = -2,
+                offsetY = 0,
+                point = "RIGHT",
+                precision = 0,
+                relativePoint = "RIGHT",
+                size = 10,
+                style = "percent"
+              },
+              highlight = {
+                focusGlow = false,
+                focusGlowAlpha = 1,
+                focusGlowColor = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                mouseover = true,
+                mouseoverAlpha = 0.29999999999999999,
+                mouseoverColor = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetGlow = true,
+                targetGlowAlpha = 1,
+                targetGlowColor = {
+                  [1] = 0.41199999999999998,
+                  [2] = 0.66700000000000004,
+                  [3] = 1
+                },
+                targetStyle = "wash"
+              },
+              level = {
+                classificationSize = 14,
+                enabled = false,
+                offsetX = 2,
+                offsetY = 0,
+                point = "LEFT",
+                relativePoint = "RIGHT",
+                showClassification = false,
+                size = 9
+              },
+              name = {
+                classColorPlayers = true,
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                justify = "CENTER",
+                offsetX = 0,
+                offsetY = 4,
+                point = "BOTTOM",
+                relativePoint = "TOP",
+                size = 11,
+                truncateLength = 28
+              },
+              npcTitle = {
+                color = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.69999999999999996,
+                  [3] = 0.69999999999999996
+                },
+                enabled = false,
+                size = 9
+              },
+              power = {
+                enabled = false,
+                offsetY = -2,
+                size = 10,
+                spacing = 3
+              },
+              powerBar = {
+                enabled = false,
+                height = 6,
+                manaOnly = true
+              },
+              pvpIcon = {
+                enabled = true,
+                size = 20
+              },
+              questIcon = {
+                enabled = false,
+                position = "LEFT",
+                size = 18
+              },
+              raidMarker = {
+                enabled = true,
+                position = "TOPRIGHT",
+                size = 24
+              },
+              renderMode = "bars"
+            },
+            enemyNPC = {
+              absorbs = {
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                opacity = 0.29999999999999999,
+                showText = false,
+                textSize = 9
+              },
+              auras = {
+                elements = {},
+                enableDungeon = true,
+                enableRaid = true,
+                enableWorld = true,
+                enabled = true
+              },
+              castbar = {
+                castTargetSize = 9,
+                enabled = true,
+                gap = 0,
+                height = 17,
+                interruptReadyTint = false,
+                interruptedHoldTime = 1,
+                kickTick = true,
+                liftOverlay = false,
+                nameSize = 10,
+                showCastTarget = false,
+                showIcon = true,
+                showSpellName = true,
+                showTimer = true,
+                texture = "",
+                timerSize = 10
+              },
+              colors = {
+                castChannel = {
+                  [1] = 0.34999999999999998,
+                  [2] = 0.59999999999999998,
+                  [3] = 0.90000000000000002
+                },
+                castEmpowered = {
+                  [1] = 0.90000000000000002,
+                  [2] = 0.55000000000000004,
+                  [3] = 0.14999999999999999
+                },
+                castImportant = {
+                  [1] = 1,
+                  [2] = 0.25,
+                  [3] = 0.25
+                },
+                castImportantEnabled = false,
+                castInterruptReady = {
+                  [1] = 0.29999999999999999,
+                  [2] = 0.84999999999999998,
+                  [3] = 0.40000000000000002
+                },
+                castInterrupted = {
+                  [1] = 0.80000000000000004,
+                  [2] = 0,
+                  [3] = 0
+                },
+                castInterruptible = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.40000000000000002,
+                  [3] = 0.90000000000000002
+                },
+                castUninterruptible = {
+                  [1] = 0.45000000000000001,
+                  [2] = 0.45000000000000001,
+                  [3] = 0.45000000000000001
+                },
+                classColorEnemyPlayers = true,
+                dpsHasAggro = {
+                  [1] = 1,
+                  [2] = 0.5,
+                  [3] = 0
+                },
+                dpsNearAggro = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                execute = {
+                  [1] = 1,
+                  [2] = 0.10000000000000001,
+                  [3] = 0.10000000000000001
+                },
+                executeAuto = true,
+                executeEnabled = false,
+                executeThreshold = 35,
+                focus = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                focusEnabled = true,
+                friendly = {
+                  [1] = 0.314,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.40799999999999997
+                },
+                hostile = {
+                  [1] = 0.39000000000000001,
+                  [2] = 0.11,
+                  [3] = 0.089999999999999997
+                },
+                neutral = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                offTankAggro = {
+                  [1] = 0.188,
+                  [2] = 0.76100000000000001,
+                  [3] = 0.81200000000000006
+                },
+                oocDarken = true,
+                oocDarkenFactor = 0.75,
+                quest = {
+                  [1] = 1,
+                  [2] = 0.81999999999999995,
+                  [3] = 0
+                },
+                questEnabled = true,
+                tankHasAggro = {
+                  [1] = 0.050000000000000003,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                tankNoAggro = {
+                  [1] = 1,
+                  [2] = 0.22,
+                  [3] = 0.17000000000000001
+                },
+                tapped = {
+                  [1] = 0.5,
+                  [2] = 0.5,
+                  [3] = 0.5
+                },
+                target = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetEnabled = false,
+                threatEnabled = true,
+                threatInstancesOnly = true
+              },
+              font = {
+                face = "",
+                outline = "OUTLINE"
+              },
+              healPrediction = {
+                color = {
+                  [1] = 0.25,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.25
+                },
+                enabled = false,
+                opacity = 0.40000000000000002
+              },
+              health = {
+                bgAlpha = 1,
+                bgColor = {
+                  [1] = 0.12,
+                  [2] = 0.12,
+                  [3] = 0.12
+                },
+                borderColor = {
+                  [1] = 0,
+                  [2] = 0,
+                  [3] = 0
+                },
+                borderSize = 1,
+                height = 24,
+                smooth = false,
+                texture = "Quazii",
+                width = 210
+              },
+              healthText = {
+                bothFormat = "bar",
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                hidePercentSymbol = false,
+                justify = "RIGHT",
+                offsetX = -2,
+                offsetY = 0,
+                point = "RIGHT",
+                precision = 0,
+                relativePoint = "RIGHT",
+                size = 10,
+                style = "percent"
+              },
+              highlight = {
+                focusGlow = false,
+                focusGlowAlpha = 1,
+                focusGlowColor = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                mouseover = true,
+                mouseoverAlpha = 0.29999999999999999,
+                mouseoverColor = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetGlow = true,
+                targetGlowAlpha = 1,
+                targetGlowColor = {
+                  [1] = 0.41199999999999998,
+                  [2] = 0.66700000000000004,
+                  [3] = 1
+                },
+                targetStyle = "wash"
+              },
+              level = {
+                classificationSize = 14,
+                enabled = false,
+                offsetX = 2,
+                offsetY = 0,
+                point = "LEFT",
+                relativePoint = "RIGHT",
+                showClassification = false,
+                size = 9
+              },
+              name = {
+                classColorPlayers = true,
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                justify = "CENTER",
+                offsetX = 0,
+                offsetY = 4,
+                point = "BOTTOM",
+                relativePoint = "TOP",
+                size = 11,
+                truncateLength = 28
+              },
+              npcTitle = {
+                color = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.69999999999999996,
+                  [3] = 0.69999999999999996
+                },
+                enabled = false,
+                size = 9
+              },
+              power = {
+                enabled = false,
+                offsetY = -2,
+                size = 10,
+                spacing = 3
+              },
+              powerBar = {
+                enabled = false,
+                height = 6,
+                manaOnly = true
+              },
+              pvpIcon = {
+                enabled = true,
+                size = 20
+              },
+              questIcon = {
+                enabled = false,
+                position = "LEFT",
+                size = 18
+              },
+              raidMarker = {
+                enabled = true,
+                position = "TOPRIGHT",
+                size = 24
+              },
+              renderMode = "bars"
+            },
+            enemyPlayer = {
+              absorbs = {
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                opacity = 0.29999999999999999,
+                showText = false,
+                textSize = 9
+              },
+              auras = {
+                elements = {},
+                enableDungeon = true,
+                enableRaid = true,
+                enableWorld = true,
+                enabled = true
+              },
+              castbar = {
+                castTargetSize = 9,
+                enabled = true,
+                gap = 0,
+                height = 17,
+                interruptReadyTint = false,
+                interruptedHoldTime = 1,
+                kickTick = true,
+                liftOverlay = false,
+                nameSize = 10,
+                showCastTarget = false,
+                showIcon = true,
+                showSpellName = true,
+                showTimer = true,
+                texture = "",
+                timerSize = 10
+              },
+              colors = {
+                castChannel = {
+                  [1] = 0.34999999999999998,
+                  [2] = 0.59999999999999998,
+                  [3] = 0.90000000000000002
+                },
+                castEmpowered = {
+                  [1] = 0.90000000000000002,
+                  [2] = 0.55000000000000004,
+                  [3] = 0.14999999999999999
+                },
+                castImportant = {
+                  [1] = 1,
+                  [2] = 0.25,
+                  [3] = 0.25
+                },
+                castImportantEnabled = false,
+                castInterruptReady = {
+                  [1] = 0.29999999999999999,
+                  [2] = 0.84999999999999998,
+                  [3] = 0.40000000000000002
+                },
+                castInterrupted = {
+                  [1] = 0.80000000000000004,
+                  [2] = 0,
+                  [3] = 0
+                },
+                castInterruptible = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.40000000000000002,
+                  [3] = 0.90000000000000002
+                },
+                castUninterruptible = {
+                  [1] = 0.45000000000000001,
+                  [2] = 0.45000000000000001,
+                  [3] = 0.45000000000000001
+                },
+                classColorEnemyPlayers = true,
+                dpsHasAggro = {
+                  [1] = 1,
+                  [2] = 0.5,
+                  [3] = 0
+                },
+                dpsNearAggro = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                execute = {
+                  [1] = 1,
+                  [2] = 0.10000000000000001,
+                  [3] = 0.10000000000000001
+                },
+                executeAuto = true,
+                executeEnabled = false,
+                executeThreshold = 35,
+                focus = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                focusEnabled = true,
+                friendly = {
+                  [1] = 0.314,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.40799999999999997
+                },
+                hostile = {
+                  [1] = 0.39000000000000001,
+                  [2] = 0.11,
+                  [3] = 0.089999999999999997
+                },
+                neutral = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                offTankAggro = {
+                  [1] = 0.188,
+                  [2] = 0.76100000000000001,
+                  [3] = 0.81200000000000006
+                },
+                oocDarken = true,
+                oocDarkenFactor = 0.75,
+                quest = {
+                  [1] = 1,
+                  [2] = 0.81999999999999995,
+                  [3] = 0
+                },
+                questEnabled = true,
+                tankHasAggro = {
+                  [1] = 0.050000000000000003,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                tankNoAggro = {
+                  [1] = 1,
+                  [2] = 0.22,
+                  [3] = 0.17000000000000001
+                },
+                tapped = {
+                  [1] = 0.5,
+                  [2] = 0.5,
+                  [3] = 0.5
+                },
+                target = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetEnabled = false,
+                threatEnabled = true,
+                threatInstancesOnly = true
+              },
+              font = {
+                face = "",
+                outline = "OUTLINE"
+              },
+              healPrediction = {
+                color = {
+                  [1] = 0.25,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.25
+                },
+                enabled = false,
+                opacity = 0.40000000000000002
+              },
+              health = {
+                bgAlpha = 1,
+                bgColor = {
+                  [1] = 0.12,
+                  [2] = 0.12,
+                  [3] = 0.12
+                },
+                borderColor = {
+                  [1] = 0,
+                  [2] = 0,
+                  [3] = 0
+                },
+                borderSize = 1,
+                height = 24,
+                smooth = false,
+                texture = "Quazii",
+                width = 210
+              },
+              healthText = {
+                bothFormat = "bar",
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                hidePercentSymbol = false,
+                justify = "RIGHT",
+                offsetX = -2,
+                offsetY = 0,
+                point = "RIGHT",
+                precision = 0,
+                relativePoint = "RIGHT",
+                size = 10,
+                style = "percent"
+              },
+              highlight = {
+                focusGlow = false,
+                focusGlowAlpha = 1,
+                focusGlowColor = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                mouseover = true,
+                mouseoverAlpha = 0.29999999999999999,
+                mouseoverColor = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetGlow = true,
+                targetGlowAlpha = 1,
+                targetGlowColor = {
+                  [1] = 0.41199999999999998,
+                  [2] = 0.66700000000000004,
+                  [3] = 1
+                },
+                targetStyle = "wash"
+              },
+              level = {
+                classificationSize = 14,
+                enabled = false,
+                offsetX = 2,
+                offsetY = 0,
+                point = "LEFT",
+                relativePoint = "RIGHT",
+                showClassification = false,
+                size = 9
+              },
+              name = {
+                classColorPlayers = true,
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                justify = "CENTER",
+                offsetX = 0,
+                offsetY = 4,
+                point = "BOTTOM",
+                relativePoint = "TOP",
+                size = 11,
+                truncateLength = 28
+              },
+              npcTitle = {
+                color = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.69999999999999996,
+                  [3] = 0.69999999999999996
+                },
+                enabled = false,
+                size = 9
+              },
+              power = {
+                enabled = false,
+                offsetY = -2,
+                size = 10,
+                spacing = 3
+              },
+              powerBar = {
+                enabled = false,
+                height = 6,
+                manaOnly = true
+              },
+              pvpIcon = {
+                enabled = true,
+                size = 20
+              },
+              questIcon = {
+                enabled = false,
+                position = "LEFT",
+                size = 18
+              },
+              raidMarker = {
+                enabled = true,
+                position = "TOPRIGHT",
+                size = 24
+              },
+              renderMode = "bars"
+            },
+            friendly = {
+              absorbs = {
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                opacity = 0.29999999999999999,
+                showText = false,
+                textSize = 9
+              },
+              auras = {
+                elements = {},
+                enableDungeon = true,
+                enableRaid = true,
+                enableWorld = true,
+                enabled = true
+              },
+              castbar = {
+                castTargetSize = 9,
+                enabled = true,
+                gap = 0,
+                height = 17,
+                interruptReadyTint = false,
+                interruptedHoldTime = 1,
+                kickTick = true,
+                liftOverlay = false,
+                nameSize = 10,
+                showCastTarget = false,
+                showIcon = true,
+                showSpellName = true,
+                showTimer = true,
+                texture = "",
+                timerSize = 10
+              },
+              colors = {
+                castChannel = {
+                  [1] = 0.34999999999999998,
+                  [2] = 0.59999999999999998,
+                  [3] = 0.90000000000000002
+                },
+                castEmpowered = {
+                  [1] = 0.90000000000000002,
+                  [2] = 0.55000000000000004,
+                  [3] = 0.14999999999999999
+                },
+                castImportant = {
+                  [1] = 1,
+                  [2] = 0.25,
+                  [3] = 0.25
+                },
+                castImportantEnabled = false,
+                castInterruptReady = {
+                  [1] = 0.29999999999999999,
+                  [2] = 0.84999999999999998,
+                  [3] = 0.40000000000000002
+                },
+                castInterrupted = {
+                  [1] = 0.80000000000000004,
+                  [2] = 0,
+                  [3] = 0
+                },
+                castInterruptible = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.40000000000000002,
+                  [3] = 0.90000000000000002
+                },
+                castUninterruptible = {
+                  [1] = 0.45000000000000001,
+                  [2] = 0.45000000000000001,
+                  [3] = 0.45000000000000001
+                },
+                classColorEnemyPlayers = true,
+                dpsHasAggro = {
+                  [1] = 1,
+                  [2] = 0.5,
+                  [3] = 0
+                },
+                dpsNearAggro = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                execute = {
+                  [1] = 1,
+                  [2] = 0.10000000000000001,
+                  [3] = 0.10000000000000001
+                },
+                executeAuto = true,
+                executeEnabled = false,
+                executeThreshold = 35,
+                focus = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                focusEnabled = true,
+                friendly = {
+                  [1] = 0.314,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.40799999999999997
+                },
+                hostile = {
+                  [1] = 0.39000000000000001,
+                  [2] = 0.11,
+                  [3] = 0.089999999999999997
+                },
+                neutral = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                offTankAggro = {
+                  [1] = 0.188,
+                  [2] = 0.76100000000000001,
+                  [3] = 0.81200000000000006
+                },
+                oocDarken = true,
+                oocDarkenFactor = 0.75,
+                quest = {
+                  [1] = 1,
+                  [2] = 0.81999999999999995,
+                  [3] = 0
+                },
+                questEnabled = true,
+                tankHasAggro = {
+                  [1] = 0.050000000000000003,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                tankNoAggro = {
+                  [1] = 1,
+                  [2] = 0.22,
+                  [3] = 0.17000000000000001
+                },
+                tapped = {
+                  [1] = 0.5,
+                  [2] = 0.5,
+                  [3] = 0.5
+                },
+                target = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetEnabled = false,
+                threatEnabled = true,
+                threatInstancesOnly = true
+              },
+              font = {
+                face = "",
+                outline = "OUTLINE"
+              },
+              healPrediction = {
+                color = {
+                  [1] = 0.25,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.25
+                },
+                enabled = false,
+                opacity = 0.40000000000000002
+              },
+              health = {
+                bgAlpha = 1,
+                bgColor = {
+                  [1] = 0.12,
+                  [2] = 0.12,
+                  [3] = 0.12
+                },
+                borderColor = {
+                  [1] = 0,
+                  [2] = 0,
+                  [3] = 0
+                },
+                borderSize = 1,
+                height = 24,
+                smooth = false,
+                texture = "Quazii",
+                width = 210
+              },
+              healthText = {
+                bothFormat = "bar",
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                hidePercentSymbol = false,
+                justify = "RIGHT",
+                offsetX = -2,
+                offsetY = 0,
+                point = "RIGHT",
+                precision = 0,
+                relativePoint = "RIGHT",
+                size = 10,
+                style = "percent"
+              },
+              highlight = {
+                focusGlow = false,
+                focusGlowAlpha = 1,
+                focusGlowColor = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                mouseover = true,
+                mouseoverAlpha = 0.29999999999999999,
+                mouseoverColor = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetGlow = true,
+                targetGlowAlpha = 1,
+                targetGlowColor = {
+                  [1] = 0.41199999999999998,
+                  [2] = 0.66700000000000004,
+                  [3] = 1
+                },
+                targetStyle = "wash"
+              },
+              level = {
+                classificationSize = 14,
+                enabled = false,
+                offsetX = 2,
+                offsetY = 0,
+                point = "LEFT",
+                relativePoint = "RIGHT",
+                showClassification = false,
+                size = 9
+              },
+              name = {
+                classColorPlayers = true,
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                justify = "CENTER",
+                offsetX = 0,
+                offsetY = 4,
+                point = "BOTTOM",
+                relativePoint = "TOP",
+                size = 11,
+                truncateLength = 28
+              },
+              npcTitle = {
+                color = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.69999999999999996,
+                  [3] = 0.69999999999999996
+                },
+                enabled = false,
+                size = 9
+              },
+              power = {
+                enabled = false,
+                offsetY = -2,
+                size = 10,
+                spacing = 3
+              },
+              powerBar = {
+                enabled = false,
+                height = 6,
+                manaOnly = true
+              },
+              pvpIcon = {
+                enabled = true,
+                size = 20
+              },
+              questIcon = {
+                enabled = false,
+                position = "LEFT",
+                size = 18
+              },
+              raidMarker = {
+                enabled = true,
+                position = "TOPRIGHT",
+                size = 24
+              },
+              renderMode = "nameonly"
+            },
+            minorTrivial = {
+              absorbs = {
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                opacity = 0.29999999999999999,
+                showText = false,
+                textSize = 9
+              },
+              auras = {
+                elements = {},
+                enableDungeon = true,
+                enableRaid = true,
+                enableWorld = true,
+                enabled = true
+              },
+              castbar = {
+                castTargetSize = 9,
+                enabled = true,
+                gap = 0,
+                height = 17,
+                interruptReadyTint = false,
+                interruptedHoldTime = 1,
+                kickTick = true,
+                liftOverlay = false,
+                nameSize = 10,
+                showCastTarget = false,
+                showIcon = true,
+                showSpellName = true,
+                showTimer = true,
+                texture = "",
+                timerSize = 10
+              },
+              colors = {
+                castChannel = {
+                  [1] = 0.34999999999999998,
+                  [2] = 0.59999999999999998,
+                  [3] = 0.90000000000000002
+                },
+                castEmpowered = {
+                  [1] = 0.90000000000000002,
+                  [2] = 0.55000000000000004,
+                  [3] = 0.14999999999999999
+                },
+                castImportant = {
+                  [1] = 1,
+                  [2] = 0.25,
+                  [3] = 0.25
+                },
+                castImportantEnabled = false,
+                castInterruptReady = {
+                  [1] = 0.29999999999999999,
+                  [2] = 0.84999999999999998,
+                  [3] = 0.40000000000000002
+                },
+                castInterrupted = {
+                  [1] = 0.80000000000000004,
+                  [2] = 0,
+                  [3] = 0
+                },
+                castInterruptible = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.40000000000000002,
+                  [3] = 0.90000000000000002
+                },
+                castUninterruptible = {
+                  [1] = 0.45000000000000001,
+                  [2] = 0.45000000000000001,
+                  [3] = 0.45000000000000001
+                },
+                classColorEnemyPlayers = true,
+                dpsHasAggro = {
+                  [1] = 1,
+                  [2] = 0.5,
+                  [3] = 0
+                },
+                dpsNearAggro = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                execute = {
+                  [1] = 1,
+                  [2] = 0.10000000000000001,
+                  [3] = 0.10000000000000001
+                },
+                executeAuto = true,
+                executeEnabled = false,
+                executeThreshold = 35,
+                focus = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                focusEnabled = true,
+                friendly = {
+                  [1] = 0.314,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.40799999999999997
+                },
+                hostile = {
+                  [1] = 0.39000000000000001,
+                  [2] = 0.11,
+                  [3] = 0.089999999999999997
+                },
+                neutral = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                offTankAggro = {
+                  [1] = 0.188,
+                  [2] = 0.76100000000000001,
+                  [3] = 0.81200000000000006
+                },
+                oocDarken = true,
+                oocDarkenFactor = 0.75,
+                quest = {
+                  [1] = 1,
+                  [2] = 0.81999999999999995,
+                  [3] = 0
+                },
+                questEnabled = true,
+                tankHasAggro = {
+                  [1] = 0.050000000000000003,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                tankNoAggro = {
+                  [1] = 1,
+                  [2] = 0.22,
+                  [3] = 0.17000000000000001
+                },
+                tapped = {
+                  [1] = 0.5,
+                  [2] = 0.5,
+                  [3] = 0.5
+                },
+                target = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetEnabled = false,
+                threatEnabled = true,
+                threatInstancesOnly = true
+              },
+              font = {
+                face = "",
+                outline = "OUTLINE"
+              },
+              healPrediction = {
+                color = {
+                  [1] = 0.25,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.25
+                },
+                enabled = false,
+                opacity = 0.40000000000000002
+              },
+              health = {
+                bgAlpha = 1,
+                bgColor = {
+                  [1] = 0.12,
+                  [2] = 0.12,
+                  [3] = 0.12
+                },
+                borderColor = {
+                  [1] = 0,
+                  [2] = 0,
+                  [3] = 0
+                },
+                borderSize = 1,
+                height = 24,
+                smooth = false,
+                texture = "Quazii",
+                width = 210
+              },
+              healthText = {
+                bothFormat = "bar",
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                hidePercentSymbol = false,
+                justify = "RIGHT",
+                offsetX = -2,
+                offsetY = 0,
+                point = "RIGHT",
+                precision = 0,
+                relativePoint = "RIGHT",
+                size = 10,
+                style = "percent"
+              },
+              highlight = {
+                focusGlow = false,
+                focusGlowAlpha = 1,
+                focusGlowColor = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                mouseover = true,
+                mouseoverAlpha = 0.29999999999999999,
+                mouseoverColor = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetGlow = true,
+                targetGlowAlpha = 1,
+                targetGlowColor = {
+                  [1] = 0.41199999999999998,
+                  [2] = 0.66700000000000004,
+                  [3] = 1
+                },
+                targetStyle = "wash"
+              },
+              level = {
+                classificationSize = 14,
+                enabled = false,
+                offsetX = 2,
+                offsetY = 0,
+                point = "LEFT",
+                relativePoint = "RIGHT",
+                showClassification = false,
+                size = 9
+              },
+              name = {
+                classColorPlayers = true,
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                justify = "CENTER",
+                offsetX = 0,
+                offsetY = 4,
+                point = "BOTTOM",
+                relativePoint = "TOP",
+                size = 11,
+                truncateLength = 28
+              },
+              npcTitle = {
+                color = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.69999999999999996,
+                  [3] = 0.69999999999999996
+                },
+                enabled = false,
+                size = 9
+              },
+              power = {
+                enabled = false,
+                offsetY = -2,
+                size = 10,
+                spacing = 3
+              },
+              powerBar = {
+                enabled = false,
+                height = 6,
+                manaOnly = true
+              },
+              pvpIcon = {
+                enabled = true,
+                size = 20
+              },
+              questIcon = {
+                enabled = false,
+                position = "LEFT",
+                size = 18
+              },
+              raidMarker = {
+                enabled = true,
+                position = "TOPRIGHT",
+                size = 24
+              },
+              renderMode = "bars"
+            },
+            petMinion = {
+              absorbs = {
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                opacity = 0.29999999999999999,
+                showText = false,
+                textSize = 9
+              },
+              auras = {
+                elements = {},
+                enableDungeon = true,
+                enableRaid = true,
+                enableWorld = true,
+                enabled = true
+              },
+              castbar = {
+                castTargetSize = 9,
+                enabled = true,
+                gap = 0,
+                height = 17,
+                interruptReadyTint = false,
+                interruptedHoldTime = 1,
+                kickTick = true,
+                liftOverlay = false,
+                nameSize = 10,
+                showCastTarget = false,
+                showIcon = true,
+                showSpellName = true,
+                showTimer = true,
+                texture = "",
+                timerSize = 10
+              },
+              colors = {
+                castChannel = {
+                  [1] = 0.34999999999999998,
+                  [2] = 0.59999999999999998,
+                  [3] = 0.90000000000000002
+                },
+                castEmpowered = {
+                  [1] = 0.90000000000000002,
+                  [2] = 0.55000000000000004,
+                  [3] = 0.14999999999999999
+                },
+                castImportant = {
+                  [1] = 1,
+                  [2] = 0.25,
+                  [3] = 0.25
+                },
+                castImportantEnabled = false,
+                castInterruptReady = {
+                  [1] = 0.29999999999999999,
+                  [2] = 0.84999999999999998,
+                  [3] = 0.40000000000000002
+                },
+                castInterrupted = {
+                  [1] = 0.80000000000000004,
+                  [2] = 0,
+                  [3] = 0
+                },
+                castInterruptible = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.40000000000000002,
+                  [3] = 0.90000000000000002
+                },
+                castUninterruptible = {
+                  [1] = 0.45000000000000001,
+                  [2] = 0.45000000000000001,
+                  [3] = 0.45000000000000001
+                },
+                classColorEnemyPlayers = true,
+                dpsHasAggro = {
+                  [1] = 1,
+                  [2] = 0.5,
+                  [3] = 0
+                },
+                dpsNearAggro = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                execute = {
+                  [1] = 1,
+                  [2] = 0.10000000000000001,
+                  [3] = 0.10000000000000001
+                },
+                executeAuto = true,
+                executeEnabled = false,
+                executeThreshold = 35,
+                focus = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                focusEnabled = true,
+                friendly = {
+                  [1] = 0.314,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.40799999999999997
+                },
+                hostile = {
+                  [1] = 0.39000000000000001,
+                  [2] = 0.11,
+                  [3] = 0.089999999999999997
+                },
+                neutral = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                offTankAggro = {
+                  [1] = 0.188,
+                  [2] = 0.76100000000000001,
+                  [3] = 0.81200000000000006
+                },
+                oocDarken = true,
+                oocDarkenFactor = 0.75,
+                quest = {
+                  [1] = 1,
+                  [2] = 0.81999999999999995,
+                  [3] = 0
+                },
+                questEnabled = true,
+                tankHasAggro = {
+                  [1] = 0.050000000000000003,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                tankNoAggro = {
+                  [1] = 1,
+                  [2] = 0.22,
+                  [3] = 0.17000000000000001
+                },
+                tapped = {
+                  [1] = 0.5,
+                  [2] = 0.5,
+                  [3] = 0.5
+                },
+                target = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetEnabled = false,
+                threatEnabled = true,
+                threatInstancesOnly = true
+              },
+              font = {
+                face = "",
+                outline = "OUTLINE"
+              },
+              healPrediction = {
+                color = {
+                  [1] = 0.25,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.25
+                },
+                enabled = false,
+                opacity = 0.40000000000000002
+              },
+              health = {
+                bgAlpha = 1,
+                bgColor = {
+                  [1] = 0.12,
+                  [2] = 0.12,
+                  [3] = 0.12
+                },
+                borderColor = {
+                  [1] = 0,
+                  [2] = 0,
+                  [3] = 0
+                },
+                borderSize = 1,
+                height = 24,
+                smooth = false,
+                texture = "Quazii",
+                width = 210
+              },
+              healthText = {
+                bothFormat = "bar",
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                hidePercentSymbol = false,
+                justify = "RIGHT",
+                offsetX = -2,
+                offsetY = 0,
+                point = "RIGHT",
+                precision = 0,
+                relativePoint = "RIGHT",
+                size = 10,
+                style = "percent"
+              },
+              highlight = {
+                focusGlow = false,
+                focusGlowAlpha = 1,
+                focusGlowColor = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                mouseover = true,
+                mouseoverAlpha = 0.29999999999999999,
+                mouseoverColor = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetGlow = true,
+                targetGlowAlpha = 1,
+                targetGlowColor = {
+                  [1] = 0.41199999999999998,
+                  [2] = 0.66700000000000004,
+                  [3] = 1
+                },
+                targetStyle = "wash"
+              },
+              level = {
+                classificationSize = 14,
+                enabled = false,
+                offsetX = 2,
+                offsetY = 0,
+                point = "LEFT",
+                relativePoint = "RIGHT",
+                showClassification = false,
+                size = 9
+              },
+              name = {
+                classColorPlayers = true,
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                justify = "CENTER",
+                offsetX = 0,
+                offsetY = 4,
+                point = "BOTTOM",
+                relativePoint = "TOP",
+                size = 11,
+                truncateLength = 28
+              },
+              npcTitle = {
+                color = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.69999999999999996,
+                  [3] = 0.69999999999999996
+                },
+                enabled = false,
+                size = 9
+              },
+              power = {
+                enabled = false,
+                offsetY = -2,
+                size = 10,
+                spacing = 3
+              },
+              powerBar = {
+                enabled = false,
+                height = 6,
+                manaOnly = true
+              },
+              pvpIcon = {
+                enabled = true,
+                size = 20
+              },
+              questIcon = {
+                enabled = false,
+                position = "LEFT",
+                size = 18
+              },
+              raidMarker = {
+                enabled = true,
+                position = "TOPRIGHT",
+                size = 24
+              },
+              renderMode = "bars"
+            }
+          }
         },
         ncdm = {
           _snapshotVersion = 0,
@@ -6752,9 +8263,6 @@ return {
       imports = {},
       isDone = false,
       lastVersion = 0,
-      ncdm = {
-        specTrackerSpells = {}
-      },
       specTrackerSpells = {}
     },
     profileKeys = {
@@ -6764,7 +8272,7 @@ return {
       Default = {
         _defaultsVersion = 3,
         _needsLateAbImport = true,
-        _schemaVersion = 59,
+        _schemaVersion = 60,
         actionBars = {
           bars = {
             bags = {
@@ -7195,9 +8703,9 @@ return {
           showWhenMounted = false
         },
         addonAccentColor = {
-          [1] = 0.20399999999999999,
-          [2] = 0.82699999999999996,
-          [3] = 0.59999999999999998
+          [1] = 0.376,
+          [2] = 0.64700000000000002,
+          [3] = 0.97999999999999998
         },
         alerts = {
           alertPosition = {
@@ -8654,15 +10162,6 @@ return {
           swipeColorMode = "class"
         },
         customGlow = {
-          customBar_anon_1Frequency = 0.10000000000000001,
-          customBar_anon_1Lines = 1,
-          customBar_anon_1PandemicBuffEnabled = true,
-          customBar_anon_1PandemicDebuffEnabled = true,
-          customBar_anon_1PandemicEnabled = true,
-          customBar_anon_1Scale = 0.5,
-          customBar_anon_1Thickness = 1,
-          customBar_anon_1XOffset = -20,
-          customBar_anon_1YOffset = -20,
           essentialColor = {
             [1] = 0.9490196704864502,
             [2] = 0.15294118225574491,
@@ -8675,69 +10174,6 @@ return {
           }
         },
         customTrackers = {
-          bars = {
-            [1] = {
-              activeGlowFrequency = 0.10000000000000001,
-              activeGlowLines = 4,
-              activeGlowScale = 0.5,
-              activeGlowThickness = 1,
-              borderColor = {
-                [1] = 0,
-                [2] = 0,
-                [3] = 0,
-                [4] = 1
-              },
-              borderSize = 1,
-              dynamicLayout = true,
-              enabled = true,
-              entries = {
-                [1] = {
-                  id = 26297,
-                  kind = "cooldown",
-                  type = "spell"
-                },
-                [2] = {
-                  id = 13,
-                  kind = "cooldown",
-                  type = "slot"
-                },
-                [3] = {
-                  id = 241289,
-                  kind = "cooldown",
-                  type = "item"
-                },
-                [4] = {
-                  id = 241305,
-                  kind = "cooldown",
-                  type = "item"
-                },
-                [5] = {
-                  id = 5512,
-                  kind = "cooldown",
-                  type = "item"
-                },
-                [6] = {
-                  id = 312411,
-                  kind = "cooldown",
-                  type = "spell"
-                }
-              },
-              growDirection = "LEFT",
-              iconSize = 25,
-              id = "anon_1",
-              locked = true,
-              maxIcons = 8,
-              name = "Custom Bar 1",
-              noDesaturateWithCharges = false,
-              offsetX = -237.99945068359381,
-              offsetY = -146.8187255859375,
-              showRechargeSwipe = false,
-              spacing = 0,
-              specSpecificSpells = false,
-              stackOffsetX = 0,
-              stackOffsetY = 0
-            }
-          },
           keybinds = {
             keybindOffsetX = 0,
             keybindOffsetY = 0,
@@ -8893,6 +10329,3215 @@ return {
           },
           useClassColor = true
         },
+        drewDatatexts = {
+          panels = {}
+        },
+        drewGroupFrames = {
+          clickCast = {
+            loadoutBindings = {
+              [64] = {
+                [5414761] = {},
+                [79765370] = {}
+              },
+              [65] = {
+                [79678181] = {}
+              },
+              [70] = {
+                [75260321] = {}
+              },
+              [73] = {
+                [80692613] = {}
+              },
+              [250] = {
+                [1864202] = {},
+                [76287612] = {},
+                [78786881] = {},
+                [79264965] = {}
+              },
+              [252] = {
+                [1864204] = {},
+                [59211086] = {},
+                [78133639] = {},
+                [78359839] = {},
+                [78754861] = {},
+                [79932221] = {},
+                [80004423] = {}
+              },
+              [254] = {
+                [80342670] = {}
+              },
+              [260] = {
+                [60991066] = {}
+              },
+              [268] = {
+                [59881028] = {}
+              },
+              [577] = {
+                [60466817] = {}
+              },
+              [581] = {
+                [59816248] = {}
+              }
+            },
+            perLoadout = true,
+            rootSpellMigrationDone = true,
+            specBindings = {
+              [64] = {},
+              [70] = {},
+              [102] = {},
+              [103] = {},
+              [250] = {},
+              [252] = {},
+              [253] = {},
+              [256] = {
+                [1] = {
+                  actionType = "spell",
+                  button = "MiddleButton",
+                  modifiers = "",
+                  spell = "Pain Suppression"
+                },
+                [2] = {
+                  actionType = "spell",
+                  button = "RightButton",
+                  modifiers = "",
+                  spell = "Power Word: Shield"
+                },
+                [3] = {
+                  actionType = "spell",
+                  key = "H",
+                  modifiers = "",
+                  spell = "Flash Heal"
+                }
+              },
+              [258] = {},
+              [268] = {},
+              [1480] = {}
+            },
+            unitFrames = {
+              player = true
+            }
+          },
+          enabled = true,
+          party = {
+            absorbs = {
+              color = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              enabled = true,
+              opacity = 0.70000000000000007
+            },
+            auras = {
+              buffOffsetX = 0,
+              buffOffsetY = 0,
+              debuffBlacklist = {
+                [26013] = true,
+                [57723] = true,
+                [57724] = true,
+                [71041] = true,
+                [80354] = true,
+                [95809] = true,
+                [160455] = true,
+                [264689] = true,
+                [390435] = true
+              },
+              debuffIconSize = 20,
+              debuffOffsetX = 0,
+              debuffOffsetY = 0,
+              debuffSpacing = 0,
+              elements = {
+                ["*"] = {
+                  [1] = {
+                    anchor = "BOTTOMLEFT",
+                    auraType = "HARMFUL",
+                    blacklist = {
+                      [26013] = true,
+                      [57723] = true,
+                      [57724] = true,
+                      [71041] = true,
+                      [80354] = true,
+                      [95809] = true,
+                      [160455] = true,
+                      [264689] = true,
+                      [390435] = true
+                    },
+                    classifications = {
+                      bigDefensive = false,
+                      cancelable = false,
+                      crowdControl = true,
+                      externalDefensive = false,
+                      important = true,
+                      notCancelable = false,
+                      raid = false,
+                      raidInCombat = true
+                    },
+                    durationFontSize = 10,
+                    enabled = true,
+                    filterMode = "classification",
+                    growDirection = "RIGHT",
+                    hidePermanent = true,
+                    hideSwipe = false,
+                    iconSize = 14,
+                    id = "e5",
+                    maxIcons = 3,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = 0,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    showDurationColor = true,
+                    showDurationText = true,
+                    showExpiringPulse = false,
+                    spacing = 0,
+                    whitelist = {}
+                  }
+                }
+              },
+              elementsSeeded = true,
+              enabled = true,
+              filterMode = "classification",
+              showBuffs = true
+            },
+            castbar = {
+              enabled = false,
+              height = 8,
+              showIcon = false,
+              showText = false
+            },
+            classPower = {
+              enabled = false,
+              height = 4,
+              spacing = 1
+            },
+            dimensions = {
+              partyHeight = 80,
+              partyWidth = 150
+            },
+            general = {
+              borderSize = 1,
+              darkMode = false,
+              darkModeBgColor = {
+                [1] = 0.25,
+                [2] = 0.25,
+                [3] = 0.25,
+                [4] = 1
+              },
+              darkModeBgOpacity = 1,
+              darkModeHealthColor = {
+                [1] = 0.14999999999999999,
+                [2] = 0.14999999999999999,
+                [3] = 0.14999999999999999,
+                [4] = 1
+              },
+              darkModeHealthOpacity = 1,
+              defaultBgColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              defaultBgOpacity = 1,
+              defaultHealthOpacity = 1,
+              font = "Quazii",
+              fontOutline = "OUTLINE",
+              fontSize = 12,
+              showTooltips = true,
+              texture = "Quazii v5",
+              useClassColor = true
+            },
+            healAbsorbs = {
+              color = {
+                [1] = 0.5,
+                [2] = 0.10000000000000001,
+                [3] = 0.10000000000000001
+              },
+              enabled = true,
+              opacity = 0.60000000000000009
+            },
+            healPrediction = {
+              color = {
+                [1] = 0.20000000000000001,
+                [2] = 1,
+                [3] = 0.20000000000000001
+              },
+              enabled = true,
+              opacity = 0.5
+            },
+            healer = {
+              defensiveIndicator = {
+                enabled = true,
+                growDirection = "LEFT",
+                iconSize = 15,
+                maxIcons = 3,
+                offsetX = 0,
+                offsetY = 4,
+                position = "BOTTOMRIGHT",
+                reverseSwipe = true,
+                spacing = 0
+              },
+              dispelOverlay = {
+                borderSize = 3,
+                colors = {
+                  Curse = {
+                    [1] = 0.59999999999999998,
+                    [2] = 0,
+                    [3] = 1,
+                    [4] = 1
+                  },
+                  Disease = {
+                    [1] = 0.59999999999999998,
+                    [2] = 0.40000000000000002,
+                    [3] = 0,
+                    [4] = 1
+                  },
+                  Magic = {
+                    [1] = 0.20000000000000001,
+                    [2] = 0.59999999999999998,
+                    [3] = 1,
+                    [4] = 1
+                  },
+                  Poison = {
+                    [1] = 0,
+                    [2] = 0.59999999999999998,
+                    [3] = 0,
+                    [4] = 1
+                  }
+                },
+                enabled = false,
+                fillOpacity = 0.20000000000000001,
+                opacity = 0.80000000000000004
+              },
+              targetHighlight = {
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1,
+                  [4] = 0.59999999999999998
+                },
+                enabled = true,
+                fillOpacity = 0.10000000000000001
+              }
+            },
+            health = {
+              healthAnchor = "RIGHT",
+              healthDisplayStyle = "percent",
+              healthFillDirection = "HORIZONTAL",
+              healthFontSize = 12,
+              healthJustify = "RIGHT",
+              healthOffsetX = 0,
+              healthOffsetY = 0,
+              healthTextColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              hideHealthPercentSymbol = false,
+              showHealthText = true
+            },
+            indicators = {
+              leaderAnchor = "TOP",
+              leaderOffsetX = 0,
+              leaderOffsetY = 0,
+              leaderSize = 12,
+              phaseAnchor = "BOTTOMLEFT",
+              phaseOffsetX = 2,
+              phaseOffsetY = 2,
+              phaseSize = 16,
+              readyCheckAnchor = "TOP",
+              readyCheckOffsetX = 0,
+              readyCheckOffsetY = 0,
+              readyCheckSize = 16,
+              resurrectionAnchor = "TOP",
+              resurrectionOffsetX = 0,
+              resurrectionOffsetY = 0,
+              resurrectionSize = 16,
+              roleIconAnchor = "TOPLEFT",
+              roleIconOffsetX = 0,
+              roleIconOffsetY = 0,
+              roleIconSize = 15,
+              showLeaderIcon = true,
+              showPhaseIcon = false,
+              showReadyCheck = true,
+              showResurrection = true,
+              showRoleDPS = false,
+              showRoleHealer = true,
+              showRoleIcon = true,
+              showRoleTank = true,
+              showSummonPending = true,
+              showTargetMarker = true,
+              showThreatBorder = true,
+              summonAnchor = "TOP",
+              summonOffsetX = 0,
+              summonOffsetY = 0,
+              summonSize = 20,
+              targetMarkerAnchor = "TOP",
+              targetMarkerOffsetX = 0,
+              targetMarkerOffsetY = 0,
+              targetMarkerSize = 14,
+              threatBorderSize = 2,
+              threatColor = {
+                [1] = 1,
+                [2] = 0,
+                [3] = 0,
+                [4] = 0.80000000000000004
+              },
+              threatFillOpacity = 0.14999999999999999
+            },
+            layout = {
+              groupBy = "GROUP",
+              growDirection = "RIGHT",
+              orientation = "HORIZONTAL",
+              showPlayer = true,
+              showSolo = false,
+              sortByRole = true,
+              sortMethod = "INDEX",
+              spacing = 0
+            },
+            name = {
+              maxNameLength = 10,
+              nameAnchor = "LEFT",
+              nameFontSize = 12,
+              nameJustify = "LEFT",
+              nameOffsetX = 0,
+              nameOffsetY = 0,
+              nameTextColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              nameTextUseClassColor = false,
+              showName = true
+            },
+            pets = {
+              anchorGap = 2,
+              anchorTo = "BOTTOM",
+              enabled = false,
+              height = 20,
+              showAuras = false,
+              showPowerBar = false,
+              width = 100
+            },
+            pinnedAuras = {
+              specSlots = {
+                [250] = {},
+                [252] = {},
+                [1473] = {}
+              }
+            },
+            portrait = {
+              portraitSide = "LEFT",
+              portraitSize = 30,
+              showPortrait = false
+            },
+            power = {
+              powerBarColor = {
+                [1] = 0.20000000000000001,
+                [2] = 0.40000000000000002,
+                [3] = 0.80000000000000004,
+                [4] = 1
+              },
+              powerBarHeight = 4,
+              powerBarOnlyHealers = true,
+              powerBarOnlyTanks = true,
+              powerBarUsePowerColor = true,
+              showPowerBar = true
+            },
+            range = {
+              enabled = true,
+              outOfRangeAlpha = 0.40000000000000002
+            }
+          },
+          partySelfFirst = false,
+          partyTracker = {
+            ccIcons = {
+              anchor = "LEFT",
+              enabled = true,
+              growDirection = "RIGHT",
+              iconSize = 15,
+              maxIcons = 1,
+              offsetX = 0,
+              offsetY = 0,
+              showCC = false,
+              showDefensives = false,
+              spacing = 0
+            },
+            kickTimer = {
+              anchor = "TOPRIGHT",
+              enabled = true,
+              iconSize = 15,
+              offsetX = 0,
+              offsetY = 0,
+              reverseSwipe = false
+            },
+            partyCooldowns = {
+              anchor = "BOTTOM",
+              dimReadyAlpha = 0.5,
+              displayMode = "static",
+              enabled = true,
+              filter = "all",
+              growDirection = "CENTER",
+              iconRows = 1,
+              iconSize = 15,
+              maxIcons = 3,
+              offsetX = 0,
+              offsetY = 0,
+              spacing = 0
+            }
+          },
+          position = {
+            offsetX = 0,
+            offsetY = -3
+          },
+          raid = {
+            absorbs = {
+              color = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              enabled = true,
+              opacity = 0.70000000000000007,
+              useClassColor = false
+            },
+            auraIndicators = {
+              anchor = "TOP",
+              anchorOffsetX = -40,
+              iconSize = 10,
+              maxIndicators = 3
+            },
+            auras = {
+              buffBlacklist = {
+                [1126] = true,
+                [1459] = true,
+                [6673] = true,
+                [21562] = true,
+                [369459] = true,
+                [381748] = true,
+                [381753] = true
+              },
+              buffOffsetX = 0,
+              buffOffsetY = 0,
+              debuffAnchor = "BOTTOMLEFT",
+              debuffBlacklist = {
+                [26013] = true,
+                [57723] = true,
+                [57724] = true,
+                [71041] = true,
+                [80354] = true,
+                [95809] = true,
+                [160455] = true,
+                [264689] = true,
+                [390435] = true
+              },
+              debuffClassifications = {
+                raid = false
+              },
+              debuffGrowDirection = "RIGHT",
+              debuffIconSize = 15,
+              debuffOffsetX = 0,
+              debuffOffsetY = 0,
+              debuffSpacing = 0,
+              elements = {
+                [250] = {
+                  [1] = {
+                    anchor = "TOP",
+                    color = {
+                      [1] = 1,
+                      [2] = 1,
+                      [3] = 1
+                    },
+                    displayType = "icon",
+                    hideSwipe = true,
+                    iconSize = 8,
+                    mode = "tracked",
+                    offsetX = 0,
+                    offsetY = 0,
+                    onlyMine = false,
+                    onlyMineSpells = {},
+                    spells = {
+                      [1] = 31821
+                    }
+                  }
+                },
+                ["*"] = {}
+              },
+              elementsSeeded = true,
+              enabled = true,
+              filterMode = "classification",
+              maxBuffs = 2,
+              maxDebuffs = 2,
+              showDebuffs = false
+            },
+            castbar = {
+              enabled = false,
+              height = 8,
+              showIcon = false,
+              showText = false
+            },
+            classPower = {
+              enabled = false,
+              height = 4,
+              spacing = 1
+            },
+            dimensions = {
+              largeRaidHeight = 24,
+              largeRaidWidth = 140,
+              mediumRaidHeight = 30,
+              mediumRaidWidth = 160,
+              smallRaidHeight = 36,
+              smallRaidWidth = 180
+            },
+            general = {
+              borderSize = 1,
+              darkMode = false,
+              darkModeBgColor = {
+                [1] = 0.25,
+                [2] = 0.25,
+                [3] = 0.25,
+                [4] = 1
+              },
+              darkModeBgOpacity = 1,
+              darkModeHealthColor = {
+                [1] = 0.14999999999999999,
+                [2] = 0.14999999999999999,
+                [3] = 0.14999999999999999,
+                [4] = 1
+              },
+              darkModeHealthOpacity = 1,
+              defaultBgColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              defaultBgOpacity = 1,
+              defaultHealthOpacity = 1,
+              font = "Quazii",
+              fontOutline = "OUTLINE",
+              fontSize = 12,
+              showTooltips = true,
+              texture = "Quazii v5",
+              useClassColor = true
+            },
+            healAbsorbs = {
+              color = {
+                [1] = 0.5,
+                [2] = 0.10000000000000001,
+                [3] = 0.10000000000000001
+              },
+              enabled = true,
+              opacity = 0.60000000000000009
+            },
+            healPrediction = {
+              color = {
+                [1] = 0.20000000000000001,
+                [2] = 1,
+                [3] = 0.20000000000000001
+              },
+              enabled = true,
+              opacity = 0.5
+            },
+            healer = {
+              defensiveIndicator = {
+                enabled = false,
+                growDirection = "RIGHT",
+                iconSize = 8,
+                maxIcons = 3,
+                offsetX = -28,
+                offsetY = -1,
+                position = "RIGHT",
+                reverseSwipe = true,
+                spacing = 2
+              },
+              dispelOverlay = {
+                borderSize = 3,
+                colors = {
+                  Curse = {
+                    [1] = 0.59999999999999998,
+                    [2] = 0,
+                    [3] = 1,
+                    [4] = 1
+                  },
+                  Disease = {
+                    [1] = 0.59999999999999998,
+                    [2] = 0.40000000000000002,
+                    [3] = 0,
+                    [4] = 1
+                  },
+                  Magic = {
+                    [1] = 0.20000000000000001,
+                    [2] = 0.59999999999999998,
+                    [3] = 1,
+                    [4] = 1
+                  },
+                  Poison = {
+                    [1] = 0,
+                    [2] = 0.59999999999999998,
+                    [3] = 0,
+                    [4] = 1
+                  }
+                },
+                enabled = false,
+                fillOpacity = 0.5,
+                opacity = 0.90000000000000002
+              },
+              targetHighlight = {
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1,
+                  [4] = 0.59999999999999998
+                },
+                enabled = true,
+                fillOpacity = 0.10000000000000001
+              }
+            },
+            health = {
+              healthAnchor = "RIGHT",
+              healthDisplayStyle = "percent",
+              healthFillDirection = "HORIZONTAL",
+              healthFontSize = 12,
+              healthJustify = "RIGHT",
+              healthOffsetX = -4,
+              healthOffsetY = 0,
+              healthTextColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              hideHealthPercentSymbol = false,
+              showHealthText = true
+            },
+            indicators = {
+              leaderAnchor = "TOPLEFT",
+              leaderOffsetX = 10,
+              leaderOffsetY = 0,
+              leaderSize = 10,
+              phaseAnchor = "CENTER",
+              phaseOffsetX = 0,
+              phaseOffsetY = 0,
+              phaseSize = 16,
+              readyCheckAnchor = "CENTER",
+              readyCheckOffsetX = 0,
+              readyCheckOffsetY = 0,
+              readyCheckSize = 10,
+              resurrectionAnchor = "CENTER",
+              resurrectionOffsetX = 0,
+              resurrectionOffsetY = 0,
+              resurrectionSize = 10,
+              roleIconAnchor = "TOPLEFT",
+              roleIconOffsetX = 0,
+              roleIconOffsetY = 0,
+              roleIconSize = 12,
+              showLeaderIcon = true,
+              showPhaseIcon = false,
+              showReadyCheck = true,
+              showResurrection = true,
+              showRoleDPS = false,
+              showRoleHealer = true,
+              showRoleIcon = true,
+              showRoleTank = true,
+              showSummonPending = true,
+              showTargetMarker = true,
+              showThreatBorder = true,
+              summonAnchor = "CENTER",
+              summonOffsetX = 0,
+              summonOffsetY = 0,
+              summonSize = 10,
+              targetMarkerAnchor = "TOP",
+              targetMarkerOffsetX = -50,
+              targetMarkerOffsetY = 0,
+              targetMarkerSize = 14,
+              threatBorderSize = 2,
+              threatColor = {
+                [1] = 1,
+                [2] = 0,
+                [3] = 0,
+                [4] = 0.80000000000000004
+              },
+              threatFillOpacity = 0
+            },
+            layout = {
+              groupBy = "GROUP",
+              groupGrowDirection = "RIGHT",
+              groupSpacing = 0,
+              growDirection = "DOWN",
+              limitGroupsByRaidSize = false,
+              orientation = "VERTICAL",
+              sortByRole = true,
+              sortMethod = "INDEX",
+              spacing = 0,
+              unitsPerFlat = 5
+            },
+            name = {
+              maxNameLength = 10,
+              nameAnchor = "LEFT",
+              nameFontSize = 12,
+              nameJustify = "LEFT",
+              nameOffsetX = 4,
+              nameOffsetY = 0,
+              nameTextColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              nameTextUseClassColor = false,
+              showName = true
+            },
+            pets = {
+              anchorGap = 2,
+              anchorTo = "BOTTOM",
+              enabled = false,
+              height = 20,
+              showAuras = false,
+              showPowerBar = false,
+              width = 100
+            },
+            pinnedAuras = {
+              edgeInset = 0,
+              enabled = true,
+              spacing = 4,
+              specSlots = {
+                [250] = {
+                  [1] = {
+                    anchor = "TOP",
+                    displayType = "icon",
+                    spellID = 31821
+                  },
+                  bottom = {},
+                  left = {},
+                  right = {},
+                  top = {
+                    [1] = {
+                      displayType = "icon",
+                      spellID = 31821
+                    },
+                    [2] = {
+                      displayType = "icon",
+                      spellID = 97463
+                    },
+                    [3] = {
+                      displayType = "icon",
+                      spellID = 15286
+                    }
+                  }
+                },
+                [252] = {},
+                [268] = {}
+              }
+            },
+            portrait = {
+              portraitSide = "LEFT",
+              portraitSize = 30,
+              showPortrait = false
+            },
+            power = {
+              powerBarColor = {
+                [1] = 0.20000000000000001,
+                [2] = 0.40000000000000002,
+                [3] = 0.80000000000000004,
+                [4] = 1
+              },
+              powerBarHeight = 4,
+              powerBarOnlyHealers = false,
+              powerBarOnlyTanks = false,
+              powerBarUsePowerColor = true,
+              showPowerBar = true
+            },
+            range = {
+              enabled = true,
+              outOfRangeAlpha = 0.40000000000000002
+            },
+            spotlight = {
+              byName = {},
+              byRole = {},
+              enabled = false,
+              filterHealer = false,
+              filterMode = "ROLE",
+              filterTank = true,
+              frameHeight = 50,
+              frameWidth = 200,
+              growDirection = "DOWN",
+              nameList = "",
+              orientation = "VERTICAL",
+              position = {
+                offsetX = -400,
+                offsetY = 200
+              },
+              spacing = 4,
+              useMainFrameStyle = true
+            }
+          },
+          raidPosition = {
+            offsetX = 0.55555556797319017,
+            offsetY = -391.66667542109911
+          },
+          raidSelfFirst = false,
+          testMode = {
+            partyCount = 5,
+            raidCount = 20
+          }
+        },
+        drewUnitFrames = {
+          boss = {
+            absorbs = {
+              color = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1
+              },
+              enabled = true,
+              opacity = 0.70000000000000007,
+              texture = "DrewUI Stripes"
+            },
+            auras = {
+              buffAnchor = "BOTTOMLEFT",
+              buffDurationAnchor = "CENTER",
+              buffDurationColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              buffDurationOffsetX = 0,
+              buffDurationOffsetY = 0,
+              buffDurationSize = 12,
+              buffFilter = {
+                modifiers = {
+                  CANCELABLE = false,
+                  NOT_CANCELABLE = false,
+                  PLAYER = false,
+                  RAID = false
+                }
+              },
+              buffGrow = "RIGHT",
+              buffHideSwipe = false,
+              buffIconSize = 22,
+              buffMaxIcons = 4,
+              buffMaxPerRow = 0,
+              buffOffsetX = 0,
+              buffOffsetY = 0,
+              buffShowDuration = true,
+              buffShowStack = true,
+              buffSpacing = 2,
+              buffStackAnchor = "BOTTOMRIGHT",
+              buffStackColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              buffStackOffsetX = -1,
+              buffStackOffsetY = 1,
+              buffStackSize = 10,
+              debuffAnchor = "TOPLEFT",
+              debuffDurationAnchor = "CENTER",
+              debuffDurationColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              debuffDurationOffsetX = 0,
+              debuffDurationOffsetY = 0,
+              debuffDurationSize = 12,
+              debuffFilter = {
+                modifiers = {
+                  INCLUDE_NAME_PLATE_ONLY = false,
+                  PLAYER = false,
+                  RAID = false
+                }
+              },
+              debuffGrow = "RIGHT",
+              debuffHideSwipe = false,
+              debuffMaxIcons = 4,
+              debuffMaxPerRow = 0,
+              debuffOffsetX = 0,
+              debuffOffsetY = 0,
+              debuffShowDuration = true,
+              debuffShowStack = true,
+              debuffSpacing = 2,
+              debuffStackAnchor = "BOTTOMRIGHT",
+              debuffStackColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              debuffStackOffsetX = -1,
+              debuffStackOffsetY = 1,
+              debuffStackSize = 10,
+              iconSize = 22,
+              onlyMyDebuffs = true,
+              showBuffs = false,
+              showDebuffs = false
+            },
+            borderSize = 1,
+            castbar = {
+              anchor = "unitframe",
+              bgColor = {
+                [1] = 0.14899999999999999,
+                [2] = 0.14899999999999999,
+                [3] = 0.14899999999999999,
+                [4] = 1
+              },
+              borderColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              borderColorSource = "inherit",
+              borderSize = 1,
+              channelFillForward = false,
+              channelTickColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 0.90000000000000002
+              },
+              channelTickMinConfidence = 0.69999999999999996,
+              channelTickSourcePolicy = "auto",
+              channelTickThickness = 1,
+              color = {
+                [1] = 1,
+                [2] = 0.69999999999999996,
+                [3] = 0,
+                [4] = 1
+              },
+              empoweredFillColors = {
+                [1] = {
+                  [1] = 0.26000000000000001,
+                  [2] = 0.64000000000000001,
+                  [3] = 0.95999999999999996,
+                  [4] = 1
+                },
+                [2] = {
+                  [1] = 0.91000000000000003,
+                  [2] = 0.34999999999999998,
+                  [3] = 0.40000000000000002,
+                  [4] = 1
+                },
+                [3] = {
+                  [1] = 0.94999999999999996,
+                  [2] = 0.75,
+                  [3] = 0.29999999999999999,
+                  [4] = 1
+                },
+                [4] = {
+                  [1] = 0.45000000000000001,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.34999999999999998,
+                  [4] = 1
+                },
+                [5] = {
+                  [1] = 0.75,
+                  [2] = 0.40000000000000002,
+                  [3] = 0.84999999999999998,
+                  [4] = 1
+                }
+              },
+              empoweredLevelTextAnchor = "CENTER",
+              empoweredLevelTextOffsetX = 0,
+              empoweredLevelTextOffsetY = 0,
+              empoweredStageColors = {
+                [1] = {
+                  [1] = 0.14999999999999999,
+                  [2] = 0.38,
+                  [3] = 0.57999999999999996,
+                  [4] = 1
+                },
+                [2] = {
+                  [1] = 0.55000000000000004,
+                  [2] = 0.20000000000000001,
+                  [3] = 0.23999999999999999,
+                  [4] = 1
+                },
+                [3] = {
+                  [1] = 0.57999999999999996,
+                  [2] = 0.45000000000000001,
+                  [3] = 0.17999999999999999,
+                  [4] = 1
+                },
+                [4] = {
+                  [1] = 0.27000000000000002,
+                  [2] = 0.5,
+                  [3] = 0.20999999999999999,
+                  [4] = 1
+                },
+                [5] = {
+                  [1] = 0.45000000000000001,
+                  [2] = 0.20000000000000001,
+                  [3] = 0.5,
+                  [4] = 1
+                }
+              },
+              enabled = true,
+              fontSize = 11,
+              freeOffsetX = 0,
+              freeOffsetY = 0,
+              gcdColor = {
+                [1] = 1,
+                [2] = 0.69999999999999996,
+                [3] = 0,
+                [4] = 1
+              },
+              height = 16,
+              hideTimeTextOnEmpowered = false,
+              iconAnchor = "LEFT",
+              iconBorderColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              iconBorderColorSource = "inherit",
+              iconBorderSize = 2,
+              iconScale = 1,
+              iconSize = 16,
+              iconSpacing = 0,
+              lockedOffsetX = 0,
+              lockedOffsetY = -25,
+              maxLength = 0,
+              notInterruptibleColor = {
+                [1] = 0.69999999999999996,
+                [2] = 0.20000000000000001,
+                [3] = 0.20000000000000001,
+                [4] = 1
+              },
+              offsetX = 0,
+              offsetY = 0,
+              previewMode = true,
+              showChannelTicks = false,
+              showEmpoweredLevel = false,
+              showIcon = true,
+              showSpellText = true,
+              showTimeText = true,
+              spellTextAnchor = "LEFT",
+              spellTextOffsetX = 4,
+              spellTextOffsetY = 0,
+              statusBarAnchor = "BOTTOMRIGHT",
+              texture = "Solid",
+              timeTextAnchor = "RIGHT",
+              timeTextOffsetX = -4,
+              timeTextOffsetY = 0,
+              useClassColor = false,
+              width = 175,
+              widthAdjustment = 0
+            },
+            classificationIcon = {
+              anchor = "LEFT",
+              enabled = false,
+              size = 30,
+              xOffset = -28,
+              yOffset = 0
+            },
+            customHealthColor = {
+              [1] = 0.59999999999999998,
+              [2] = 0.20000000000000001,
+              [3] = 0.20000000000000001,
+              [4] = 1
+            },
+            enabled = true,
+            growDirection = "DOWN",
+            healthAnchor = "RIGHT",
+            healthDisplayStyle = "both",
+            healthDivider = " | ",
+            healthFontSize = 11,
+            healthOffsetX = 0,
+            healthOffsetY = 0,
+            healthTextColor = {
+              [1] = 1,
+              [2] = 1,
+              [3] = 1,
+              [4] = 1
+            },
+            healthTextUseClassColor = false,
+            height = 35,
+            hideHealthPercentSymbol = false,
+            hidePowerPercentSymbol = false,
+            maxNameLength = 0,
+            nameAnchor = "LEFT",
+            nameFontSize = 11,
+            nameOffsetX = 0,
+            nameOffsetY = 0,
+            nameTextColor = {
+              [1] = 1,
+              [2] = 1,
+              [3] = 1,
+              [4] = 1
+            },
+            nameTextUseClassColor = false,
+            offsetX = 974,
+            offsetY = 106,
+            powerBarBorder = true,
+            powerBarColor = {
+              [1] = 0,
+              [2] = 0.5,
+              [3] = 1,
+              [4] = 1
+            },
+            powerBarHeight = 3,
+            powerBarUsePowerColor = true,
+            powerTextAnchor = "BOTTOMRIGHT",
+            powerTextColor = {
+              [1] = 1,
+              [2] = 1,
+              [3] = 1,
+              [4] = 1
+            },
+            powerTextFontSize = 10,
+            powerTextFormat = "percent",
+            powerTextOffsetX = -4,
+            powerTextOffsetY = 2,
+            powerTextUseClassColor = false,
+            powerTextUsePowerColor = true,
+            range = {
+              enabled = true,
+              outOfRangeAlpha = 0.40000000000000002
+            },
+            showHealth = true,
+            showName = true,
+            showPowerBar = true,
+            showPowerText = false,
+            spacing = 20,
+            targetHighlight = {
+              color = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 0.59999999999999998
+              },
+              enabled = true
+            },
+            targetMarker = {
+              anchor = "TOP",
+              enabled = true,
+              size = 20,
+              xOffset = 0,
+              yOffset = 8
+            },
+            texture = "Quazii v5",
+            useClassColor = true,
+            useHostilityColor = true,
+            width = 175,
+            xSpacing = 35,
+            ySpacing = 35
+          },
+          enabled = true,
+          focus = {
+            absorbs = {
+              color = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              enabled = true,
+              opacity = 0.70000000000000007,
+              texture = "DrewUI Stripes"
+            },
+            auras = {
+              buffAnchor = "BOTTOMLEFT",
+              buffDurationAnchor = "CENTER",
+              buffDurationColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              buffDurationOffsetX = 0,
+              buffDurationOffsetY = 0,
+              buffDurationSize = 12,
+              buffFilter = {
+                modifiers = {
+                  CANCELABLE = false,
+                  NOT_CANCELABLE = false,
+                  PLAYER = false,
+                  RAID = true
+                }
+              },
+              buffGrow = "RIGHT",
+              buffHideSwipe = false,
+              buffIconSize = 20,
+              buffMaxIcons = 16,
+              buffMaxPerRow = 0,
+              buffOffsetX = 0,
+              buffOffsetY = -2,
+              buffShowDuration = true,
+              buffShowStack = true,
+              buffSpacing = 2,
+              buffStackAnchor = "BOTTOMRIGHT",
+              buffStackColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              buffStackOffsetX = -1,
+              buffStackOffsetY = 1,
+              buffStackSize = 10,
+              debuffAnchor = "TOPLEFT",
+              debuffDurationAnchor = "CENTER",
+              debuffDurationColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              debuffDurationOffsetX = 0,
+              debuffDurationOffsetY = 0,
+              debuffDurationSize = 12,
+              debuffFilter = {
+                modifiers = {
+                  INCLUDE_NAME_PLATE_ONLY = false,
+                  PLAYER = false,
+                  RAID = false
+                }
+              },
+              debuffGrow = "RIGHT",
+              debuffHideSwipe = false,
+              debuffMaxIcons = 16,
+              debuffMaxPerRow = 0,
+              debuffOffsetX = 0,
+              debuffOffsetY = 2,
+              debuffShowDuration = true,
+              debuffShowStack = true,
+              debuffSpacing = 2,
+              debuffStackAnchor = "BOTTOMRIGHT",
+              debuffStackColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              debuffStackOffsetX = -1,
+              debuffStackOffsetY = 1,
+              debuffStackSize = 10,
+              iconSize = 20,
+              onlyMyDebuffs = false,
+              showBuffs = true,
+              showDebuffs = false
+            },
+            borderSize = 1,
+            castbar = {
+              anchor = "unitframe",
+              bgColor = {
+                [1] = 0.14899999999999999,
+                [2] = 0.14899999999999999,
+                [3] = 0.14899999999999999,
+                [4] = 1
+              },
+              borderColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              borderColorSource = "inherit",
+              borderSize = 1,
+              channelFillForward = false,
+              channelTickColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 0.90000000000000002
+              },
+              channelTickMinConfidence = 0.70000000000000007,
+              channelTickSourcePolicy = "auto",
+              channelTickThickness = 1,
+              color = {
+                [1] = 0.20000000000000001,
+                [2] = 0.59999999999999998,
+                [3] = 1,
+                [4] = 1
+              },
+              empoweredFillColors = {
+                [1] = {
+                  [1] = 0.26000000000000001,
+                  [2] = 0.64000000000000001,
+                  [3] = 0.95999999999999996,
+                  [4] = 1
+                },
+                [2] = {
+                  [1] = 0.91000000000000003,
+                  [2] = 0.34999999999999998,
+                  [3] = 0.40000000000000002,
+                  [4] = 1
+                },
+                [3] = {
+                  [1] = 0.94999999999999996,
+                  [2] = 0.75,
+                  [3] = 0.29999999999999999,
+                  [4] = 1
+                },
+                [4] = {
+                  [1] = 0.45000000000000001,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.34999999999999998,
+                  [4] = 1
+                },
+                [5] = {
+                  [1] = 0.75,
+                  [2] = 0.40000000000000002,
+                  [3] = 0.84999999999999998,
+                  [4] = 1
+                }
+              },
+              empoweredLevelTextAnchor = "CENTER",
+              empoweredLevelTextOffsetX = 0,
+              empoweredLevelTextOffsetY = 0,
+              empoweredStageColors = {
+                [1] = {
+                  [1] = 0.14999999999999999,
+                  [2] = 0.38,
+                  [3] = 0.57999999999999996,
+                  [4] = 1
+                },
+                [2] = {
+                  [1] = 0.55000000000000004,
+                  [2] = 0.20000000000000001,
+                  [3] = 0.23999999999999999,
+                  [4] = 1
+                },
+                [3] = {
+                  [1] = 0.57999999999999996,
+                  [2] = 0.45000000000000001,
+                  [3] = 0.17999999999999999,
+                  [4] = 1
+                },
+                [4] = {
+                  [1] = 0.27000000000000002,
+                  [2] = 0.5,
+                  [3] = 0.20999999999999999,
+                  [4] = 1
+                },
+                [5] = {
+                  [1] = 0.45000000000000001,
+                  [2] = 0.20000000000000001,
+                  [3] = 0.5,
+                  [4] = 1
+                }
+              },
+              enabled = true,
+              fontSize = 14,
+              freeOffsetX = 0,
+              freeOffsetY = 0,
+              gcdColor = {
+                [1] = 0.20000000000000001,
+                [2] = 0.59999999999999998,
+                [3] = 1,
+                [4] = 1
+              },
+              height = 20,
+              hideTimeTextOnEmpowered = false,
+              iconAnchor = "LEFT",
+              iconBorderColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              iconBorderColorSource = "inherit",
+              iconBorderSize = 0,
+              iconScale = 1,
+              iconSize = 25,
+              iconSpacing = 0,
+              lockedOffsetX = 0,
+              lockedOffsetY = -25,
+              maxLength = 0,
+              notInterruptibleColor = {
+                [1] = 0.69999999999999996,
+                [2] = 0.20000000000000001,
+                [3] = 0.20000000000000001,
+                [4] = 1
+              },
+              offsetX = 0,
+              offsetY = 0,
+              previewMode = false,
+              showChannelTicks = false,
+              showEmpoweredLevel = false,
+              showIcon = false,
+              showSpellText = true,
+              showTimeText = true,
+              spellTextAnchor = "LEFT",
+              spellTextOffsetX = 4,
+              spellTextOffsetY = 0,
+              statusBarAnchor = "BOTTOMRIGHT",
+              texture = "Solid",
+              timeTextAnchor = "RIGHT",
+              timeTextOffsetX = -4,
+              timeTextOffsetY = 0,
+              useClassColor = false,
+              width = 160,
+              widthAdjustment = 0
+            },
+            classificationIcon = {
+              anchor = "LEFT",
+              enabled = false,
+              size = 16,
+              xOffset = -8,
+              yOffset = 0
+            },
+            customHealthColor = {
+              [1] = 0.20000000000000001,
+              [2] = 0.59999999999999998,
+              [3] = 0.20000000000000001,
+              [4] = 1
+            },
+            enabled = true,
+            healthAnchor = "RIGHT",
+            healthDisplayStyle = "percent",
+            healthDivider = " | ",
+            healthFontSize = 14,
+            healthOffsetX = -4,
+            healthOffsetY = 0,
+            healthTextColor = {
+              [1] = 1,
+              [2] = 1,
+              [3] = 1,
+              [4] = 1
+            },
+            healthTextUseClassColor = false,
+            height = 30,
+            hideHealthPercentSymbol = false,
+            hidePowerPercentSymbol = false,
+            leaderIcon = {
+              anchor = "TOPLEFT",
+              enabled = false,
+              size = 16,
+              xOffset = -8,
+              yOffset = 8
+            },
+            maxNameLength = 0,
+            nameAnchor = "LEFT",
+            nameFontSize = 14,
+            nameOffsetX = 4,
+            nameOffsetY = 0,
+            nameTextColor = {
+              [1] = 1,
+              [2] = 1,
+              [3] = 1,
+              [4] = 1
+            },
+            nameTextUseClassColor = false,
+            offsetX = -496,
+            offsetY = -214,
+            portraitBorderColor = {
+              [1] = 0,
+              [2] = 0,
+              [3] = 0,
+              [4] = 1
+            },
+            portraitBorderColorSource = "inherit",
+            portraitBorderSize = 1,
+            portraitGap = 0,
+            portraitOffsetX = 0,
+            portraitOffsetY = 0,
+            portraitSide = "RIGHT",
+            portraitSize = 30,
+            powerBarBorder = true,
+            powerBarColor = {
+              [1] = 0,
+              [2] = 0.5,
+              [3] = 1,
+              [4] = 1
+            },
+            powerBarHeight = 3,
+            powerBarUsePowerColor = true,
+            powerTextAnchor = "BOTTOMRIGHT",
+            powerTextColor = {
+              [1] = 1,
+              [2] = 1,
+              [3] = 1,
+              [4] = 1
+            },
+            powerTextFontSize = 10,
+            powerTextFormat = "percent",
+            powerTextOffsetX = -4,
+            powerTextOffsetY = 2,
+            powerTextUseClassColor = false,
+            powerTextUsePowerColor = true,
+            showHealth = true,
+            showHealthAbsolute = true,
+            showHealthPercent = true,
+            showName = true,
+            showPortrait = false,
+            showPowerBar = false,
+            showPowerText = false,
+            targetMarker = {
+              anchor = "TOP",
+              enabled = true,
+              size = 18,
+              xOffset = 0,
+              yOffset = 6
+            },
+            texture = "Quazii v5",
+            useClassColor = true,
+            useHostilityColor = true,
+            width = 160
+          },
+          general = {
+            classColorText = false,
+            darkMode = false,
+            darkModeBgColor = {
+              [1] = 0.25,
+              [2] = 0.25,
+              [3] = 0.25,
+              [4] = 1
+            },
+            darkModeBgOpacity = 1,
+            darkModeHealthColor = {
+              [1] = 0.14999999999999999,
+              [2] = 0.14999999999999999,
+              [3] = 0.14999999999999999,
+              [4] = 1
+            },
+            darkModeHealthOpacity = 1,
+            darkModeOpacity = 1,
+            defaultBgColor = {
+              [1] = 0,
+              [2] = 0,
+              [3] = 0,
+              [4] = 1
+            },
+            defaultBgOpacity = 1,
+            defaultHealthColor = {
+              [1] = 0.20000000000000001,
+              [2] = 0.20000000000000001,
+              [3] = 0.20000000000000001,
+              [4] = 1
+            },
+            defaultHealthOpacity = 1,
+            defaultOpacity = 1,
+            defaultUseClassColor = true,
+            font = "Quazii",
+            fontOutline = "OUTLINE",
+            fontSize = 12,
+            hostilityColorFriendly = {
+              [1] = 0.20000000000000001,
+              [2] = 0.80000000000000004,
+              [3] = 0.20000000000000001,
+              [4] = 1
+            },
+            hostilityColorHostile = {
+              [1] = 0.80000000000000004,
+              [2] = 0.20000000000000001,
+              [3] = 0.20000000000000001,
+              [4] = 1
+            },
+            hostilityColorNeutral = {
+              [1] = 1,
+              [2] = 1,
+              [3] = 0.20000000000000001,
+              [4] = 1
+            },
+            masterColorCastbarText = false,
+            masterColorHealthText = false,
+            masterColorNameText = false,
+            masterColorPowerText = false,
+            masterColorToTText = false,
+            showTooltips = true,
+            smootherAnimation = true
+          },
+          party = {
+            absorbs = {
+              opacity = 0.70000000000000007
+            },
+            auras = {
+              onlyMyDebuffs = true
+            },
+            offsetX = -540,
+            offsetY = 123
+          },
+          pet = {
+            absorbs = {
+              color = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1
+              },
+              enabled = true,
+              opacity = 0.70000000000000007,
+              texture = "DrewUI Stripes"
+            },
+            auras = {
+              buffAnchor = "BOTTOMLEFT",
+              buffFilter = {
+                modifiers = {
+                  CANCELABLE = false,
+                  NOT_CANCELABLE = false,
+                  PLAYER = false,
+                  RAID = false
+                }
+              },
+              buffGrow = "RIGHT",
+              buffHideSwipe = false,
+              buffIconSize = 22,
+              buffMaxIcons = 4,
+              buffMaxPerRow = 0,
+              buffOffsetX = 0,
+              buffOffsetY = 0,
+              debuffAnchor = "TOPLEFT",
+              debuffFilter = {
+                modifiers = {
+                  INCLUDE_NAME_PLATE_ONLY = false,
+                  PLAYER = false,
+                  RAID = false
+                }
+              },
+              debuffGrow = "RIGHT",
+              debuffHideSwipe = false,
+              debuffMaxIcons = 4,
+              debuffMaxPerRow = 0,
+              debuffOffsetX = 0,
+              debuffOffsetY = 0,
+              iconSize = 22,
+              onlyMyDebuffs = true,
+              showBuffs = false,
+              showDebuffs = false
+            },
+            borderSize = 1,
+            castbar = {
+              anchor = "none",
+              bgColor = {
+                [1] = 0.14899999999999999,
+                [2] = 0.14899999999999999,
+                [3] = 0.14899999999999999,
+                [4] = 1
+              },
+              borderColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              borderSize = 1,
+              channelFillForward = false,
+              channelTickColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 0.90000000000000002
+              },
+              channelTickMinConfidence = 0.69999999999999996,
+              channelTickSourcePolicy = "auto",
+              channelTickThickness = 1,
+              color = {
+                [1] = 0.40400000000000003,
+                [2] = 1,
+                [3] = 0.98399999999999999,
+                [4] = 1
+              },
+              empoweredFillColors = {
+                [1] = {
+                  [1] = 0.26000000000000001,
+                  [2] = 0.64000000000000001,
+                  [3] = 0.95999999999999996,
+                  [4] = 1
+                },
+                [2] = {
+                  [1] = 0.91000000000000003,
+                  [2] = 0.34999999999999998,
+                  [3] = 0.40000000000000002,
+                  [4] = 1
+                },
+                [3] = {
+                  [1] = 0.94999999999999996,
+                  [2] = 0.75,
+                  [3] = 0.29999999999999999,
+                  [4] = 1
+                },
+                [4] = {
+                  [1] = 0.45000000000000001,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.34999999999999998,
+                  [4] = 1
+                },
+                [5] = {
+                  [1] = 0.75,
+                  [2] = 0.40000000000000002,
+                  [3] = 0.84999999999999998,
+                  [4] = 1
+                }
+              },
+              empoweredLevelTextAnchor = "CENTER",
+              empoweredLevelTextOffsetX = 0,
+              empoweredLevelTextOffsetY = 0,
+              empoweredStageColors = {
+                [1] = {
+                  [1] = 0.14999999999999999,
+                  [2] = 0.38,
+                  [3] = 0.57999999999999996,
+                  [4] = 1
+                },
+                [2] = {
+                  [1] = 0.55000000000000004,
+                  [2] = 0.20000000000000001,
+                  [3] = 0.23999999999999999,
+                  [4] = 1
+                },
+                [3] = {
+                  [1] = 0.57999999999999996,
+                  [2] = 0.45000000000000001,
+                  [3] = 0.17999999999999999,
+                  [4] = 1
+                },
+                [4] = {
+                  [1] = 0.27000000000000002,
+                  [2] = 0.5,
+                  [3] = 0.20999999999999999,
+                  [4] = 1
+                },
+                [5] = {
+                  [1] = 0.45000000000000001,
+                  [2] = 0.20000000000000001,
+                  [3] = 0.5,
+                  [4] = 1
+                }
+              },
+              enabled = true,
+              fontSize = 10,
+              freeOffsetX = 0,
+              freeOffsetY = 0,
+              gcdColor = {
+                [1] = 0.40400000000000003,
+                [2] = 1,
+                [3] = 0.98399999999999999,
+                [4] = 1
+              },
+              height = 15,
+              hideTimeTextOnEmpowered = false,
+              iconAnchor = "LEFT",
+              iconBorderColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              iconBorderSize = 0,
+              iconScale = 1,
+              iconSize = 25,
+              iconSpacing = 0,
+              lockedOffsetX = 0,
+              lockedOffsetY = -25,
+              maxLength = 0,
+              notInterruptibleColor = {
+                [1] = 0.69999999999999996,
+                [2] = 0.20000000000000001,
+                [3] = 0.20000000000000001,
+                [4] = 1
+              },
+              offsetX = 0,
+              offsetY = -20,
+              previewMode = false,
+              showChannelTicks = false,
+              showEmpoweredLevel = false,
+              showIcon = true,
+              showSpellText = true,
+              showTimeText = true,
+              spellTextAnchor = "LEFT",
+              spellTextOffsetX = 4,
+              spellTextOffsetY = 0,
+              statusBarAnchor = "BOTTOMRIGHT",
+              texture = "Solid",
+              timeTextAnchor = "RIGHT",
+              timeTextOffsetX = -4,
+              timeTextOffsetY = 0,
+              useClassColor = false,
+              width = 140,
+              widthAdjustment = 0
+            },
+            customHealthColor = {
+              [1] = 0.20000000000000001,
+              [2] = 0.59999999999999998,
+              [3] = 0.20000000000000001,
+              [4] = 1
+            },
+            enabled = true,
+            healthAnchor = "RIGHT",
+            healthDisplayStyle = "percent",
+            healthDivider = " | ",
+            healthFontSize = 10,
+            healthOffsetX = -4,
+            healthOffsetY = 0,
+            healthTextColor = {
+              [1] = 1,
+              [2] = 1,
+              [3] = 1,
+              [4] = 1
+            },
+            healthTextUseClassColor = false,
+            height = 25,
+            hideHealthPercentSymbol = false,
+            hidePowerPercentSymbol = false,
+            maxNameLength = 0,
+            nameAnchor = "LEFT",
+            nameFontSize = 10,
+            nameOffsetX = 4,
+            nameOffsetY = 0,
+            nameTextColor = {
+              [1] = 1,
+              [2] = 1,
+              [3] = 1,
+              [4] = 1
+            },
+            nameTextUseClassColor = false,
+            offsetX = -340,
+            offsetY = -254,
+            powerBarBorder = true,
+            powerBarColor = {
+              [1] = 0,
+              [2] = 0.5,
+              [3] = 1,
+              [4] = 1
+            },
+            powerBarHeight = 3,
+            powerBarUsePowerColor = true,
+            powerTextAnchor = "BOTTOMRIGHT",
+            powerTextColor = {
+              [1] = 1,
+              [2] = 1,
+              [3] = 1,
+              [4] = 1
+            },
+            powerTextFontSize = 10,
+            powerTextFormat = "percent",
+            powerTextOffsetX = -4,
+            powerTextOffsetY = 2,
+            powerTextUseClassColor = false,
+            powerTextUsePowerColor = true,
+            showHealth = true,
+            showHealthAbsolute = false,
+            showHealthPercent = true,
+            showName = true,
+            showPowerBar = true,
+            showPowerText = false,
+            targetMarker = {
+              anchor = "TOP",
+              enabled = false,
+              size = 16,
+              xOffset = 0,
+              yOffset = 6
+            },
+            texture = "Quazii",
+            useClassColor = true,
+            useHostilityColor = true,
+            width = 140
+          },
+          player = {
+            absorbs = {
+              color = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              enabled = true,
+              opacity = 0.70000000000000007,
+              texture = "DrewUI Stripes"
+            },
+            anchorGap = 0,
+            anchorTo = "essential",
+            anchorYOffset = 0,
+            auras = {
+              buffAnchor = "BOTTOMLEFT",
+              buffClassifications = {
+                bigDefensive = false,
+                cancelable = false,
+                externalDefensive = false,
+                helpful = false,
+                important = false,
+                notCancelable = false
+              },
+              buffDuration = {
+                anchor = "CENTER",
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1,
+                  [4] = 1
+                },
+                fontSize = 12,
+                offsetX = 0,
+                offsetY = 0,
+                show = true
+              },
+              buffDurationAnchor = "CENTER",
+              buffDurationColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              buffDurationOffsetX = 0,
+              buffDurationOffsetY = 0,
+              buffDurationSize = 12,
+              buffFilter = {
+                modifiers = {
+                  CANCELABLE = false,
+                  NOT_CANCELABLE = false,
+                  PLAYER = false,
+                  RAID = false
+                }
+              },
+              buffFilterMode = "off",
+              buffFilterOnlyMine = true,
+              buffGrow = "RIGHT",
+              buffHideSwipe = false,
+              buffIconSize = 22,
+              buffMaxIcons = 4,
+              buffMaxPerRow = 0,
+              buffOffsetX = 0,
+              buffOffsetY = 0,
+              buffShowDuration = true,
+              buffShowStack = true,
+              buffSpacing = 2,
+              buffStack = {
+                anchor = "BOTTOMRIGHT",
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1,
+                  [4] = 1
+                },
+                fontSize = 10,
+                offsetX = -1,
+                offsetY = 1,
+                show = true
+              },
+              buffStackAnchor = "BOTTOMRIGHT",
+              buffStackColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              buffStackOffsetX = -1,
+              buffStackOffsetY = 1,
+              buffStackSize = 10,
+              debuffAnchor = "TOPLEFT",
+              debuffClassifications = {
+                crowdControl = false,
+                dispellable = false,
+                harmful = false,
+                important = false
+              },
+              debuffDuration = {
+                anchor = "CENTER",
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1,
+                  [4] = 1
+                },
+                fontSize = 10,
+                offsetX = 0,
+                offsetY = 0,
+                show = false
+              },
+              debuffDurationAnchor = "CENTER",
+              debuffDurationColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              debuffDurationOffsetX = 0,
+              debuffDurationOffsetY = 0,
+              debuffDurationSize = 12,
+              debuffFilter = {
+                modifiers = {
+                  INCLUDE_NAME_PLATE_ONLY = false,
+                  PLAYER = false,
+                  RAID = false
+                }
+              },
+              debuffFilterMode = "off",
+              debuffGrow = "RIGHT",
+              debuffHideSwipe = false,
+              debuffMaxIcons = 4,
+              debuffMaxPerRow = 0,
+              debuffOffsetX = 0,
+              debuffOffsetY = 0,
+              debuffShowDuration = true,
+              debuffShowStack = true,
+              debuffSpacing = 0,
+              debuffStack = {
+                anchor = "BOTTOMRIGHT",
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1,
+                  [4] = 1
+                },
+                fontSize = 10,
+                offsetX = -1,
+                offsetY = 1,
+                show = true
+              },
+              debuffStackAnchor = "BOTTOMRIGHT",
+              debuffStackColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              debuffStackOffsetX = -1,
+              debuffStackOffsetY = 1,
+              debuffStackSize = 10,
+              durationAnchor = "CENTER",
+              durationColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              durationOffsetX = 0,
+              durationOffsetY = 0,
+              durationSize = 12,
+              iconSize = 16,
+              iconSpacing = 2,
+              showBuffs = false,
+              showDebuffs = true,
+              showDuration = false,
+              showStack = true,
+              stackAnchor = "BOTTOMRIGHT",
+              stackColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              stackOffsetX = -1,
+              stackOffsetY = 1,
+              stackSize = 10
+            },
+            borderSize = 1,
+            castbar = {
+              anchor = "unitframe",
+              bgColor = {
+                [1] = 0.14899999999999999,
+                [2] = 0.14899999999999999,
+                [3] = 0.14899999999999999,
+                [4] = 1
+              },
+              borderColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              borderColorSource = "inherit",
+              borderSize = 1,
+              channelFillForward = false,
+              channelTickColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 0.90000000000000002
+              },
+              channelTickMinConfidence = 0.70000000000000007,
+              channelTickSourcePolicy = "auto",
+              channelTickThickness = 1,
+              color = {
+                [1] = 0.40400000000000003,
+                [2] = 1,
+                [3] = 0.98399999999999999,
+                [4] = 1
+              },
+              empoweredFillColors = {
+                [1] = {
+                  [1] = 0.26000000000000001,
+                  [2] = 0.64000000000000001,
+                  [3] = 0.95999999999999996,
+                  [4] = 1
+                },
+                [2] = {
+                  [1] = 0.91000000000000003,
+                  [2] = 0.34999999999999998,
+                  [3] = 0.40000000000000002,
+                  [4] = 1
+                },
+                [3] = {
+                  [1] = 0.94999999999999996,
+                  [2] = 0.75,
+                  [3] = 0.29999999999999999,
+                  [4] = 1
+                },
+                [4] = {
+                  [1] = 0.45000000000000001,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.34999999999999998,
+                  [4] = 1
+                },
+                [5] = {
+                  [1] = 0.75,
+                  [2] = 0.40000000000000002,
+                  [3] = 0.84999999999999998,
+                  [4] = 1
+                }
+              },
+              empoweredLevelTextAnchor = "CENTER",
+              empoweredLevelTextOffsetX = 0,
+              empoweredLevelTextOffsetY = 0,
+              empoweredStageColors = {
+                [1] = {
+                  [1] = 0.14999999999999999,
+                  [2] = 0.38,
+                  [3] = 0.57999999999999996,
+                  [4] = 1
+                },
+                [2] = {
+                  [1] = 0.55000000000000004,
+                  [2] = 0.20000000000000001,
+                  [3] = 0.23999999999999999,
+                  [4] = 1
+                },
+                [3] = {
+                  [1] = 0.57999999999999996,
+                  [2] = 0.45000000000000001,
+                  [3] = 0.17999999999999999,
+                  [4] = 1
+                },
+                [4] = {
+                  [1] = 0.27000000000000002,
+                  [2] = 0.5,
+                  [3] = 0.20999999999999999,
+                  [4] = 1
+                },
+                [5] = {
+                  [1] = 0.45000000000000001,
+                  [2] = 0.20000000000000001,
+                  [3] = 0.5,
+                  [4] = 1
+                }
+              },
+              enabled = true,
+              fontSize = 14,
+              freeOffsetX = 0,
+              freeOffsetY = -35,
+              gcdColor = {
+                [1] = 0.40400000000000003,
+                [2] = 1,
+                [3] = 0.98399999999999999,
+                [4] = 1
+              },
+              height = 25,
+              hideTimeTextOnEmpowered = false,
+              highlightInterruptible = false,
+              iconAnchor = "LEFT",
+              iconBorderColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              iconBorderColorSource = "inherit",
+              iconBorderSize = 1,
+              iconScale = 1,
+              iconSize = 25,
+              iconSpacing = 0,
+              interruptibleColor = {
+                [1] = 0.20000000000000001,
+                [2] = 0.80000000000000004,
+                [3] = 0.20000000000000001,
+                [4] = 1
+              },
+              lockedOffsetX = 0,
+              lockedOffsetY = -25,
+              lockedToEssential = false,
+              lockedToFrame = false,
+              lockedToUtility = false,
+              maxLength = 0,
+              notInterruptibleColor = {
+                [1] = 0.69999999999999996,
+                [2] = 0.20000000000000001,
+                [3] = 0.20000000000000001,
+                [4] = 1
+              },
+              offsetX = 0,
+              offsetY = 0,
+              previewMode = false,
+              showChannelTicks = true,
+              showEmpoweredLevel = false,
+              showGCD = false,
+              showGCDMelee = false,
+              showGCDReverse = false,
+              showIcon = true,
+              showSpellText = true,
+              showTimeText = true,
+              spellTextAnchor = "LEFT",
+              spellTextOffsetX = 4,
+              spellTextOffsetY = 0,
+              statusBarAnchor = "BOTTOMRIGHT",
+              texture = "Quazii v5",
+              timeTextAnchor = "RIGHT",
+              timeTextOffsetX = -4,
+              timeTextOffsetY = 0,
+              useClassColor = false,
+              width = 851,
+              widthAdjustment = 0
+            },
+            customHealthColor = {
+              [1] = 0.20000000000000001,
+              [2] = 0.59999999999999998,
+              [3] = 0.20000000000000001,
+              [4] = 1
+            },
+            enabled = true,
+            healPrediction = {
+              color = {
+                [1] = 0.20000000000000001,
+                [2] = 1,
+                [3] = 0.20000000000000001
+              },
+              enabled = true,
+              opacity = 0.5
+            },
+            healthAnchor = "RIGHT",
+            healthDisplayStyle = "both",
+            healthDivider = " | ",
+            healthFontSize = 16,
+            healthOffsetX = 0,
+            healthOffsetY = 0,
+            healthTextColor = {
+              [1] = 1,
+              [2] = 1,
+              [3] = 1,
+              [4] = 1
+            },
+            healthTextUseClassColor = false,
+            height = 40,
+            hideHealthPercentSymbol = false,
+            hidePowerPercentSymbol = false,
+            indicators = {
+              combat = {
+                anchor = "TOP",
+                enabled = false,
+                offsetX = -2,
+                offsetY = 2,
+                size = 16
+              },
+              rested = {
+                anchor = "TOP",
+                enabled = false,
+                offsetX = 0,
+                offsetY = 0,
+                size = 16
+              },
+              stance = {
+                anchor = "BOTTOM",
+                customColor = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1,
+                  [4] = 1
+                },
+                enabled = false,
+                fontSize = 12,
+                iconOffsetX = -2,
+                iconSize = 14,
+                offsetX = 0,
+                offsetY = -2,
+                showIcon = false,
+                useClassColor = true
+              }
+            },
+            leaderIcon = {
+              anchor = "TOP",
+              enabled = false,
+              size = 16,
+              xOffset = 0,
+              yOffset = 0
+            },
+            maxNameLength = 0,
+            nameAnchor = "LEFT",
+            nameFontSize = 16,
+            nameOffsetX = 0,
+            nameOffsetY = 0,
+            nameTextColor = {
+              [1] = 1,
+              [2] = 1,
+              [3] = 1,
+              [4] = 1
+            },
+            nameTextUseClassColor = false,
+            offsetX = -290,
+            offsetY = -219,
+            portraitBorderColor = {
+              [1] = 0,
+              [2] = 0,
+              [3] = 0,
+              [4] = 1
+            },
+            portraitBorderColorSource = "inherit",
+            portraitBorderSize = 1,
+            portraitGap = 0,
+            portraitOffsetX = 0,
+            portraitOffsetY = 0,
+            portraitSide = "LEFT",
+            portraitSize = 40,
+            powerBarBorder = true,
+            powerBarColor = {
+              [1] = 0,
+              [2] = 0.5,
+              [3] = 1,
+              [4] = 1
+            },
+            powerBarHeight = 4,
+            powerBarUsePowerColor = true,
+            powerTextAnchor = "BOTTOMRIGHT",
+            powerTextColor = {
+              [1] = 1,
+              [2] = 1,
+              [3] = 1,
+              [4] = 1
+            },
+            powerTextFontSize = 12,
+            powerTextFormat = "percent",
+            powerTextOffsetX = -9,
+            powerTextOffsetY = 4,
+            powerTextUseClassColor = false,
+            powerTextUsePowerColor = true,
+            showHealth = true,
+            showHealthAbsolute = true,
+            showHealthPercent = true,
+            showName = true,
+            showPortrait = false,
+            showPowerBar = true,
+            showPowerText = false,
+            targetMarker = {
+              anchor = "TOP",
+              enabled = false,
+              size = 20,
+              xOffset = 0,
+              yOffset = 8
+            },
+            texture = "Quazii v5",
+            useClassColor = true,
+            width = 240
+          },
+          raid = {
+            absorbs = {
+              opacity = 0.70000000000000007
+            },
+            auras = {
+              onlyMyDebuffs = true
+            },
+            enabled = true,
+            offsetX = -687,
+            offsetY = 237,
+            spacing = 0,
+            width = 100
+          },
+          target = {
+            absorbs = {
+              color = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              enabled = true,
+              opacity = 0.70000000000000007,
+              texture = "DrewUI Stripes"
+            },
+            anchorGap = 0,
+            anchorTo = "essential",
+            anchorYOffset = 0,
+            auras = {
+              buffAnchor = "TOPRIGHT",
+              buffClassifications = {
+                bigDefensive = false,
+                cancelable = false,
+                externalDefensive = false,
+                helpful = false,
+                important = false,
+                notCancelable = false
+              },
+              buffDuration = {
+                anchor = "CENTER",
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1,
+                  [4] = 1
+                },
+                fontSize = 12,
+                offsetX = 0,
+                offsetY = 0,
+                show = true
+              },
+              buffDurationAnchor = "CENTER",
+              buffDurationColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              buffDurationOffsetX = 0,
+              buffDurationOffsetY = 0,
+              buffDurationSize = 12,
+              buffFilter = {
+                modifiers = {
+                  CANCELABLE = false,
+                  NOT_CANCELABLE = false,
+                  PLAYER = false,
+                  RAID = false
+                }
+              },
+              buffFilterMode = "off",
+              buffFilterOnlyMine = true,
+              buffGrow = "LEFT",
+              buffHideSwipe = true,
+              buffIconSize = 18,
+              buffMaxIcons = 4,
+              buffMaxPerRow = 0,
+              buffOffsetX = 0,
+              buffOffsetY = 0,
+              buffShowDuration = true,
+              buffShowStack = true,
+              buffSpacing = 0,
+              buffStack = {
+                anchor = "BOTTOMRIGHT",
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1,
+                  [4] = 1
+                },
+                fontSize = 10,
+                offsetX = -1,
+                offsetY = 1,
+                show = true
+              },
+              buffStackAnchor = "BOTTOMRIGHT",
+              buffStackColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              buffStackOffsetX = -1,
+              buffStackOffsetY = 1,
+              buffStackSize = 10,
+              debuffAnchor = "TOPLEFT",
+              debuffClassifications = {
+                crowdControl = false,
+                dispellable = false,
+                harmful = false,
+                important = false
+              },
+              debuffDuration = {
+                anchor = "CENTER",
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1,
+                  [4] = 1
+                },
+                fontSize = 10,
+                offsetX = 0,
+                offsetY = 0,
+                show = false
+              },
+              debuffDurationAnchor = "CENTER",
+              debuffDurationColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              debuffDurationOffsetX = 0,
+              debuffDurationOffsetY = 0,
+              debuffDurationSize = 12,
+              debuffFilter = {
+                modifiers = {
+                  INCLUDE_NAME_PLATE_ONLY = false,
+                  PLAYER = true,
+                  RAID = false
+                }
+              },
+              debuffFilterMode = "off",
+              debuffGrow = "RIGHT",
+              debuffHideSwipe = false,
+              debuffMaxIcons = 4,
+              debuffMaxPerRow = 0,
+              debuffOffsetX = 0,
+              debuffOffsetY = 0,
+              debuffShowDuration = true,
+              debuffShowStack = true,
+              debuffSpacing = 0,
+              debuffStack = {
+                anchor = "BOTTOMRIGHT",
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1,
+                  [4] = 1
+                },
+                fontSize = 10,
+                offsetX = -1,
+                offsetY = 1,
+                show = true
+              },
+              debuffStackAnchor = "BOTTOMRIGHT",
+              debuffStackColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              debuffStackOffsetX = 0,
+              debuffStackOffsetY = 0,
+              debuffStackSize = 10,
+              durationAnchor = "CENTER",
+              durationColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              durationOffsetX = 0,
+              durationOffsetY = 0,
+              durationSize = 12,
+              iconSize = 26,
+              iconSpacing = 2,
+              onlyMyDebuffs = true,
+              showBuffs = true,
+              showDebuffs = true,
+              showDuration = false,
+              showStack = true,
+              stackAnchor = "BOTTOMRIGHT",
+              stackColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              stackOffsetX = -1,
+              stackOffsetY = 1,
+              stackSize = 10
+            },
+            borderSize = 1,
+            castbar = {
+              anchor = "unitframe",
+              bgColor = {
+                [1] = 0.14899999999999999,
+                [2] = 0.14899999999999999,
+                [3] = 0.14899999999999999,
+                [4] = 1
+              },
+              borderColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              borderColorSource = "inherit",
+              borderSize = 1,
+              channelFillForward = false,
+              channelTickColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 0.90000000000000002
+              },
+              channelTickMinConfidence = 0.70000000000000007,
+              channelTickSourcePolicy = "auto",
+              channelTickThickness = 1,
+              color = {
+                [1] = 0.20000000000000001,
+                [2] = 0.59999999999999998,
+                [3] = 1,
+                [4] = 1
+              },
+              empoweredFillColors = {
+                [1] = {
+                  [1] = 0.26000000000000001,
+                  [2] = 0.64000000000000001,
+                  [3] = 0.95999999999999996,
+                  [4] = 1
+                },
+                [2] = {
+                  [1] = 0.91000000000000003,
+                  [2] = 0.34999999999999998,
+                  [3] = 0.40000000000000002,
+                  [4] = 1
+                },
+                [3] = {
+                  [1] = 0.94999999999999996,
+                  [2] = 0.75,
+                  [3] = 0.29999999999999999,
+                  [4] = 1
+                },
+                [4] = {
+                  [1] = 0.45000000000000001,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.34999999999999998,
+                  [4] = 1
+                },
+                [5] = {
+                  [1] = 0.75,
+                  [2] = 0.40000000000000002,
+                  [3] = 0.84999999999999998,
+                  [4] = 1
+                }
+              },
+              empoweredLevelTextAnchor = "CENTER",
+              empoweredLevelTextOffsetX = 0,
+              empoweredLevelTextOffsetY = 0,
+              empoweredStageColors = {
+                [1] = {
+                  [1] = 0.14999999999999999,
+                  [2] = 0.38,
+                  [3] = 0.57999999999999996,
+                  [4] = 1
+                },
+                [2] = {
+                  [1] = 0.55000000000000004,
+                  [2] = 0.20000000000000001,
+                  [3] = 0.23999999999999999,
+                  [4] = 1
+                },
+                [3] = {
+                  [1] = 0.57999999999999996,
+                  [2] = 0.45000000000000001,
+                  [3] = 0.17999999999999999,
+                  [4] = 1
+                },
+                [4] = {
+                  [1] = 0.27000000000000002,
+                  [2] = 0.5,
+                  [3] = 0.20999999999999999,
+                  [4] = 1
+                },
+                [5] = {
+                  [1] = 0.45000000000000001,
+                  [2] = 0.20000000000000001,
+                  [3] = 0.5,
+                  [4] = 1
+                }
+              },
+              enabled = true,
+              fontSize = 14,
+              freeOffsetX = 0,
+              freeOffsetY = 0,
+              gcdColor = {
+                [1] = 0.20000000000000001,
+                [2] = 0.59999999999999998,
+                [3] = 1,
+                [4] = 1
+              },
+              height = 25,
+              hideTimeTextOnEmpowered = false,
+              highlightInterruptible = true,
+              iconAnchor = "LEFT",
+              iconBorderColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              iconBorderColorSource = "inherit",
+              iconBorderSize = 2,
+              iconScale = 1,
+              iconSize = 25,
+              iconSpacing = 0,
+              interruptibleColor = {
+                [1] = 0.20000000000000001,
+                [2] = 0.80000000000000004,
+                [3] = 0.20000000000000001,
+                [4] = 1
+              },
+              lockedOffsetX = 0,
+              lockedOffsetY = -25,
+              maxLength = 12,
+              notInterruptibleColor = {
+                [1] = 0.69999999999999996,
+                [2] = 0.20000000000000001,
+                [3] = 0.20000000000000001,
+                [4] = 1
+              },
+              offsetX = 0,
+              offsetY = 0,
+              previewMode = false,
+              showChannelTicks = false,
+              showEmpoweredLevel = false,
+              showIcon = true,
+              showSpellText = true,
+              showTimeText = true,
+              spellTextAnchor = "LEFT",
+              spellTextOffsetX = 4,
+              spellTextOffsetY = 0,
+              statusBarAnchor = "BOTTOMRIGHT",
+              texture = "Quazii v5",
+              timeTextAnchor = "RIGHT",
+              timeTextOffsetX = -4,
+              timeTextOffsetY = 0,
+              useClassColor = false,
+              width = 240,
+              widthAdjustment = 0
+            },
+            classificationIcon = {
+              anchor = "TOP",
+              enabled = true,
+              size = 25,
+              xOffset = -16,
+              yOffset = 18
+            },
+            customHealthColor = {
+              [1] = 0.20000000000000001,
+              [2] = 0.59999999999999998,
+              [3] = 0.20000000000000001,
+              [4] = 1
+            },
+            enabled = true,
+            healPrediction = {
+              color = {
+                [1] = 0.20000000000000001,
+                [2] = 1,
+                [3] = 0.20000000000000001
+              },
+              enabled = false,
+              opacity = 0.5
+            },
+            healthAnchor = "LEFT",
+            healthDisplayStyle = "both",
+            healthDivider = " | ",
+            healthFontSize = 16,
+            healthOffsetX = 0,
+            healthOffsetY = 0,
+            healthTextColor = {
+              [1] = 1,
+              [2] = 1,
+              [3] = 1,
+              [4] = 1
+            },
+            healthTextUseClassColor = false,
+            height = 40,
+            hideHealthPercentSymbol = false,
+            hidePowerPercentSymbol = false,
+            invertHealthDirection = false,
+            leaderIcon = {
+              anchor = "TOPLEFT",
+              enabled = false,
+              size = 16,
+              xOffset = -8,
+              yOffset = 8
+            },
+            maxNameLength = 0,
+            nameAnchor = "RIGHT",
+            nameFontSize = 16,
+            nameOffsetX = 0,
+            nameOffsetY = 0,
+            nameTextColor = {
+              [1] = 1,
+              [2] = 1,
+              [3] = 1,
+              [4] = 1
+            },
+            nameTextUseClassColor = false,
+            offsetX = 290,
+            offsetY = -219,
+            portraitBorderColor = {
+              [1] = 0,
+              [2] = 0,
+              [3] = 0,
+              [4] = 1
+            },
+            portraitBorderColorSource = "inherit",
+            portraitBorderSize = 1,
+            portraitGap = 0,
+            portraitOffsetX = 0,
+            portraitOffsetY = 0,
+            portraitSide = "RIGHT",
+            portraitSize = 40,
+            powerBarBorder = true,
+            powerBarColor = {
+              [1] = 0,
+              [2] = 0.5,
+              [3] = 1,
+              [4] = 1
+            },
+            powerBarHeight = 4,
+            powerBarUsePowerColor = true,
+            powerTextAnchor = "BOTTOMRIGHT",
+            powerTextColor = {
+              [1] = 1,
+              [2] = 1,
+              [3] = 1,
+              [4] = 1
+            },
+            powerTextFontSize = 14,
+            powerTextFormat = "percent",
+            powerTextOffsetX = -2,
+            powerTextOffsetY = 2,
+            powerTextUseClassColor = false,
+            powerTextUsePowerColor = false,
+            showHealth = true,
+            showHealthAbsolute = true,
+            showHealthPercent = true,
+            showInlineToT = false,
+            showName = true,
+            showPortrait = false,
+            showPowerBar = true,
+            showPowerText = false,
+            targetMarker = {
+              anchor = "TOP",
+              enabled = true,
+              size = 20,
+              xOffset = 0,
+              yOffset = 8
+            },
+            texture = "Quazii v5 Inverse",
+            totDividerColor = {
+              [1] = 1,
+              [2] = 1,
+              [3] = 1,
+              [4] = 1
+            },
+            totDividerUseClassColor = false,
+            totNameCharLimit = 0,
+            totSeparator = " >> ",
+            totUseClassColor = true,
+            useClassColor = true,
+            useHostilityColor = true,
+            width = 240
+          },
+          targettarget = {
+            absorbs = {
+              color = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              enabled = true,
+              opacity = 0.70000000000000007,
+              texture = "DrewUI Stripes"
+            },
+            auras = {
+              buffAnchor = "BOTTOMLEFT",
+              buffDurationAnchor = "CENTER",
+              buffDurationColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              buffDurationOffsetX = 0,
+              buffDurationOffsetY = 0,
+              buffDurationSize = 12,
+              buffFilter = {
+                modifiers = {
+                  CANCELABLE = false,
+                  NOT_CANCELABLE = false,
+                  PLAYER = false,
+                  RAID = false
+                }
+              },
+              buffGrow = "RIGHT",
+              buffHideSwipe = false,
+              buffIconSize = 22,
+              buffMaxIcons = 4,
+              buffMaxPerRow = 0,
+              buffOffsetX = 0,
+              buffOffsetY = 0,
+              buffShowDuration = true,
+              buffShowStack = true,
+              buffSpacing = 2,
+              buffStackAnchor = "BOTTOMRIGHT",
+              buffStackColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              buffStackOffsetX = -1,
+              buffStackOffsetY = 1,
+              buffStackSize = 10,
+              debuffAnchor = "TOPRIGHT",
+              debuffDurationAnchor = "CENTER",
+              debuffDurationColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              debuffDurationOffsetX = 0,
+              debuffDurationOffsetY = 0,
+              debuffDurationSize = 12,
+              debuffFilter = {
+                modifiers = {
+                  INCLUDE_NAME_PLATE_ONLY = false,
+                  PLAYER = false,
+                  RAID = false
+                }
+              },
+              debuffGrow = "LEFT",
+              debuffHideSwipe = false,
+              debuffMaxIcons = 4,
+              debuffMaxPerRow = 0,
+              debuffOffsetX = 0,
+              debuffOffsetY = 0,
+              debuffShowDuration = true,
+              debuffShowStack = true,
+              debuffSpacing = 0,
+              debuffStackAnchor = "BOTTOMRIGHT",
+              debuffStackColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              debuffStackOffsetX = -1,
+              debuffStackOffsetY = 1,
+              debuffStackSize = 10,
+              iconSize = 22,
+              onlyMyDebuffs = false,
+              showBuffs = false,
+              showDebuffs = true
+            },
+            borderSize = 1,
+            castbar = {
+              anchor = "none",
+              bgColor = {
+                [1] = 0.14899999999999999,
+                [2] = 0.14899999999999999,
+                [3] = 0.14899999999999999,
+                [4] = 1
+              },
+              borderColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              borderColorSource = "inherit",
+              borderSize = 1,
+              channelFillForward = false,
+              channelTickColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 0.90000000000000002
+              },
+              channelTickMinConfidence = 0.70000000000000007,
+              channelTickSourcePolicy = "auto",
+              channelTickThickness = 1,
+              color = {
+                [1] = 1,
+                [2] = 0.69999999999999996,
+                [3] = 0,
+                [4] = 1
+              },
+              empoweredFillColors = {
+                [1] = {
+                  [1] = 0.26000000000000001,
+                  [2] = 0.64000000000000001,
+                  [3] = 0.95999999999999996,
+                  [4] = 1
+                },
+                [2] = {
+                  [1] = 0.91000000000000003,
+                  [2] = 0.34999999999999998,
+                  [3] = 0.40000000000000002,
+                  [4] = 1
+                },
+                [3] = {
+                  [1] = 0.94999999999999996,
+                  [2] = 0.75,
+                  [3] = 0.29999999999999999,
+                  [4] = 1
+                },
+                [4] = {
+                  [1] = 0.45000000000000001,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.34999999999999998,
+                  [4] = 1
+                },
+                [5] = {
+                  [1] = 0.75,
+                  [2] = 0.40000000000000002,
+                  [3] = 0.84999999999999998,
+                  [4] = 1
+                }
+              },
+              empoweredLevelTextAnchor = "CENTER",
+              empoweredLevelTextOffsetX = 0,
+              empoweredLevelTextOffsetY = 0,
+              empoweredStageColors = {
+                [1] = {
+                  [1] = 0.14999999999999999,
+                  [2] = 0.38,
+                  [3] = 0.57999999999999996,
+                  [4] = 1
+                },
+                [2] = {
+                  [1] = 0.55000000000000004,
+                  [2] = 0.20000000000000001,
+                  [3] = 0.23999999999999999,
+                  [4] = 1
+                },
+                [3] = {
+                  [1] = 0.57999999999999996,
+                  [2] = 0.45000000000000001,
+                  [3] = 0.17999999999999999,
+                  [4] = 1
+                },
+                [4] = {
+                  [1] = 0.27000000000000002,
+                  [2] = 0.5,
+                  [3] = 0.20999999999999999,
+                  [4] = 1
+                },
+                [5] = {
+                  [1] = 0.45000000000000001,
+                  [2] = 0.20000000000000001,
+                  [3] = 0.5,
+                  [4] = 1
+                }
+              },
+              enabled = true,
+              fontSize = 10,
+              freeOffsetX = 0,
+              freeOffsetY = -20,
+              gcdColor = {
+                [1] = 1,
+                [2] = 0.69999999999999996,
+                [3] = 0,
+                [4] = 1
+              },
+              height = 12,
+              hideTimeTextOnEmpowered = false,
+              iconAnchor = "LEFT",
+              iconBorderColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              iconBorderColorSource = "inherit",
+              iconBorderSize = 0,
+              iconScale = 1,
+              iconSize = 8,
+              iconSpacing = 0,
+              lockedOffsetX = 0,
+              lockedOffsetY = -25,
+              maxLength = 0,
+              notInterruptibleColor = {
+                [1] = 0.69999999999999996,
+                [2] = 0.20000000000000001,
+                [3] = 0.20000000000000001,
+                [4] = 1
+              },
+              offsetX = 0,
+              offsetY = 0,
+              previewMode = false,
+              showChannelTicks = false,
+              showEmpoweredLevel = false,
+              showIcon = true,
+              showSpellText = true,
+              showTimeText = true,
+              spellTextAnchor = "LEFT",
+              spellTextOffsetX = 4,
+              spellTextOffsetY = 0,
+              statusBarAnchor = "BOTTOMRIGHT",
+              texture = "Solid",
+              timeTextAnchor = "RIGHT",
+              timeTextOffsetX = -4,
+              timeTextOffsetY = 0,
+              useClassColor = false,
+              width = 160,
+              widthAdjustment = 0
+            },
+            customHealthColor = {
+              [1] = 0.20000000000000001,
+              [2] = 0.59999999999999998,
+              [3] = 0.20000000000000001,
+              [4] = 1
+            },
+            enabled = true,
+            healthAnchor = "RIGHT",
+            healthDisplayStyle = "percent",
+            healthDivider = " | ",
+            healthFontSize = 14,
+            healthOffsetX = 0,
+            healthOffsetY = 0,
+            healthTextColor = {
+              [1] = 1,
+              [2] = 1,
+              [3] = 1,
+              [4] = 1
+            },
+            healthTextUseClassColor = false,
+            height = 30,
+            hideHealthPercentSymbol = false,
+            hidePowerPercentSymbol = false,
+            maxNameLength = 0,
+            nameAnchor = "LEFT",
+            nameFontSize = 14,
+            nameOffsetX = 0,
+            nameOffsetY = 0,
+            nameTextColor = {
+              [1] = 1,
+              [2] = 1,
+              [3] = 1,
+              [4] = 1
+            },
+            nameTextUseClassColor = false,
+            offsetX = 496,
+            offsetY = -214,
+            powerBarBorder = true,
+            powerBarColor = {
+              [1] = 0,
+              [2] = 0.5,
+              [3] = 1,
+              [4] = 1
+            },
+            powerBarHeight = 3,
+            powerBarUsePowerColor = true,
+            powerTextAnchor = "BOTTOMRIGHT",
+            powerTextColor = {
+              [1] = 1,
+              [2] = 1,
+              [3] = 1,
+              [4] = 1
+            },
+            powerTextFontSize = 10,
+            powerTextFormat = "percent",
+            powerTextOffsetX = -4,
+            powerTextOffsetY = 2,
+            powerTextUseClassColor = false,
+            powerTextUsePowerColor = true,
+            showHealth = true,
+            showHealthAbsolute = false,
+            showHealthPercent = true,
+            showName = true,
+            showPowerBar = true,
+            showPowerText = false,
+            targetMarker = {
+              anchor = "TOP",
+              enabled = false,
+              size = 16,
+              xOffset = 0,
+              yOffset = 6
+            },
+            texture = "Quazii",
+            useClassColor = true,
+            useHostilityColor = true,
+            width = 160
+          }
+        },
         frameAnchoring = {
           actionTracker = {
             offsetX = 649,
@@ -8972,20 +13617,6 @@ return {
             sizeStable = true,
             widthAdjust = 0
           },
-          cdmCustom_customBar_anon_1 = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "playerFrame",
-            point = "BOTTOMRIGHT",
-            relative = "TOPRIGHT",
-            sizeStable = true,
-            widthAdjust = 0
-          },
           cdmEssential = {
             autoHeight = false,
             autoWidth = false,
@@ -9030,19 +13661,6 @@ return {
           },
           consumables = {
             offsetY = 0
-          },
-          ["customCDMBar:custom_1"] = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "disabled",
-            point = "CENTER",
-            relative = "CENTER",
-            sizeStable = true,
-            widthAdjust = 0
           },
           damageMeter_extra_2 = {
             autoHeight = false,
@@ -9348,10 +13966,11 @@ return {
             xOffset = -1181,
             yOffset = -1172
           },
+          addDrewUIButton = true,
           addonAccentColor = {
-            [1] = 0.20399999999999999,
-            [2] = 0.82699999999999996,
-            [3] = 0.59999999999999998,
+            [1] = 0.376,
+            [2] = 0.64700000000000002,
+            [3] = 0.97999999999999998,
             [4] = 1
           },
           alertsBorderColor = {
@@ -9514,6 +14133,7 @@ return {
           skinUseClassColor = false,
           skinWeeklyRewards = true,
           skinWorldMap = true,
+          statusTrackingBarsBarTextFont = "__DrewUI_GLOBAL__",
           statusTrackingBarsBorderColor = {
             [1] = 0.82745105028152466,
             [2] = 0.094117656350135803,
@@ -9523,7 +14143,7 @@ return {
           statusTrackingBarsBorderOverride = false,
           statusTrackingBarsBorderUseClassColor = false,
           statusTrackingBarsHideBorder = false,
-          themePreset = "Classic Mint",
+          themePreset = "Sky Blue",
           tooltips = {
             bgOpacity = 0.94999999999999996,
             borderUseClassColor = false,
@@ -9570,7 +14190,7 @@ return {
               shortLabel = false,
               xOffset = 0
             },
-            ["ldb:NSRT"] = {
+            ["ldb:DrewUI"] = {
               clickThrough = false,
               hideIcon = false,
               minWidth = 0,
@@ -9578,7 +14198,7 @@ return {
               shortLabel = false,
               xOffset = 0
             },
-            ["ldb:QUI"] = {
+            ["ldb:NSRT"] = {
               clickThrough = false,
               hideIcon = false,
               minWidth = 0,
@@ -9664,7 +14284,7 @@ return {
               [1] = "travel",
               [2] = "volume",
               [3] = "time",
-              [4] = "ldb:QUI",
+              [4] = "ldb:DrewUI",
               [5] = "ldb:BugSack",
               [6] = "system",
               [7] = "currencies",
@@ -9733,11 +14353,10 @@ return {
             growthDirection = "LEFT",
             hiddenButtons = {
               AltoholicMinimapButton = false,
-              LibDBIcon10_KeystoneLoot = false,
-              LibDBIcon10_QUI = false
+              LibDBIcon10_DrewUI = false,
+              LibDBIcon10_KeystoneLoot = false
             },
             padding = 5,
-            toggleIcon = "hammer",
             toggleOffsetX = -30,
             toggleSize = 25
           },
@@ -9851,160 +14470,9 @@ return {
           },
           buff = {
             opacity = 1,
-            ownedSpells = {
-              [1] = {
-                id = 187880,
-                type = "spell"
-              },
-              [2] = {
-                id = 453405,
-                type = "spell"
-              },
-              [3] = {
-                id = 453409,
-                type = "spell"
-              },
-              [4] = {
-                id = 453406,
-                type = "spell"
-              },
-              [5] = {
-                id = 201900,
-                type = "spell"
-              },
-              [6] = {
-                id = 384143,
-                type = "spell"
-              },
-              [7] = {
-                id = 224125,
-                type = "spell"
-              },
-              [8] = {
-                id = 224127,
-                type = "spell"
-              },
-              [9] = {
-                id = 1262830,
-                type = "spell"
-              },
-              [10] = {
-                id = 114051,
-                type = "spell"
-              },
-              [11] = {
-                id = 444995,
-                type = "spell"
-              },
-              [12] = {
-                id = 192106,
-                type = "spell"
-              },
-              [13] = {
-                id = 108271,
-                type = "spell"
-              },
-              [14] = {
-                id = 260878,
-                type = "spell"
-              },
-              [15] = {
-                id = 58875,
-                type = "spell"
-              },
-              [16] = {
-                id = 381689,
-                type = "spell"
-              },
-              [17] = {
-                id = 198103,
-                type = "spell"
-              },
-              [18] = {
-                id = 2484,
-                type = "spell"
-              },
-              [19] = {
-                id = 192077,
-                type = "spell"
-              },
-              [20] = {
-                id = 192082,
-                type = "spell"
-              },
-              [21] = {
-                id = 445029,
-                type = "spell"
-              },
-              [22] = {
-                id = 2645,
-                type = "spell"
-              },
-              [23] = {
-                id = 546,
-                type = "spell"
-              },
-              [24] = {
-                id = 460697,
-                type = "spell"
-              },
-              [25] = {
-                id = 382042,
-                type = "spell"
-              },
-              [26] = {
-                id = 445031,
-                type = "spell"
-              },
-              [27] = {
-                id = 1260874,
-                type = "spell"
-              },
-              [28] = {
-                id = 187874,
-                type = "spell"
-              },
-              [29] = {
-                id = 1218047,
-                type = "spell"
-              },
-              [30] = {
-                id = 188389,
-                type = "spell"
-              },
-              [31] = {
-                id = 355630,
-                type = "spell"
-              },
-              [32] = {
-                id = 1279819,
-                type = "spell"
-              },
-              [33] = {
-                id = 470466,
-                type = "spell"
-              },
-              [34] = {
-                id = 445034,
-                type = "spell"
-              },
-              [35] = {
-                id = 192058,
-                type = "spell"
-              },
-              [36] = {
-                id = 466772,
-                type = "spell"
-              }
-            },
             pos = {
               ox = 0.0006103515625,
               oy = -145.49951171875
-            },
-            spellOverrides = {
-              [395296] = {
-                hideDurationText = false
-              }
             }
           },
           cdmVisibility = {
@@ -10019,28 +14487,6 @@ return {
               keybindOffsetX = -20,
               keybindOffsetY = -20,
               keybindTextSize = 6,
-              ownedSpells = {
-                [1] = {
-                  id = 49998,
-                  type = "spell"
-                },
-                [2] = {
-                  id = 77535,
-                  type = "spell"
-                },
-                [3] = {
-                  id = 207167,
-                  type = "spell"
-                },
-                [4] = {
-                  id = 454822,
-                  type = "spell"
-                },
-                [5] = {
-                  id = 391477,
-                  type = "spell"
-                }
-              },
               pos = {
                 ox = 0.000244140625,
                 oy = -145.4999694824219
@@ -10048,178 +14494,7 @@ return {
               shape = "icon",
               showKeybinds = false
             },
-            customBar_anon_1 = {
-              _legacyId = "anon_1",
-              _migratedFromCustomTrackers = true,
-              activeGlowColor = {
-                [1] = 1,
-                [2] = 0.84999999999999998,
-                [3] = 0.29999999999999999,
-                [4] = 1
-              },
-              activeGlowEnabled = true,
-              activeGlowFrequency = 0.10000000000000001,
-              activeGlowLines = 4,
-              activeGlowScale = 0.5,
-              activeGlowThickness = 1,
-              activeGlowType = "Pixel Glow",
-              anchorGap = -200,
-              anchorTo = "disabled",
-              borderSize = 0,
-              builtIn = false,
-              clickableIcons = false,
-              containerType = "customBar",
-              desaturateOnCooldown = true,
-              dormantSpells = {},
-              dynamicLayout = true,
-              enabled = true,
-              entries = {
-                [1] = {
-                  id = 26297,
-                  kind = "cooldown",
-                  type = "spell"
-                },
-                [2] = {
-                  id = 13,
-                  kind = "cooldown",
-                  type = "slot"
-                },
-                [3] = {
-                  id = 241289,
-                  kind = "cooldown",
-                  type = "item"
-                },
-                [4] = {
-                  id = 241305,
-                  kind = "cooldown",
-                  type = "item"
-                },
-                [5] = {
-                  id = 5512,
-                  kind = "cooldown",
-                  type = "item"
-                },
-                [6] = {
-                  id = 312411,
-                  kind = "cooldown",
-                  type = "spell"
-                }
-              },
-              growDirection = "LEFT",
-              hideGCD = true,
-              hideNonUsable = false,
-              iconDisplayMode = "always",
-              iconSize = 25,
-              id = "anon_1",
-              keybindContext = "customTrackers",
-              layoutDirection = "HORIZONTAL",
-              lockPosition = "topright",
-              locked = true,
-              lockedToPlayer = true,
-              name = "Custom Bar 1",
-              noDesaturateWithCharges = false,
-              offsetX = -155.98831896859701,
-              offsetY = -147.224930262496,
-              pos = {
-                ox = -237.99945068359381,
-                oy = -146.8187255859375
-              },
-              removedSpells = {},
-              row1 = {
-                aspectRatioCrop = 1,
-                borderColorTable = {
-                  [1] = 0,
-                  [2] = 0,
-                  [3] = 0,
-                  [4] = 1
-                },
-                borderSize = 1,
-                durationAnchor = "CENTER",
-                durationOffsetX = 0,
-                durationOffsetY = 0,
-                durationSize = 13,
-                durationTextColor = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                hideDurationText = false,
-                hideStackText = false,
-                iconCount = 8,
-                iconSize = 25,
-                opacity = 1,
-                padding = 0,
-                stackAnchor = "BOTTOMRIGHT",
-                stackOffsetX = 0,
-                stackOffsetY = 0,
-                stackSize = 9,
-                stackTextColor = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                xOffset = 0,
-                yOffset = 0,
-                zoom = 0
-              },
-              row2 = {
-                iconCount = 0
-              },
-              row3 = {
-                iconCount = 0
-              },
-              shape = "icon",
-              showActiveState = true,
-              showItemCharges = true,
-              showOnlyInCombat = false,
-              showOnlyOnCooldown = false,
-              showOnlyWhenActive = false,
-              showOnlyWhenOffCooldown = false,
-              showProfessionQuality = true,
-              showRechargeSwipe = false,
-              spacing = 0,
-              stackOffsetX = 0,
-              stackOffsetY = 0,
-              tooltipContext = "customTrackers",
-              visibilityMode = "always"
-            },
             essential = {
-              ownedSpells = {
-                [1] = {
-                  id = 195182,
-                  type = "spell"
-                },
-                [2] = {
-                  id = 50842,
-                  type = "spell"
-                },
-                [3] = {
-                  id = 43265,
-                  type = "spell"
-                },
-                [4] = {
-                  id = 439843,
-                  type = "spell"
-                },
-                [5] = {
-                  id = 49028,
-                  type = "spell"
-                },
-                [6] = {
-                  id = 48792,
-                  type = "spell"
-                },
-                [7] = {
-                  id = 55233,
-                  type = "spell"
-                },
-                [8] = {
-                  id = 48707,
-                  type = "spell"
-                }
-              },
               pos = {
                 ox = 0.000244140625,
                 oy = -179.9999694824219
@@ -10246,149 +14521,11 @@ return {
               shape = "icon"
             },
             utility = {
-              ownedSpells = {
-                [1] = {
-                  id = 48265,
-                  type = "spell"
-                },
-                [2] = {
-                  id = 47528,
-                  type = "spell"
-                },
-                [3] = {
-                  id = 221562,
-                  type = "spell"
-                },
-                [4] = {
-                  id = 49039,
-                  type = "spell"
-                },
-                [5] = {
-                  id = 207167,
-                  type = "spell"
-                },
-                [6] = {
-                  id = 56222,
-                  type = "spell"
-                },
-                [7] = {
-                  id = 51052,
-                  type = "spell"
-                },
-                [8] = {
-                  id = 1263569,
-                  type = "spell"
-                },
-                [9] = {
-                  id = 49576,
-                  type = "spell"
-                },
-                [10] = {
-                  id = 61999,
-                  type = "spell"
-                }
-              },
               pos = {
                 ox = 0.000244140625,
                 oy = -230.8581848144531
               },
               shape = "icon"
-            }
-          },
-          customBars = {
-            bars = {
-              [1] = {
-                aspectRatioCrop = 1,
-                borderColorTable = {
-                  [1] = 0,
-                  [2] = 0,
-                  [3] = 0,
-                  [4] = 1
-                },
-                borderSize = 1,
-                desaturateOnCooldown = true,
-                durationAnchor = "CENTER",
-                durationOffsetX = 0,
-                durationOffsetY = 0,
-                durationSize = 14,
-                durationTextColor = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                effects = {
-                  glow = {
-                    Color = {
-                      [1] = 0.94999999999999996,
-                      [2] = 0.94999999999999996,
-                      [3] = 0.32000000000000001,
-                      [4] = 1
-                    },
-                    Enabled = false,
-                    Frequency = 0.25,
-                    GlowType = "Pixel Glow",
-                    Lines = 14,
-                    Scale = 1,
-                    Thickness = 2,
-                    XOffset = 0,
-                    YOffset = 0
-                  },
-                  keybinds = {
-                    keybindAnchor = "TOPLEFT",
-                    keybindOffsetX = 2,
-                    keybindOffsetY = 2,
-                    keybindTextColor = {
-                      [1] = 1,
-                      [2] = 0.81999999999999995,
-                      [3] = 0,
-                      [4] = 1
-                    },
-                    keybindTextSize = 12,
-                    showKeybinds = false
-                  },
-                  overlayColor = {
-                    [1] = 1,
-                    [2] = 1,
-                    [3] = 1,
-                    [4] = 1
-                  },
-                  overlayColorMode = "default",
-                  showBuffSwipe = false,
-                  showCooldownSwipe = true,
-                  showGCDSwipe = false,
-                  swipeColor = {
-                    [1] = 1,
-                    [2] = 1,
-                    [3] = 1,
-                    [4] = 1
-                  },
-                  swipeColorMode = "default"
-                },
-                enabled = true,
-                growthDirection = "UP",
-                iconCount = 0,
-                iconSize = 39,
-                id = "custom_1",
-                name = "Custom Bar 1",
-                opacity = 1,
-                padding = 2,
-                pos = {
-                  ox = 0,
-                  oy = 0
-                },
-                stackAnchor = "BOTTOMRIGHT",
-                stackOffsetX = 0,
-                stackOffsetY = 0,
-                stackSize = 12,
-                stackTextColor = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                zoom = 0
-              }
             }
           },
           customEntriesSpecSpecific = false,
@@ -10403,62 +14540,6 @@ return {
             clickableIcons = true,
             greyOutInactive = true,
             growthDirection = "DOWN",
-            ownedSpells = {
-              [1] = {
-                id = 188196,
-                kind = "cooldown",
-                row = 1,
-                type = "spell"
-              },
-              [2] = {
-                id = 188443,
-                kind = "cooldown",
-                row = 1,
-                type = "spell"
-              },
-              [3] = {
-                id = 17364,
-                kind = "cooldown",
-                row = 1,
-                type = "spell"
-              },
-              [4] = {
-                id = 60103,
-                kind = "cooldown",
-                row = 1,
-                type = "spell"
-              },
-              [5] = {
-                id = 470057,
-                kind = "cooldown",
-                row = 1,
-                type = "spell"
-              },
-              [6] = {
-                id = 187874,
-                kind = "cooldown",
-                row = 1,
-                type = "spell"
-              },
-              [7] = {
-                id = 197214,
-                kind = "cooldown",
-                row = 1,
-                type = "spell"
-              },
-              [8] = {
-                id = 444995,
-                kind = "cooldown",
-                row = 1,
-                type = "spell"
-              },
-              [9] = {
-                id = 384352,
-                kind = "cooldown",
-                row = 1,
-                type = "spell"
-              }
-            },
             pos = {
               ox = 0.00048828125,
               oy = -179.9995422363281
@@ -10474,23 +14555,6 @@ return {
             },
             row3 = {
               opacity = 1
-            },
-            spellOverrides = {
-              [121253] = {
-                desaturateIgnoreAura = true
-              },
-              [195182] = {
-                glowColor = {
-                  [1] = 0.78000000000000003,
-                  [2] = 0.192,
-                  [3] = 0.192,
-                  [4] = 1
-                },
-                hideDurationText = false
-              },
-              [473728] = {
-                procOnUsable = true
-              }
             }
           },
           powerBar = {
@@ -10523,7 +14587,6 @@ return {
             iconSize = 40,
             inactiveAlpha = 0,
             opacity = 1,
-            ownedSpells = {},
             padding = 2,
             pos = {
               ox = 405.9998779296875,
@@ -10545,66 +14608,6 @@ return {
           utility = {
             clickableIcons = true,
             growthDirection = "DOWN",
-            ownedSpells = {
-              [1] = {
-                id = 192077,
-                kind = "cooldown",
-                row = 1,
-                type = "spell"
-              },
-              [2] = {
-                id = 58875,
-                kind = "cooldown",
-                row = 1,
-                type = "spell"
-              },
-              [3] = {
-                id = 196884,
-                kind = "cooldown",
-                row = 1,
-                type = "spell"
-              },
-              [4] = {
-                id = 108271,
-                kind = "cooldown",
-                row = 1,
-                type = "spell"
-              },
-              [5] = {
-                id = 192058,
-                kind = "cooldown",
-                row = 1,
-                type = "spell"
-              },
-              [6] = {
-                id = 57994,
-                kind = "cooldown",
-                row = 2,
-                type = "spell"
-              },
-              [7] = {
-                id = 108287,
-                kind = "cooldown",
-                row = 2,
-                type = "spell"
-              },
-              [8] = {
-                id = 2484,
-                kind = "cooldown",
-                row = 2,
-                type = "spell"
-              },
-              [9] = {
-                id = 198103,
-                kind = "cooldown",
-                type = "spell"
-              },
-              [10] = {
-                id = 20608,
-                kind = "cooldown",
-                type = "spell"
-              }
-            },
             pos = {
               ox = 0.00048828125,
               oy = -245.1253356933594
@@ -10621,12 +14624,6 @@ return {
             },
             row3 = {
               opacity = 1
-            },
-            spellOverrides = {
-              [48707] = {
-                glowEnabled = false,
-                hidden = false
-              }
             }
           }
         },
@@ -10656,15 +14653,15 @@ return {
           ["13:0:Spec Auto-Switch"] = false,
           ["13:0:Switch Profile"] = false,
           ["14:2:Details! String"] = false,
+          ["14:2:DrewUI Import/Export String - Dark Mode"] = false,
+          ["14:2:DrewUI Import/Export String - Default Profile"] = false,
           ["14:2:Plater String"] = false,
           ["14:2:Platynator String"] = false,
-          ["14:2:QUI Import/Export String - Dark Mode"] = false,
-          ["14:2:QUI Import/Export String - Default Profile"] = false,
           ["14:2:Quazii Edit Mode String"] = false,
           ["2:1:Consumable Check"] = false,
           ["2:1:Consumable Macros"] = false,
+          ["2:1:DrewUI Panel Settings"] = false,
           ["2:1:Popup & Toast Blocker"] = true,
-          ["2:1:QUI Panel Settings"] = false,
           ["2:1:Quick Salvage"] = false,
           ["2:1:Target Distance Bracket Display"] = false,
           ["2:2:Action Bars Visibility"] = false,
@@ -10755,665 +14752,8 @@ return {
           hideOutsidePreyZone = true,
           tickStyle = "quarters"
         },
-        quiGroupFrames = {
-          clickCast = {
-            loadoutBindings = {
-              [64] = {
-                [5414761] = {},
-                [79765370] = {}
-              },
-              [65] = {
-                [79678181] = {}
-              },
-              [70] = {
-                [75260321] = {}
-              },
-              [73] = {
-                [80692613] = {}
-              },
-              [250] = {
-                [1864202] = {},
-                [76287612] = {},
-                [78786881] = {},
-                [79264965] = {}
-              },
-              [252] = {
-                [1864204] = {},
-                [59211086] = {},
-                [78133639] = {},
-                [78359839] = {},
-                [78754861] = {},
-                [79932221] = {},
-                [80004423] = {}
-              },
-              [254] = {
-                [80342670] = {}
-              },
-              [260] = {
-                [60991066] = {}
-              },
-              [268] = {
-                [59881028] = {}
-              },
-              [577] = {
-                [60466817] = {}
-              },
-              [581] = {
-                [59816248] = {}
-              }
-            },
-            perLoadout = true,
-            rootSpellMigrationDone = true,
-            specBindings = {
-              [64] = {},
-              [70] = {},
-              [102] = {},
-              [103] = {},
-              [250] = {},
-              [252] = {},
-              [253] = {},
-              [256] = {
-                [1] = {
-                  actionType = "spell",
-                  button = "MiddleButton",
-                  modifiers = "",
-                  spell = "Pain Suppression"
-                },
-                [2] = {
-                  actionType = "spell",
-                  button = "RightButton",
-                  modifiers = "",
-                  spell = "Power Word: Shield"
-                },
-                [3] = {
-                  actionType = "spell",
-                  key = "H",
-                  modifiers = "",
-                  spell = "Flash Heal"
-                }
-              },
-              [258] = {},
-              [268] = {},
-              [1480] = {}
-            },
-            unitFrames = {
-              player = true
-            }
-          },
-          enabled = true,
-          party = {
-            absorbs = {
-              opacity = 0.70000000000000007
-            },
-            auras = {
-              buffOffsetX = 0,
-              buffOffsetY = 0,
-              debuffBlacklist = {
-                [26013] = true,
-                [57723] = true,
-                [57724] = true,
-                [71041] = true,
-                [80354] = true,
-                [95809] = true,
-                [160455] = true,
-                [264689] = true,
-                [390435] = true
-              },
-              debuffIconSize = 20,
-              debuffOffsetX = 0,
-              debuffOffsetY = 0,
-              debuffSpacing = 0,
-              elements = {
-                ["*"] = {
-                  [1] = {
-                    anchor = "BOTTOMLEFT",
-                    applyToRoles = "all",
-                    auraType = "HARMFUL",
-                    blacklist = {
-                      [26013] = true,
-                      [57723] = true,
-                      [57724] = true,
-                      [71041] = true,
-                      [80354] = true,
-                      [95809] = true,
-                      [160455] = true,
-                      [264689] = true,
-                      [390435] = true
-                    },
-                    classifications = {
-                      bigDefensive = false,
-                      cancelable = false,
-                      crowdControl = true,
-                      externalDefensive = false,
-                      important = true,
-                      notCancelable = false,
-                      raid = false,
-                      raidInCombat = true
-                    },
-                    dispelFilterMode = "off",
-                    dispelTypes = {},
-                    duration = {
-                      anchor = "CENTER",
-                      color = {
-                        [1] = 1,
-                        [2] = 1,
-                        [3] = 1,
-                        [4] = 1
-                      },
-                      fontSize = 10,
-                      offsetX = 0,
-                      offsetY = 0,
-                      show = true
-                    },
-                    enabled = true,
-                    filterFlags = {},
-                    filterMode = "classify",
-                    growDirection = "RIGHT",
-                    hidePermanent = true,
-                    hideSwipe = false,
-                    iconSize = 14,
-                    id = "e5",
-                    maxDurationSec = 0,
-                    maxIcons = 3,
-                    mode = "filterStrip",
-                    offsetX = 0,
-                    offsetY = 0,
-                    onlyMine = false,
-                    reverseSwipe = false,
-                    rightClickCancel = true,
-                    sortReverse = false,
-                    sortRule = "INDEX",
-                    spacing = 0,
-                    stack = {
-                      anchor = "BOTTOMRIGHT",
-                      color = {
-                        [1] = 1,
-                        [2] = 1,
-                        [3] = 1,
-                        [4] = 1
-                      },
-                      fontSize = 9,
-                      offsetX = -1,
-                      offsetY = 1,
-                      show = true
-                    },
-                    whitelist = {}
-                  },
-                  [2] = {
-                    anchor = "BOTTOMRIGHT",
-                    auraType = "HELPFUL",
-                    blacklist = {},
-                    borderColor = {
-                      [1] = 0,
-                      [2] = 0.80000000000000004,
-                      [3] = 0,
-                      [4] = 1
-                    },
-                    classifications = {
-                      bigDefensive = true,
-                      externalDefensive = true
-                    },
-                    duration = {
-                      anchor = "BOTTOM",
-                      color = {
-                        [1] = 1,
-                        [2] = 1,
-                        [3] = 1,
-                        [4] = 1
-                      },
-                      fontSize = 9,
-                      offsetX = 0,
-                      offsetY = -6,
-                      show = true
-                    },
-                    enabled = true,
-                    filterFlags = {},
-                    filterMode = "classify",
-                    growDirection = "LEFT",
-                    hideSwipe = false,
-                    iconSize = 15,
-                    id = "defensives",
-                    maxIcons = 3,
-                    mode = "filterStrip",
-                    offsetX = 0,
-                    offsetY = 4,
-                    reverseSwipe = true,
-                    rightClickCancel = false,
-                    sortReverse = false,
-                    sortRule = "INDEX",
-                    spacing = 0,
-                    stack = {
-                      anchor = "BOTTOMRIGHT",
-                      color = {
-                        [1] = 1,
-                        [2] = 1,
-                        [3] = 1,
-                        [4] = 1
-                      },
-                      fontSize = 9,
-                      offsetX = -1,
-                      offsetY = 1,
-                      show = true
-                    },
-                    swipeStyle = "radial",
-                    whitelist = {}
-                  }
-                }
-              },
-              elementsSeeded = true,
-              filterMode = "classification",
-              showBuffs = true
-            },
-            healAbsorbs = {
-              opacity = 0.60000000000000009
-            },
-            healer = {
-              dispelOverlay = {
-                enabled = false,
-                fillOpacity = 0.20000000000000001
-              },
-              targetHighlight = {
-                fillOpacity = 0.10000000000000001
-              }
-            },
-            health = {
-              healthOffsetX = 0
-            },
-            indicators = {
-              leaderOffsetY = 0,
-              readyCheckAnchor = "TOP",
-              resurrectionAnchor = "TOP",
-              roleIconOffsetX = 0,
-              roleIconOffsetY = 0,
-              roleIconSize = 15,
-              showPhaseIcon = false,
-              showRoleDPS = false,
-              summonAnchor = "TOP",
-              summonOffsetX = 0,
-              targetMarkerAnchor = "TOP",
-              targetMarkerOffsetX = 0,
-              targetMarkerOffsetY = 0,
-              threatBorderSize = 2
-            },
-            layout = {
-              growDirection = "RIGHT",
-              orientation = "HORIZONTAL"
-            },
-            name = {
-              nameOffsetX = 0
-            },
-            pinnedAuras = {
-              specSlots = {
-                [250] = {},
-                [252] = {},
-                [1473] = {}
-              }
-            },
-            power = {
-              powerBarOnlyHealers = true,
-              powerBarOnlyTanks = true
-            }
-          },
-          partyTracker = {
-            ccIcons = {
-              anchor = "LEFT",
-              enabled = true,
-              growDirection = "RIGHT",
-              iconSize = 15,
-              maxIcons = 1,
-              offsetX = 0,
-              offsetY = 0,
-              showCC = false,
-              showDefensives = false,
-              spacing = 0
-            },
-            kickTimer = {
-              anchor = "TOPRIGHT",
-              enabled = true,
-              iconSize = 15,
-              offsetX = 0,
-              offsetY = 0,
-              reverseSwipe = false
-            },
-            partyCooldowns = {
-              anchor = "BOTTOM",
-              dimReadyAlpha = 0.5,
-              displayMode = "static",
-              enabled = true,
-              filter = "all",
-              growDirection = "CENTER",
-              iconRows = 1,
-              iconSize = 15,
-              maxIcons = 3,
-              offsetX = 0,
-              offsetY = 0,
-              spacing = 0
-            }
-          },
-          position = {
-            offsetX = 0,
-            offsetY = -3
-          },
-          raid = {
-            absorbs = {
-              opacity = 0.70000000000000007,
-              useClassColor = false
-            },
-            auraIndicators = {
-              anchor = "TOP",
-              anchorOffsetX = -40,
-              iconSize = 10,
-              maxIndicators = 3
-            },
-            auras = {
-              buffBlacklist = {
-                [1126] = true,
-                [1459] = true,
-                [6673] = true,
-                [21562] = true,
-                [369459] = true,
-                [381748] = true,
-                [381753] = true
-              },
-              buffOffsetX = 0,
-              buffOffsetY = 0,
-              debuffAnchor = "BOTTOMLEFT",
-              debuffBlacklist = {
-                [26013] = true,
-                [57723] = true,
-                [57724] = true,
-                [71041] = true,
-                [80354] = true,
-                [95809] = true,
-                [160455] = true,
-                [264689] = true,
-                [390435] = true
-              },
-              debuffClassifications = {
-                raid = false
-              },
-              debuffGrowDirection = "RIGHT",
-              debuffIconSize = 15,
-              debuffOffsetX = 0,
-              debuffOffsetY = 0,
-              debuffSpacing = 0,
-              elements = {
-                [250] = {
-                  [1] = {
-                    anchor = "TOP",
-                    applyToRoles = "all",
-                    auraType = "HELPFUL",
-                    border = {
-                      thickness = 2
-                    },
-                    color = {
-                      [1] = 1,
-                      [2] = 1,
-                      [3] = 1
-                    },
-                    displayType = "icon",
-                    duration = {
-                      anchor = "CENTER",
-                      color = {
-                        [1] = 1,
-                        [2] = 1,
-                        [3] = 1,
-                        [4] = 1
-                      },
-                      fontSize = 9,
-                      offsetX = 0,
-                      offsetY = 0,
-                      show = true
-                    },
-                    hideSwipe = true,
-                    iconSize = 8,
-                    mode = "tracked",
-                    offsetX = 0,
-                    offsetY = 0,
-                    onlyMine = false,
-                    onlyMineSpells = {},
-                    spells = {
-                      [1] = 31821
-                    },
-                    stack = {
-                      anchor = "BOTTOMRIGHT",
-                      color = {
-                        [1] = 1,
-                        [2] = 1,
-                        [3] = 1,
-                        [4] = 1
-                      },
-                      fontSize = 9,
-                      offsetX = -1,
-                      offsetY = 1,
-                      show = true
-                    }
-                  },
-                  [2] = {
-                    anchor = "BOTTOMRIGHT",
-                    auraType = "HELPFUL",
-                    blacklist = {},
-                    borderColor = {
-                      [1] = 0,
-                      [2] = 0.80000000000000004,
-                      [3] = 0,
-                      [4] = 1
-                    },
-                    classifications = {
-                      bigDefensive = true,
-                      externalDefensive = true
-                    },
-                    duration = {
-                      anchor = "BOTTOM",
-                      color = {
-                        [1] = 1,
-                        [2] = 1,
-                        [3] = 1,
-                        [4] = 1
-                      },
-                      fontSize = 9,
-                      offsetX = 0,
-                      offsetY = -6,
-                      show = true
-                    },
-                    enabled = false,
-                    filterFlags = {},
-                    filterMode = "classify",
-                    growDirection = "LEFT",
-                    hideSwipe = false,
-                    iconSize = 15,
-                    id = "defensives",
-                    maxIcons = 3,
-                    mode = "filterStrip",
-                    offsetX = 0,
-                    offsetY = 4,
-                    reverseSwipe = true,
-                    rightClickCancel = false,
-                    sortReverse = false,
-                    sortRule = "INDEX",
-                    spacing = 0,
-                    stack = {
-                      anchor = "BOTTOMRIGHT",
-                      color = {
-                        [1] = 1,
-                        [2] = 1,
-                        [3] = 1,
-                        [4] = 1
-                      },
-                      fontSize = 9,
-                      offsetX = -1,
-                      offsetY = 1,
-                      show = true
-                    },
-                    swipeStyle = "radial",
-                    whitelist = {}
-                  }
-                },
-                ["*"] = {
-                  [1] = {
-                    anchor = "BOTTOMRIGHT",
-                    auraType = "HELPFUL",
-                    blacklist = {},
-                    borderColor = {
-                      [1] = 0,
-                      [2] = 0.80000000000000004,
-                      [3] = 0,
-                      [4] = 1
-                    },
-                    classifications = {
-                      bigDefensive = true,
-                      externalDefensive = true
-                    },
-                    duration = {
-                      anchor = "BOTTOM",
-                      color = {
-                        [1] = 1,
-                        [2] = 1,
-                        [3] = 1,
-                        [4] = 1
-                      },
-                      fontSize = 9,
-                      offsetX = 0,
-                      offsetY = -6,
-                      show = true
-                    },
-                    enabled = false,
-                    filterFlags = {},
-                    filterMode = "classify",
-                    growDirection = "LEFT",
-                    hideSwipe = false,
-                    iconSize = 15,
-                    id = "defensives",
-                    maxIcons = 3,
-                    mode = "filterStrip",
-                    offsetX = 0,
-                    offsetY = 4,
-                    reverseSwipe = true,
-                    rightClickCancel = false,
-                    sortReverse = false,
-                    sortRule = "INDEX",
-                    spacing = 0,
-                    stack = {
-                      anchor = "BOTTOMRIGHT",
-                      color = {
-                        [1] = 1,
-                        [2] = 1,
-                        [3] = 1,
-                        [4] = 1
-                      },
-                      fontSize = 9,
-                      offsetX = -1,
-                      offsetY = 1,
-                      show = true
-                    },
-                    swipeStyle = "radial",
-                    whitelist = {}
-                  }
-                }
-              },
-              elementsSeeded = true,
-              filterMode = "classification",
-              maxBuffs = 2,
-              maxDebuffs = 2,
-              showDebuffs = false
-            },
-            healAbsorbs = {
-              opacity = 0.60000000000000009
-            },
-            healer = {
-              dispelOverlay = {
-                enabled = false,
-                fillOpacity = 0.5,
-                opacity = 0.90000000000000002
-              },
-              targetHighlight = {
-                fillOpacity = 0.10000000000000001
-              }
-            },
-            indicators = {
-              leaderAnchor = "TOPLEFT",
-              leaderOffsetX = 10,
-              leaderOffsetY = 0,
-              leaderSize = 10,
-              phaseAnchor = "CENTER",
-              phaseOffsetX = 0,
-              phaseOffsetY = 0,
-              readyCheckSize = 10,
-              resurrectionSize = 10,
-              roleIconOffsetX = 0,
-              roleIconOffsetY = 0,
-              showPhaseIcon = false,
-              showRoleDPS = false,
-              summonOffsetX = 0,
-              summonSize = 10,
-              targetMarkerAnchor = "TOP",
-              targetMarkerOffsetX = -50,
-              targetMarkerOffsetY = 0,
-              threatBorderSize = 2,
-              threatFillOpacity = 0
-            },
-            layout = {
-              groupSpacing = 0,
-              orientation = "VERTICAL",
-              spacing = 0
-            },
-            pinnedAuras = {
-              edgeInset = 0,
-              enabled = true,
-              spacing = 4,
-              specSlots = {
-                [250] = {
-                  [1] = {
-                    anchor = "TOP",
-                    displayType = "icon",
-                    spellID = 31821
-                  },
-                  bottom = {},
-                  left = {},
-                  right = {},
-                  top = {
-                    [1] = {
-                      displayType = "icon",
-                      spellID = 31821
-                    },
-                    [2] = {
-                      displayType = "icon",
-                      spellID = 97463
-                    },
-                    [3] = {
-                      displayType = "icon",
-                      spellID = 15286
-                    }
-                  }
-                },
-                [252] = {},
-                [268] = {}
-              }
-            },
-            spotlight = {
-              filterHealer = false,
-              filterMode = "ROLE",
-              filterTank = true,
-              frameHeight = 50,
-              frameWidth = 200,
-              nameList = "",
-              orientation = "VERTICAL",
-              spacing = 4
-            }
-          },
-          raidPosition = {
-            offsetX = 0.55555556797319017,
-            offsetY = -391.66667542109911
-          },
-          testMode = {
-            raidCount = 20
-          }
-        },
         quiUnitFrames = {
           boss = {
-            absorbs = {
-              opacity = 0.70000000000000007
-            },
             auras = {
               elements = {
                 ["*"] = {
@@ -11543,444 +14883,10 @@ return {
                   }
                 }
               },
-              elementsSeeded = true,
-              onlyMyDebuffs = true
-            },
-            castbar = {
-              bgColor = {
-                [1] = 0.14899999999999999,
-                [2] = 0.14899999999999999,
-                [3] = 0.14899999999999999,
-                [4] = 1
-              },
-              borderColor = {
-                [1] = 0,
-                [2] = 0,
-                [3] = 0,
-                [4] = 1
-              },
-              borderColorSource = "inherit",
-              borderSize = 1,
-              channelFillForward = false,
-              channelTickColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 0.90000000000000002
-              },
-              channelTickMinConfidence = 0.69999999999999996,
-              channelTickSourcePolicy = "auto",
-              channelTickThickness = 1,
-              empoweredFillColors = {
-                [1] = {
-                  [1] = 0.26000000000000001,
-                  [2] = 0.64000000000000001,
-                  [3] = 0.95999999999999996,
-                  [4] = 1
-                },
-                [2] = {
-                  [1] = 0.91000000000000003,
-                  [2] = 0.34999999999999998,
-                  [3] = 0.40000000000000002,
-                  [4] = 1
-                },
-                [3] = {
-                  [1] = 0.94999999999999996,
-                  [2] = 0.75,
-                  [3] = 0.29999999999999999,
-                  [4] = 1
-                },
-                [4] = {
-                  [1] = 0.45000000000000001,
-                  [2] = 0.81999999999999995,
-                  [3] = 0.34999999999999998,
-                  [4] = 1
-                },
-                [5] = {
-                  [1] = 0.75,
-                  [2] = 0.40000000000000002,
-                  [3] = 0.84999999999999998,
-                  [4] = 1
-                }
-              },
-              empoweredLevelTextAnchor = "CENTER",
-              empoweredLevelTextOffsetX = 0,
-              empoweredLevelTextOffsetY = 0,
-              empoweredStageColors = {
-                [1] = {
-                  [1] = 0.14999999999999999,
-                  [2] = 0.38,
-                  [3] = 0.57999999999999996,
-                  [4] = 1
-                },
-                [2] = {
-                  [1] = 0.55000000000000004,
-                  [2] = 0.20000000000000001,
-                  [3] = 0.23999999999999999,
-                  [4] = 1
-                },
-                [3] = {
-                  [1] = 0.57999999999999996,
-                  [2] = 0.45000000000000001,
-                  [3] = 0.17999999999999999,
-                  [4] = 1
-                },
-                [4] = {
-                  [1] = 0.27000000000000002,
-                  [2] = 0.5,
-                  [3] = 0.20999999999999999,
-                  [4] = 1
-                },
-                [5] = {
-                  [1] = 0.45000000000000001,
-                  [2] = 0.20000000000000001,
-                  [3] = 0.5,
-                  [4] = 1
-                }
-              },
-              freeOffsetX = 0,
-              freeOffsetY = 0,
-              gcdColor = {
-                [1] = 1,
-                [2] = 0.69999999999999996,
-                [3] = 0,
-                [4] = 1
-              },
-              hideTimeTextOnEmpowered = false,
-              iconAnchor = "LEFT",
-              iconBorderColor = {
-                [1] = 0,
-                [2] = 0,
-                [3] = 0,
-                [4] = 1
-              },
-              iconBorderColorSource = "inherit",
-              iconBorderSize = 2,
-              iconScale = 1,
-              iconSize = 16,
-              iconSpacing = 0,
-              lockedOffsetX = 0,
-              lockedOffsetY = -25,
-              maxLength = 0,
-              notInterruptibleColor = {
-                [1] = 0.69999999999999996,
-                [2] = 0.20000000000000001,
-                [3] = 0.20000000000000001,
-                [4] = 1
-              },
-              previewMode = true,
-              showChannelTicks = false,
-              showEmpoweredLevel = false,
-              showSpellText = true,
-              showTimeText = true,
-              spellTextAnchor = "LEFT",
-              spellTextOffsetX = 4,
-              spellTextOffsetY = 0,
-              statusBarAnchor = "BOTTOMRIGHT",
-              texture = "Solid",
-              timeTextAnchor = "RIGHT",
-              timeTextOffsetX = -4,
-              timeTextOffsetY = 0,
-              useClassColor = false,
-              width = 175
-            },
-            classificationIcon = {
-              size = 30,
-              xOffset = -28
-            },
-            healthOffsetX = 0,
-            height = 35,
-            nameOffsetX = 0,
-            spacing = 20,
-            targetMarker = {
-              enabled = true
-            },
-            width = 175
-          },
-          focus = {
-            absorbs = {
-              opacity = 0.70000000000000007
-            },
-            auras = {
-              elements = {
-                ["*"] = {
-                  [1] = {
-                    anchor = "TOPLEFT",
-                    applyToRoles = "all",
-                    auraType = "HARMFUL",
-                    blacklist = {},
-                    classifications = {
-                      crowdControl = true,
-                      raid = true
-                    },
-                    dispelFilterMode = "off",
-                    dispelTypes = {},
-                    duration = {
-                      anchor = "CENTER",
-                      color = {
-                        [1] = 1,
-                        [2] = 1,
-                        [3] = 1,
-                        [4] = 1
-                      },
-                      fontSize = 10,
-                      offsetX = 0,
-                      offsetY = 0,
-                      show = false
-                    },
-                    enabled = false,
-                    filterFlags = {},
-                    filterMode = "off",
-                    growDirection = "RIGHT",
-                    hidePermanent = false,
-                    hideSwipe = false,
-                    iconSize = 20,
-                    iconsPerRow = 0,
-                    id = "debuffs",
-                    maxDurationSec = 0,
-                    maxIcons = 16,
-                    mode = "filterStrip",
-                    offsetX = 0,
-                    offsetY = 2,
-                    onlyMine = false,
-                    reverseSwipe = false,
-                    rightClickCancel = false,
-                    sortReverse = false,
-                    sortRule = "INDEX",
-                    spacing = 2,
-                    stack = {
-                      anchor = "BOTTOMRIGHT",
-                      color = {
-                        [1] = 1,
-                        [2] = 1,
-                        [3] = 1,
-                        [4] = 1
-                      },
-                      fontSize = 10,
-                      offsetX = -1,
-                      offsetY = 1,
-                      show = true
-                    },
-                    swipeStyle = "radial",
-                    whitelist = {}
-                  },
-                  [2] = {
-                    anchor = "BOTTOMLEFT",
-                    applyToRoles = "all",
-                    auraType = "HELPFUL",
-                    blacklist = {},
-                    classifications = {
-                      bigDefensive = false,
-                      cancelable = false,
-                      externalDefensive = false,
-                      notCancelable = false,
-                      raid = false,
-                      raidInCombat = false
-                    },
-                    dispelFilterMode = "off",
-                    dispelTypes = {},
-                    duration = {
-                      anchor = "CENTER",
-                      color = {
-                        [1] = 1,
-                        [2] = 1,
-                        [3] = 1,
-                        [4] = 1
-                      },
-                      fontSize = 12,
-                      offsetX = 0,
-                      offsetY = 0,
-                      show = true
-                    },
-                    enabled = true,
-                    filterFlags = {
-                      RAID = true
-                    },
-                    filterMode = "flags",
-                    growDirection = "RIGHT",
-                    hidePermanent = false,
-                    hideSwipe = false,
-                    iconSize = 20,
-                    iconsPerRow = 0,
-                    id = "buffs",
-                    maxDurationSec = 0,
-                    maxIcons = 16,
-                    mode = "filterStrip",
-                    offsetX = 0,
-                    offsetY = -2,
-                    onlyMine = false,
-                    reverseSwipe = false,
-                    rightClickCancel = false,
-                    sortReverse = false,
-                    sortRule = "INDEX",
-                    spacing = 2,
-                    stack = {
-                      anchor = "BOTTOMRIGHT",
-                      color = {
-                        [1] = 1,
-                        [2] = 1,
-                        [3] = 1,
-                        [4] = 1
-                      },
-                      fontSize = 10,
-                      offsetX = -1,
-                      offsetY = 1,
-                      show = true
-                    },
-                    swipeStyle = "radial",
-                    whitelist = {}
-                  }
-                }
-              },
-              elementsSeeded = true,
-              onlyMyDebuffs = false
-            },
-            castbar = {
-              bgColor = {
-                [1] = 0.14899999999999999,
-                [2] = 0.14899999999999999,
-                [3] = 0.14899999999999999,
-                [4] = 1
-              },
-              borderColor = {
-                [1] = 0,
-                [2] = 0,
-                [3] = 0,
-                [4] = 1
-              },
-              borderColorSource = "inherit",
-              borderSize = 1,
-              channelFillForward = false,
-              channelTickColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 0.90000000000000002
-              },
-              channelTickMinConfidence = 0.70000000000000007,
-              channelTickSourcePolicy = "auto",
-              channelTickThickness = 1,
-              empoweredFillColors = {
-                [1] = {
-                  [1] = 0.26000000000000001,
-                  [2] = 0.64000000000000001,
-                  [3] = 0.95999999999999996,
-                  [4] = 1
-                },
-                [2] = {
-                  [1] = 0.91000000000000003,
-                  [2] = 0.34999999999999998,
-                  [3] = 0.40000000000000002,
-                  [4] = 1
-                },
-                [3] = {
-                  [1] = 0.94999999999999996,
-                  [2] = 0.75,
-                  [3] = 0.29999999999999999,
-                  [4] = 1
-                },
-                [4] = {
-                  [1] = 0.45000000000000001,
-                  [2] = 0.81999999999999995,
-                  [3] = 0.34999999999999998,
-                  [4] = 1
-                },
-                [5] = {
-                  [1] = 0.75,
-                  [2] = 0.40000000000000002,
-                  [3] = 0.84999999999999998,
-                  [4] = 1
-                }
-              },
-              empoweredLevelTextAnchor = "CENTER",
-              empoweredLevelTextOffsetX = 0,
-              empoweredLevelTextOffsetY = 0,
-              empoweredStageColors = {
-                [1] = {
-                  [1] = 0.14999999999999999,
-                  [2] = 0.38,
-                  [3] = 0.57999999999999996,
-                  [4] = 1
-                },
-                [2] = {
-                  [1] = 0.55000000000000004,
-                  [2] = 0.20000000000000001,
-                  [3] = 0.23999999999999999,
-                  [4] = 1
-                },
-                [3] = {
-                  [1] = 0.57999999999999996,
-                  [2] = 0.45000000000000001,
-                  [3] = 0.17999999999999999,
-                  [4] = 1
-                },
-                [4] = {
-                  [1] = 0.27000000000000002,
-                  [2] = 0.5,
-                  [3] = 0.20999999999999999,
-                  [4] = 1
-                },
-                [5] = {
-                  [1] = 0.45000000000000001,
-                  [2] = 0.20000000000000001,
-                  [3] = 0.5,
-                  [4] = 1
-                }
-              },
-              freeOffsetX = 0,
-              freeOffsetY = 0,
-              gcdColor = {
-                [1] = 0.20000000000000001,
-                [2] = 0.59999999999999998,
-                [3] = 1,
-                [4] = 1
-              },
-              hideTimeTextOnEmpowered = false,
-              iconAnchor = "LEFT",
-              iconBorderColor = {
-                [1] = 0,
-                [2] = 0,
-                [3] = 0,
-                [4] = 1
-              },
-              iconBorderColorSource = "inherit",
-              iconBorderSize = 0,
-              iconScale = 1,
-              iconSize = 25,
-              iconSpacing = 0,
-              lockedOffsetX = 0,
-              lockedOffsetY = -25,
-              maxLength = 0,
-              previewMode = false,
-              showChannelTicks = false,
-              showEmpoweredLevel = false,
-              showSpellText = true,
-              showTimeText = true,
-              spellTextAnchor = "LEFT",
-              spellTextOffsetX = 4,
-              spellTextOffsetY = 0,
-              statusBarAnchor = "BOTTOMRIGHT",
-              texture = "Solid",
-              timeTextAnchor = "RIGHT",
-              timeTextOffsetX = -4,
-              timeTextOffsetY = 0,
-              useClassColor = false
-            },
-            enabled = true,
-            portraitOffsetX = 0,
-            portraitOffsetY = 0,
-            showPowerBar = false,
-            targetMarker = {
-              enabled = true
+              elementsSeeded = true
             }
           },
-          general = {
-            smootherAnimation = true
-          },
-          party = {
-            absorbs = {
-              opacity = 0.70000000000000007
-            },
+          focus = {
             auras = {
               elements = {
                 ["*"] = {
@@ -12014,7 +14920,7 @@ return {
                     growDirection = "RIGHT",
                     hidePermanent = false,
                     hideSwipe = false,
-                    iconSize = 22,
+                    iconSize = 20,
                     iconsPerRow = 0,
                     id = "debuffs",
                     maxDurationSec = 0,
@@ -12078,7 +14984,7 @@ return {
                     growDirection = "RIGHT",
                     hidePermanent = false,
                     hideSwipe = false,
-                    iconSize = 22,
+                    iconSize = 20,
                     iconsPerRow = 0,
                     id = "buffs",
                     maxDurationSec = 0,
@@ -12110,16 +15016,13 @@ return {
                   }
                 }
               },
-              elementsSeeded = true,
-              onlyMyDebuffs = true
+              elementsSeeded = true
             },
-            offsetX = -540,
-            offsetY = 123
+            castbar = {
+              previewMode = false
+            }
           },
           pet = {
-            absorbs = {
-              opacity = 0.70000000000000007
-            },
             auras = {
               elements = {
                 ["*"] = {
@@ -12249,154 +15152,13 @@ return {
                   }
                 }
               },
-              elementsSeeded = true,
-              onlyMyDebuffs = true
+              elementsSeeded = true
             },
             castbar = {
-              anchor = "none",
-              bgColor = {
-                [1] = 0.14899999999999999,
-                [2] = 0.14899999999999999,
-                [3] = 0.14899999999999999,
-                [4] = 1
-              },
-              borderColor = {
-                [1] = 0,
-                [2] = 0,
-                [3] = 0,
-                [4] = 1
-              },
-              borderSize = 1,
-              channelFillForward = false,
-              channelTickColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 0.90000000000000002
-              },
-              channelTickMinConfidence = 0.69999999999999996,
-              channelTickSourcePolicy = "auto",
-              channelTickThickness = 1,
-              empoweredFillColors = {
-                [1] = {
-                  [1] = 0.26000000000000001,
-                  [2] = 0.64000000000000001,
-                  [3] = 0.95999999999999996,
-                  [4] = 1
-                },
-                [2] = {
-                  [1] = 0.91000000000000003,
-                  [2] = 0.34999999999999998,
-                  [3] = 0.40000000000000002,
-                  [4] = 1
-                },
-                [3] = {
-                  [1] = 0.94999999999999996,
-                  [2] = 0.75,
-                  [3] = 0.29999999999999999,
-                  [4] = 1
-                },
-                [4] = {
-                  [1] = 0.45000000000000001,
-                  [2] = 0.81999999999999995,
-                  [3] = 0.34999999999999998,
-                  [4] = 1
-                },
-                [5] = {
-                  [1] = 0.75,
-                  [2] = 0.40000000000000002,
-                  [3] = 0.84999999999999998,
-                  [4] = 1
-                }
-              },
-              empoweredLevelTextAnchor = "CENTER",
-              empoweredLevelTextOffsetX = 0,
-              empoweredLevelTextOffsetY = 0,
-              empoweredStageColors = {
-                [1] = {
-                  [1] = 0.14999999999999999,
-                  [2] = 0.38,
-                  [3] = 0.57999999999999996,
-                  [4] = 1
-                },
-                [2] = {
-                  [1] = 0.55000000000000004,
-                  [2] = 0.20000000000000001,
-                  [3] = 0.23999999999999999,
-                  [4] = 1
-                },
-                [3] = {
-                  [1] = 0.57999999999999996,
-                  [2] = 0.45000000000000001,
-                  [3] = 0.17999999999999999,
-                  [4] = 1
-                },
-                [4] = {
-                  [1] = 0.27000000000000002,
-                  [2] = 0.5,
-                  [3] = 0.20999999999999999,
-                  [4] = 1
-                },
-                [5] = {
-                  [1] = 0.45000000000000001,
-                  [2] = 0.20000000000000001,
-                  [3] = 0.5,
-                  [4] = 1
-                }
-              },
-              enabled = true,
-              freeOffsetX = 0,
-              freeOffsetY = 0,
-              gcdColor = {
-                [1] = 0.40400000000000003,
-                [2] = 1,
-                [3] = 0.98399999999999999,
-                [4] = 1
-              },
-              hideTimeTextOnEmpowered = false,
-              iconAnchor = "LEFT",
-              iconBorderColor = {
-                [1] = 0,
-                [2] = 0,
-                [3] = 0,
-                [4] = 1
-              },
-              iconBorderSize = 0,
-              iconScale = 1,
-              iconSize = 25,
-              iconSpacing = 0,
-              lockedOffsetX = 0,
-              lockedOffsetY = -25,
-              maxLength = 0,
-              notInterruptibleColor = {
-                [1] = 0.69999999999999996,
-                [2] = 0.20000000000000001,
-                [3] = 0.20000000000000001,
-                [4] = 1
-              },
-              previewMode = false,
-              showChannelTicks = false,
-              showEmpoweredLevel = false,
-              showSpellText = true,
-              showTimeText = true,
-              spellTextAnchor = "LEFT",
-              spellTextOffsetX = 4,
-              spellTextOffsetY = 0,
-              statusBarAnchor = "BOTTOMRIGHT",
-              texture = "Solid",
-              timeTextAnchor = "RIGHT",
-              timeTextOffsetX = -4,
-              timeTextOffsetY = 0,
-              useClassColor = false
+              previewMode = false
             }
           },
           player = {
-            absorbs = {
-              enabled = true,
-              opacity = 0.70000000000000007
-            },
-            anchorGap = 0,
-            anchorTo = "essential",
             auras = {
               elements = {
                 ["*"] = {
@@ -12424,13 +15186,13 @@ return {
                       offsetY = 0,
                       show = false
                     },
-                    enabled = true,
+                    enabled = false,
                     filterFlags = {},
                     filterMode = "off",
                     growDirection = "RIGHT",
                     hidePermanent = false,
                     hideSwipe = false,
-                    iconSize = 16,
+                    iconSize = 22,
                     iconsPerRow = 0,
                     id = "debuffs",
                     maxDurationSec = 0,
@@ -12443,7 +15205,7 @@ return {
                     rightClickCancel = false,
                     sortReverse = false,
                     sortRule = "INDEX",
-                    spacing = 0,
+                    spacing = 2,
                     stack = {
                       anchor = "BOTTOMRIGHT",
                       color = {
@@ -12529,299 +15291,10 @@ return {
               elementsSeeded = true
             },
             castbar = {
-              anchor = "unitframe",
-              channelFillForward = false,
-              channelTickColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 0.90000000000000002
-              },
-              channelTickMinConfidence = 0.70000000000000007,
-              channelTickSourcePolicy = "auto",
-              channelTickThickness = 1,
-              empoweredFillColors = {
-                [1] = {
-                  [1] = 0.26000000000000001,
-                  [2] = 0.64000000000000001,
-                  [3] = 0.95999999999999996,
-                  [4] = 1
-                },
-                [2] = {
-                  [1] = 0.91000000000000003,
-                  [2] = 0.34999999999999998,
-                  [3] = 0.40000000000000002,
-                  [4] = 1
-                },
-                [3] = {
-                  [1] = 0.94999999999999996,
-                  [2] = 0.75,
-                  [3] = 0.29999999999999999,
-                  [4] = 1
-                },
-                [4] = {
-                  [1] = 0.45000000000000001,
-                  [2] = 0.81999999999999995,
-                  [3] = 0.34999999999999998,
-                  [4] = 1
-                },
-                [5] = {
-                  [1] = 0.75,
-                  [2] = 0.40000000000000002,
-                  [3] = 0.84999999999999998,
-                  [4] = 1
-                }
-              },
-              empoweredLevelTextAnchor = "CENTER",
-              empoweredLevelTextOffsetX = 0,
-              empoweredLevelTextOffsetY = 0,
-              empoweredStageColors = {
-                [1] = {
-                  [1] = 0.14999999999999999,
-                  [2] = 0.38,
-                  [3] = 0.57999999999999996,
-                  [4] = 1
-                },
-                [2] = {
-                  [1] = 0.55000000000000004,
-                  [2] = 0.20000000000000001,
-                  [3] = 0.23999999999999999,
-                  [4] = 1
-                },
-                [3] = {
-                  [1] = 0.57999999999999996,
-                  [2] = 0.45000000000000001,
-                  [3] = 0.17999999999999999,
-                  [4] = 1
-                },
-                [4] = {
-                  [1] = 0.27000000000000002,
-                  [2] = 0.5,
-                  [3] = 0.20999999999999999,
-                  [4] = 1
-                },
-                [5] = {
-                  [1] = 0.45000000000000001,
-                  [2] = 0.20000000000000001,
-                  [3] = 0.5,
-                  [4] = 1
-                }
-              },
-              freeOffsetX = 0,
-              freeOffsetY = -35,
-              gcdColor = {
-                [1] = 0.40400000000000003,
-                [2] = 1,
-                [3] = 0.98399999999999999,
-                [4] = 1
-              },
-              hideTimeTextOnEmpowered = false,
-              iconAnchor = "LEFT",
-              iconBorderSize = 1,
-              iconScale = 1,
-              iconSize = 25,
-              iconSpacing = 0,
-              lockedOffsetX = 0,
-              lockedOffsetY = -25,
-              lockedToEssential = false,
-              lockedToFrame = false,
-              lockedToUtility = false,
-              notInterruptibleColor = {
-                [1] = 0.69999999999999996,
-                [2] = 0.20000000000000001,
-                [3] = 0.20000000000000001,
-                [4] = 1
-              },
-              offsetY = 0,
-              previewMode = false,
-              showChannelTicks = true,
-              showEmpoweredLevel = false,
-              showGCD = false,
-              showGCDMelee = false,
-              showGCDReverse = false,
-              showSpellText = true,
-              showTimeText = true,
-              spellTextAnchor = "LEFT",
-              spellTextOffsetX = 4,
-              spellTextOffsetY = 0,
-              statusBarAnchor = "BOTTOMRIGHT",
-              timeTextAnchor = "RIGHT",
-              timeTextOffsetX = -4,
-              timeTextOffsetY = 0,
-              width = 851
-            },
-            healPrediction = {
-              enabled = true
-            },
-            healthOffsetX = 0,
-            indicators = {
-              combat = {
-                anchor = "TOP"
-              },
-              rested = {
-                anchor = "TOP",
-                offsetX = 0,
-                offsetY = 0
-              }
-            },
-            leaderIcon = {
-              anchor = "TOP",
-              xOffset = 0,
-              yOffset = 0
-            },
-            nameOffsetX = 0,
-            portraitOffsetX = 0,
-            portraitOffsetY = 0,
-            showPowerBar = true
-          },
-          raid = {
-            absorbs = {
-              opacity = 0.70000000000000007
-            },
-            auras = {
-              elements = {
-                ["*"] = {
-                  [1] = {
-                    anchor = "TOPLEFT",
-                    applyToRoles = "all",
-                    auraType = "HARMFUL",
-                    blacklist = {},
-                    classifications = {
-                      crowdControl = true,
-                      raid = true
-                    },
-                    dispelFilterMode = "off",
-                    dispelTypes = {},
-                    duration = {
-                      anchor = "CENTER",
-                      color = {
-                        [1] = 1,
-                        [2] = 1,
-                        [3] = 1,
-                        [4] = 1
-                      },
-                      fontSize = 10,
-                      offsetX = 0,
-                      offsetY = 0,
-                      show = false
-                    },
-                    enabled = false,
-                    filterFlags = {},
-                    filterMode = "off",
-                    growDirection = "RIGHT",
-                    hidePermanent = false,
-                    hideSwipe = false,
-                    iconSize = 22,
-                    iconsPerRow = 0,
-                    id = "debuffs",
-                    maxDurationSec = 0,
-                    maxIcons = 16,
-                    mode = "filterStrip",
-                    offsetX = 0,
-                    offsetY = 2,
-                    onlyMine = false,
-                    reverseSwipe = false,
-                    rightClickCancel = false,
-                    sortReverse = false,
-                    sortRule = "INDEX",
-                    spacing = 2,
-                    stack = {
-                      anchor = "BOTTOMRIGHT",
-                      color = {
-                        [1] = 1,
-                        [2] = 1,
-                        [3] = 1,
-                        [4] = 1
-                      },
-                      fontSize = 10,
-                      offsetX = -1,
-                      offsetY = 1,
-                      show = true
-                    },
-                    swipeStyle = "radial",
-                    whitelist = {}
-                  },
-                  [2] = {
-                    anchor = "BOTTOMLEFT",
-                    applyToRoles = "all",
-                    auraType = "HELPFUL",
-                    blacklist = {},
-                    classifications = {
-                      bigDefensive = false,
-                      cancelable = false,
-                      externalDefensive = false,
-                      notCancelable = false,
-                      raid = false,
-                      raidInCombat = false
-                    },
-                    dispelFilterMode = "off",
-                    dispelTypes = {},
-                    duration = {
-                      anchor = "CENTER",
-                      color = {
-                        [1] = 1,
-                        [2] = 1,
-                        [3] = 1,
-                        [4] = 1
-                      },
-                      fontSize = 12,
-                      offsetX = 0,
-                      offsetY = 0,
-                      show = true
-                    },
-                    enabled = false,
-                    filterFlags = {},
-                    filterMode = "off",
-                    growDirection = "RIGHT",
-                    hidePermanent = false,
-                    hideSwipe = false,
-                    iconSize = 22,
-                    iconsPerRow = 0,
-                    id = "buffs",
-                    maxDurationSec = 0,
-                    maxIcons = 16,
-                    mode = "filterStrip",
-                    offsetX = 0,
-                    offsetY = -2,
-                    onlyMine = false,
-                    reverseSwipe = false,
-                    rightClickCancel = false,
-                    sortReverse = false,
-                    sortRule = "INDEX",
-                    spacing = 2,
-                    stack = {
-                      anchor = "BOTTOMRIGHT",
-                      color = {
-                        [1] = 1,
-                        [2] = 1,
-                        [3] = 1,
-                        [4] = 1
-                      },
-                      fontSize = 10,
-                      offsetX = -1,
-                      offsetY = 1,
-                      show = true
-                    },
-                    swipeStyle = "radial",
-                    whitelist = {}
-                  }
-                }
-              },
-              elementsSeeded = true,
-              onlyMyDebuffs = true
-            },
-            enabled = true,
-            offsetX = -687,
-            offsetY = 237,
-            spacing = 0,
-            width = 100
+              previewMode = false
+            }
           },
           target = {
-            absorbs = {
-              opacity = 0.70000000000000007
-            },
-            anchorGap = 0,
-            anchorTo = "essential",
             auras = {
               elements = {
                 ["*"] = {
@@ -12849,11 +15322,9 @@ return {
                       offsetY = 0,
                       show = false
                     },
-                    enabled = true,
-                    filterFlags = {
-                      PLAYER = true
-                    },
-                    filterMode = "flags",
+                    enabled = false,
+                    filterFlags = {},
+                    filterMode = "off",
                     growDirection = "RIGHT",
                     hidePermanent = false,
                     hideSwipe = false,
@@ -12870,7 +15341,7 @@ return {
                     rightClickCancel = false,
                     sortReverse = false,
                     sortRule = "INDEX",
-                    spacing = 0,
+                    spacing = 2,
                     stack = {
                       anchor = "BOTTOMRIGHT",
                       color = {
@@ -12888,7 +15359,7 @@ return {
                     whitelist = {}
                   },
                   [2] = {
-                    anchor = "TOPRIGHT",
+                    anchor = "BOTTOMLEFT",
                     applyToRoles = "all",
                     auraType = "HELPFUL",
                     blacklist = {},
@@ -12915,12 +15386,12 @@ return {
                       offsetY = 0,
                       show = true
                     },
-                    enabled = true,
+                    enabled = false,
                     filterFlags = {},
                     filterMode = "off",
-                    growDirection = "LEFT",
+                    growDirection = "RIGHT",
                     hidePermanent = false,
-                    hideSwipe = true,
+                    hideSwipe = false,
                     iconSize = 18,
                     iconsPerRow = 0,
                     id = "buffs",
@@ -12934,7 +15405,7 @@ return {
                     rightClickCancel = false,
                     sortReverse = false,
                     sortRule = "INDEX",
-                    spacing = 0,
+                    spacing = 2,
                     stack = {
                       anchor = "BOTTOMRIGHT",
                       color = {
@@ -12953,144 +15424,18 @@ return {
                   }
                 }
               },
-              elementsSeeded = true,
-              onlyMyDebuffs = true
+              elementsSeeded = true
             },
             castbar = {
-              channelFillForward = false,
-              channelTickColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 0.90000000000000002
-              },
-              channelTickMinConfidence = 0.70000000000000007,
-              channelTickSourcePolicy = "auto",
-              channelTickThickness = 1,
-              empoweredFillColors = {
-                [1] = {
-                  [1] = 0.26000000000000001,
-                  [2] = 0.64000000000000001,
-                  [3] = 0.95999999999999996,
-                  [4] = 1
-                },
-                [2] = {
-                  [1] = 0.91000000000000003,
-                  [2] = 0.34999999999999998,
-                  [3] = 0.40000000000000002,
-                  [4] = 1
-                },
-                [3] = {
-                  [1] = 0.94999999999999996,
-                  [2] = 0.75,
-                  [3] = 0.29999999999999999,
-                  [4] = 1
-                },
-                [4] = {
-                  [1] = 0.45000000000000001,
-                  [2] = 0.81999999999999995,
-                  [3] = 0.34999999999999998,
-                  [4] = 1
-                },
-                [5] = {
-                  [1] = 0.75,
-                  [2] = 0.40000000000000002,
-                  [3] = 0.84999999999999998,
-                  [4] = 1
-                }
-              },
-              empoweredLevelTextAnchor = "CENTER",
-              empoweredLevelTextOffsetX = 0,
-              empoweredLevelTextOffsetY = 0,
-              empoweredStageColors = {
-                [1] = {
-                  [1] = 0.14999999999999999,
-                  [2] = 0.38,
-                  [3] = 0.57999999999999996,
-                  [4] = 1
-                },
-                [2] = {
-                  [1] = 0.55000000000000004,
-                  [2] = 0.20000000000000001,
-                  [3] = 0.23999999999999999,
-                  [4] = 1
-                },
-                [3] = {
-                  [1] = 0.57999999999999996,
-                  [2] = 0.45000000000000001,
-                  [3] = 0.17999999999999999,
-                  [4] = 1
-                },
-                [4] = {
-                  [1] = 0.27000000000000002,
-                  [2] = 0.5,
-                  [3] = 0.20999999999999999,
-                  [4] = 1
-                },
-                [5] = {
-                  [1] = 0.45000000000000001,
-                  [2] = 0.20000000000000001,
-                  [3] = 0.5,
-                  [4] = 1
-                }
-              },
-              freeOffsetX = 0,
-              freeOffsetY = 0,
-              gcdColor = {
-                [1] = 0.20000000000000001,
-                [2] = 0.59999999999999998,
-                [3] = 1,
-                [4] = 1
-              },
-              hideTimeTextOnEmpowered = false,
-              iconAnchor = "LEFT",
-              iconBorderSize = 2,
-              iconScale = 1,
-              iconSize = 25,
-              iconSpacing = 0,
-              lockedOffsetX = 0,
-              lockedOffsetY = -25,
-              previewMode = false,
-              showChannelTicks = false,
-              showEmpoweredLevel = false,
-              showSpellText = true,
-              showTimeText = true,
-              spellTextAnchor = "LEFT",
-              spellTextOffsetX = 4,
-              spellTextOffsetY = 0,
-              statusBarAnchor = "BOTTOMRIGHT",
-              timeTextAnchor = "RIGHT",
-              timeTextOffsetX = -4,
-              timeTextOffsetY = 0,
-              useClassColor = false,
-              width = 240
-            },
-            classificationIcon = {
-              anchor = "TOP",
-              enabled = true,
-              size = 25,
-              xOffset = -16,
-              yOffset = 18
-            },
-            healthOffsetX = 0,
-            maxNameLength = 0,
-            nameOffsetX = 0,
-            portraitOffsetX = 0,
-            portraitOffsetY = 0,
-            showPowerBar = true,
-            targetMarker = {
-              enabled = true
+              previewMode = false
             }
           },
           targettarget = {
-            absorbs = {
-              opacity = 0.70000000000000007
-            },
             auras = {
               elements = {
                 ["*"] = {
                   [1] = {
-                    anchor = "TOPRIGHT",
+                    anchor = "TOPLEFT",
                     applyToRoles = "all",
                     auraType = "HARMFUL",
                     blacklist = {},
@@ -13113,10 +15458,10 @@ return {
                       offsetY = 0,
                       show = false
                     },
-                    enabled = true,
+                    enabled = false,
                     filterFlags = {},
                     filterMode = "off",
-                    growDirection = "LEFT",
+                    growDirection = "RIGHT",
                     hidePermanent = false,
                     hideSwipe = false,
                     iconSize = 22,
@@ -13132,7 +15477,7 @@ return {
                     rightClickCancel = false,
                     sortReverse = false,
                     sortRule = "INDEX",
-                    spacing = 0,
+                    spacing = 2,
                     stack = {
                       anchor = "BOTTOMRIGHT",
                       color = {
@@ -13215,154 +15560,11 @@ return {
                   }
                 }
               },
-              elementsSeeded = true,
-              onlyMyDebuffs = false
+              elementsSeeded = true
             },
             castbar = {
-              anchor = "none",
-              bgColor = {
-                [1] = 0.14899999999999999,
-                [2] = 0.14899999999999999,
-                [3] = 0.14899999999999999,
-                [4] = 1
-              },
-              borderColor = {
-                [1] = 0,
-                [2] = 0,
-                [3] = 0,
-                [4] = 1
-              },
-              borderColorSource = "inherit",
-              borderSize = 1,
-              channelFillForward = false,
-              channelTickColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 0.90000000000000002
-              },
-              channelTickMinConfidence = 0.70000000000000007,
-              channelTickSourcePolicy = "auto",
-              channelTickThickness = 1,
-              empoweredFillColors = {
-                [1] = {
-                  [1] = 0.26000000000000001,
-                  [2] = 0.64000000000000001,
-                  [3] = 0.95999999999999996,
-                  [4] = 1
-                },
-                [2] = {
-                  [1] = 0.91000000000000003,
-                  [2] = 0.34999999999999998,
-                  [3] = 0.40000000000000002,
-                  [4] = 1
-                },
-                [3] = {
-                  [1] = 0.94999999999999996,
-                  [2] = 0.75,
-                  [3] = 0.29999999999999999,
-                  [4] = 1
-                },
-                [4] = {
-                  [1] = 0.45000000000000001,
-                  [2] = 0.81999999999999995,
-                  [3] = 0.34999999999999998,
-                  [4] = 1
-                },
-                [5] = {
-                  [1] = 0.75,
-                  [2] = 0.40000000000000002,
-                  [3] = 0.84999999999999998,
-                  [4] = 1
-                }
-              },
-              empoweredLevelTextAnchor = "CENTER",
-              empoweredLevelTextOffsetX = 0,
-              empoweredLevelTextOffsetY = 0,
-              empoweredStageColors = {
-                [1] = {
-                  [1] = 0.14999999999999999,
-                  [2] = 0.38,
-                  [3] = 0.57999999999999996,
-                  [4] = 1
-                },
-                [2] = {
-                  [1] = 0.55000000000000004,
-                  [2] = 0.20000000000000001,
-                  [3] = 0.23999999999999999,
-                  [4] = 1
-                },
-                [3] = {
-                  [1] = 0.57999999999999996,
-                  [2] = 0.45000000000000001,
-                  [3] = 0.17999999999999999,
-                  [4] = 1
-                },
-                [4] = {
-                  [1] = 0.27000000000000002,
-                  [2] = 0.5,
-                  [3] = 0.20999999999999999,
-                  [4] = 1
-                },
-                [5] = {
-                  [1] = 0.45000000000000001,
-                  [2] = 0.20000000000000001,
-                  [3] = 0.5,
-                  [4] = 1
-                }
-              },
-              enabled = true,
-              freeOffsetX = 0,
-              freeOffsetY = -20,
-              gcdColor = {
-                [1] = 1,
-                [2] = 0.69999999999999996,
-                [3] = 0,
-                [4] = 1
-              },
-              hideTimeTextOnEmpowered = false,
-              iconAnchor = "LEFT",
-              iconBorderColor = {
-                [1] = 0,
-                [2] = 0,
-                [3] = 0,
-                [4] = 1
-              },
-              iconBorderColorSource = "inherit",
-              iconBorderSize = 0,
-              iconScale = 1,
-              iconSize = 8,
-              iconSpacing = 0,
-              lockedOffsetX = 0,
-              lockedOffsetY = -25,
-              maxLength = 0,
-              notInterruptibleColor = {
-                [1] = 0.69999999999999996,
-                [2] = 0.20000000000000001,
-                [3] = 0.20000000000000001,
-                [4] = 1
-              },
-              offsetY = 0,
-              previewMode = false,
-              showChannelTicks = false,
-              showEmpoweredLevel = false,
-              showSpellText = true,
-              showTimeText = true,
-              spellTextAnchor = "LEFT",
-              spellTextOffsetX = 4,
-              spellTextOffsetY = 0,
-              statusBarAnchor = "BOTTOMRIGHT",
-              texture = "Solid",
-              timeTextAnchor = "RIGHT",
-              timeTextOffsetX = -4,
-              timeTextOffsetY = 0,
-              useClassColor = false,
-              width = 160
-            },
-            enabled = true,
-            healthOffsetX = 0,
-            nameOffsetX = 0,
-            showPowerBar = true
+              previewMode = false
+            }
           }
         },
         raidBuffs = {
@@ -13436,7 +15638,7 @@ return {
           vigorFontSize = 12,
           visibility = "AUTO"
         },
-        themePreset = "Classic Mint",
+        themePreset = "Sky Blue",
         tooltip = {
           anchorPosition = {
             point = "CENTER",

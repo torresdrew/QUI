@@ -1,8 +1,3 @@
---[[
-    QUI Options - Character Pane Tab (Appearance tile sub-page). Migrated to
-    V3 body pattern.
-]]
-
 local _, ns = ...
 local QUI = QUI
 local GUI = QUI.GUI
@@ -11,7 +6,6 @@ local Settings = ns.Settings
 local Registry = Settings and Settings.Registry
 local Schema = Settings and Settings.Schema
 
--- Shared provider-panel layout scaffold (core/settings_layout_shared.lua).
 local function MakeLayout(content)
     return ns.QUI_SettingsLayoutShared.MakeLayout(content)
 end
@@ -25,7 +19,6 @@ local function BuildCharacterPaneTab(tabContent)
     local char = db and db.character
     if not char then return end
 
-    -- Defaults
     if char.inspectEnabled == nil then char.inspectEnabled = true end
     if char.inspectLiteMode == nil then char.inspectLiteMode = false end
     if char.inspectLiteShowOverall == nil then char.inspectLiteShowOverall = true end
@@ -42,9 +35,6 @@ local function BuildCharacterPaneTab(tabContent)
 
     local L = MakeLayout(tabContent)
 
-    ---------------------------------------------------------------------------
-    -- ENABLE/DISABLE
-    ---------------------------------------------------------------------------
     L.headerAt(ns.L["Enable/Disable"])
     local sEn = L.sectionAt()
     local enableW = GUI:CreateFormCheckbox(sEn.frame, nil, "enabled", char, function()
@@ -57,9 +47,6 @@ local function BuildCharacterPaneTab(tabContent)
     sEn.AddRow(row(sEn.frame, ns.L["QUI Character Module (Req. Reload)"], enableW))
     L.closeSection(sEn)
 
-    ---------------------------------------------------------------------------
-    -- INSPECT FRAME
-    ---------------------------------------------------------------------------
     L.headerAt(ns.L["Inspect Frame"])
     local sIF = L.sectionAt()
     local ifEnableW = GUI:CreateFormCheckbox(sIF.frame, nil, "inspectEnabled", char, function()
@@ -99,9 +86,6 @@ local function BuildCharacterPaneTab(tabContent)
     sIF.AddRow(row(sIF.frame, ns.L["Per-Slot Font Size"], ifPerSlotSizeW))
     L.closeSection(sIF)
 
-    ---------------------------------------------------------------------------
-    -- SLOT OVERLAYS
-    ---------------------------------------------------------------------------
     L.headerAt(ns.L["Slot Overlays"])
     local sSO = L.sectionAt()
     local soFontW = GUI:CreateFormDropdown(sSO.frame, nil, Shared.GetFontList(), "enchantFont", char, RefreshInspectLite,
@@ -118,9 +102,6 @@ local function BuildCharacterPaneTab(tabContent)
     sSO.AddRow(row(sSO.frame, ns.L["Slot Padding"], soPadW))
     L.closeSection(sSO)
 
-    ---------------------------------------------------------------------------
-    -- OPEN SETTINGS (button)
-    ---------------------------------------------------------------------------
     L.headerAt(ns.L["Open Settings"])
     local btnFrame = CreateFrame("Frame", nil, tabContent)
     local openBtn = GUI:CreateButton(btnFrame, ns.L["Open Character Panel"], 200, 28, function()

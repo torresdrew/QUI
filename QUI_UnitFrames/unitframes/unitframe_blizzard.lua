@@ -1,13 +1,7 @@
----------------------------------------------------------------------------
--- QUI Unit Frames - Blizzard Frame Hiding
--- Hides/kills default Blizzard unit frames when QUI replacements are active.
--- Extracted from modules/unitframes/unitframes.lua for maintainability.
----------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 local GetDB = Helpers.CreateDBGetter("quiUnitFrames")
 
--- Upvalue caching for hot-path performance
 local pcall = pcall
 local CreateFrame = CreateFrame
 local InCombatLockdown = InCombatLockdown
@@ -15,45 +9,23 @@ local C_Timer = C_Timer
 
 local QUI = _G.QuaziiUI or _G.QUI
 
--- QUI_UF is created in unitframes.lua and exported to ns.QUI_UnitFrames.
--- This file loads after unitframes.lua, so the reference is available.
 local QUI_UF = ns.QUI_UnitFrames
 if not QUI_UF then return end
 
--- TAINT SAFETY: Track hook/fix guards in local table, NOT on Blizzard frames.
 local _blizzFrameGuards = {}
 
--- TAINT SAFETY: Weak-keyed table to track which frames have had their OnShow
--- hooked via hooksecurefunc, so we never store addon keys on Blizzard frames.
 local _hookedOnShowFrames = Helpers.CreateStateTable()
-
----------------------------------------------------------------------------
--- LOCAL HELPERS
----------------------------------------------------------------------------
 
 local function KillBlizzardFrame(frame, allowInEditMode)
     if not frame then return end
 
-    -- Unregister events to stop updates
     frame:UnregisterAllEvents()
 
-    -- For secure frames like PlayerFrame, we can't call Hide() directly
-    -- Instead, make it invisible and non-interactive
     frame:SetAlpha(0)
     frame:EnableMouse(false)
 
-    -- NOTE: Do NOT use RegisterStateDriver(frame, "visibility", "hide") here.
-    -- Hidden frames return nil from GetRect(), which crashes Blizzard's
-    -- GetScaledSelectionSides() when the Edit Mode magnetic snap system
-    -- iterates all registered systems. Keep the original geometry intact:
-    -- touching ClearAllPoints/SetPoint on secure Blizzard unit frames taints
-    -- their layout data and later trips ADDON_ACTION_BLOCKED inside Blizzard's
-    -- secure position managers (for example PetFrame:ClearAllPointsBase()).
 end
 
--- Hidden parent for evicted protected frames. Sized to UIParent so children's
--- GetRect() returns valid geometry (matters for EditMode magnetic-snap loop's
--- GetScaledSelectionSides() which crashes on nil-rect frames).
 local _hiddenPetParent
 local _petReevictPending = false
 
@@ -80,28 +52,6 @@ end
 local function SuppressBlizzardPetFrame()
     if not PetFrame then return end
 
-    -- Reparent PetFrame off PlayerFrameBottomManagedFramesContainer so the
-    -- container's combat-triggered Layout pass (fired by TotemFrame/pet/vehicle
-    -- SetShown events) no longer iterates PetFrame via :GetChildren() and
-    -- never reads any field from it.
-    --
-    -- Why reparent instead of ignoreInLayout: setting PetFrame.ignoreInLayout
-    -- works to skip PetFrame in iteration, but the addon-write taints the
-    -- field. LayoutMixin reads region.ignoreInLayout for every region in every
-    -- Layout pass; that read propagates the addon taint into Layout's secure
-    -- execution context, which then surfaces at the parent's self:SetSize()
-    -- call (verified empirically: ignoreInLayout fix moved the block from
-    -- PetFrame:ClearAllPointsBase to PlayerFrameBottomManagedFramesContainer
-    -- :SetSize). Reparenting removes PetFrame from :GetChildren() entirely,
-    -- so no field on PetFrame is read by any Layout pass — no taint surface.
-    --
-    -- The SetParent call from insecure code does taint PetFrame, but with
-    -- PetFrame outside the Layout iteration, that taint has no surface.
-    --
-    -- Hook on PetFrame:SetParent re-evicts whenever Blizzard re-parents back
-    -- (pet summon, vehicle exit, login). Combat-deferred via _petReevictPending
-    -- + PLAYER_REGEN_ENABLED watcher because SetParent on a protected frame
-    -- is itself protected during combat.
     if not _blizzFrameGuards.petFrameReparented then
         _blizzFrameGuards.petFrameReparented = true
 
@@ -123,7 +73,6 @@ local function SuppressBlizzardPetFrame()
         EvictPetFrameToHiddenParent()
     end
 
-    -- Visual suppression. Method calls only — no frame-table writes.
     ns.SafeCallMethod("best-effort-style", PetFrame, "SetAlpha", 0)
     ns.SafeCallMethod("best-effort-style", PetFrame, "EnableMouse", false)
 end
@@ -134,19 +83,14 @@ local function KillBlizzardChildFrame(frame)
         frame:UnregisterAllEvents()
     end
 
-    -- Use SafeCall to safely try Hide() - some child frames may be protected
     ns.SafeCall("best-effort-style", function() frame:Hide() end)
 
     if frame.EnableMouse then
         frame:EnableMouse(false)
     end
 
-    -- Set alpha to 0 as fallback
     frame:SetAlpha(0)
 
-    -- TAINT SAFETY: Use hooksecurefunc instead of SetScript("OnShow") to avoid
-    -- replacing secure handlers on Blizzard frames. Defer the Hide() via
-    -- C_Timer.After(0) to break the taint chain from the secure execution context.
     if not _hookedOnShowFrames[frame] then
         _hookedOnShowFrames[frame] = true
         Helpers.DeferredHideOnShow(frame, { clearAlpha = true, combatCheck = false })
@@ -157,9 +101,6 @@ local function SuppressPlayerCastingBarFrame()
     local frame = PlayerCastingBarFrame
     if not frame then return end
 
-    -- CastingBarFrame can be forbidden/restricted on newer clients, so keep
-    -- every frame interaction guarded. This must be repeatable because the
-    -- default player bar can reattach to spellcast events after login reloads.
     ns.SafeCall("best-effort-style", function()
         frame:SetAlpha(0)
         frame:SetScale(0.0001)
@@ -194,8 +135,6 @@ local function EnsurePlayerCastbarHideWatcher()
 
     local castbarHideWatcher = CreateFrame("Frame", nil, UIParent)
     castbarHideWatcher:SetScript("OnUpdate", function()
-        -- Skip re-hiding during Edit Mode; Blizzard uses the default castbar
-        -- visibility as part of the Cast Bar toggle and preview behavior.
         if Helpers.IsEditModeActive() then return end
 
         local frame = PlayerCastingBarFrame
@@ -211,13 +150,9 @@ local function EnsurePlayerCastbarHideWatcher()
     end)
 end
 
--- Hide a Blizzard secondary unit frame's visuals (TargetFrame/FocusFrame share
--- the same child structure). `frame` is the frame object; `globalPrefix` is the
--- global-name stem for the legacy aura buttons (e.g. "TargetFrame"/"FocusFrame").
 local function HideBlizzardSecondaryUnitVisuals(frame, globalPrefix)
     if not frame then return end
 
-    -- Hide main art & bars but keep the frame alive for tooltips/buffs
     KillBlizzardChildFrame(frame.TargetFrameContainer)
     KillBlizzardChildFrame(frame.TargetFrameContent)
     KillBlizzardChildFrame(frame.healthbar)
@@ -234,24 +169,20 @@ local function HideBlizzardSecondaryUnitVisuals(frame, globalPrefix)
     KillBlizzardChildFrame(frame.threatIndicator)
     KillBlizzardChildFrame(frame.threatNumericIndicator)
 
-    -- Hide buff/debuff frames (modern WoW structure)
     KillBlizzardChildFrame(frame.BuffFrame)
     KillBlizzardChildFrame(frame.DebuffFrame)
     KillBlizzardChildFrame(frame.buffsContainer)
     KillBlizzardChildFrame(frame.debuffsContainer)
 
-    -- Hide old-style aura buttons
     for i = 1, 40 do
         KillBlizzardChildFrame(_G[globalPrefix.."Buff"..i])
         KillBlizzardChildFrame(_G[globalPrefix.."Debuff"..i])
     end
 
-    -- Release aura pools (Dragonflight+)
     if frame.auraPools and frame.auraPools.ReleaseAll then
         frame.auraPools:ReleaseAll()
     end
 
-    -- Hide the entire frame since we have our own
     KillBlizzardFrame(frame)
 end
 
@@ -263,15 +194,6 @@ local function HideBlizzardFocusVisuals()
     HideBlizzardSecondaryUnitVisuals(FocusFrame, "FocusFrame")
 end
 
----------------------------------------------------------------------------
--- HIDE BLIZZARD DEFAULT FRAMES
----------------------------------------------------------------------------
-
----------------------------------------------------------------------------
--- Hide Blizzard castbars (player + pet).
--- Safe to call repeatedly (e.g. on every zone transition) — the Show hook
--- is guarded so it's only installed once.
----------------------------------------------------------------------------
 function QUI_UF:HideBlizzardCastbars()
     if InCombatLockdown() then return end
     local db = GetDB()
@@ -286,7 +208,6 @@ function QUI_UF:HideBlizzardCastbars()
     EnsurePlayerCastbarHideWatcher()
     SuppressPlayerCastingBarFrame()
 
-    -- Hide pet castbar only when QUI pet frame is enabled.
     if db.pet and db.pet.enabled and PetCastingBarFrame then
         ns.SafeCall("best-effort-style", function()
             PetCastingBarFrame:SetAlpha(0)
@@ -301,44 +222,27 @@ function QUI_UF:HideBlizzardFrames()
     local db = GetDB()
     if not db then return end
 
-    -- Hide Player frame
     if db.player and db.player.enabled then
         KillBlizzardFrame(PlayerFrame)
     end
 
-    -- Hide Blizzard castbars
     self:HideBlizzardCastbars()
 
-    -- Hide Target frame visuals (keep frame for auras/tooltips)
     if db.target and db.target.enabled then
         HideBlizzardTargetVisuals()
     end
 
-    -- Hide Target of Target
     if db.targettarget and db.targettarget.enabled then
         KillBlizzardFrame(TargetFrameToT)
     end
 
-    -- Hide Pet frame without mutating Blizzard's protected frame internals.
-    -- Warlock pets make PetFrame participate in managed Edit Mode layout
-    -- passes; nil'ing heal prediction fields or unregistering child scripts
-    -- taints the frame and surfaces as PetFrame:ClearAllPointsBase() blocks
-    -- when the user's saved Blizzard layout is malformed.
     if db.pet and db.pet.enabled and PetFrame then
         SuppressBlizzardPetFrame()
     end
 
-    -- Hide Focus frame visuals (always hide Blizzard focus frame when QUI unit frames are enabled)
     HideBlizzardFocusVisuals()
 
-    -- Hide Boss frames (allow in Edit Mode)
     if db.boss and db.boss.enabled then
-        -- TAINT SAFETY: Remove BossTargetFrameContainer from the managed layout
-        -- chain BEFORE touching any geometry. The container is a child of
-        -- UIParentRightManagedFrameContainer; addon-code SetSize/SetPoint/
-        -- ClearAllPoints calls taint its geometry data, and the next
-        -- UIParentManageRightFrameContainer layout pass propagates the taint to
-        -- ClearAllPoints() on the container -> ADDON_ACTION_BLOCKED.
         if BossTargetFrameContainer and not _blizzFrameGuards.bossContainerRemovedFromManaged then
             _blizzFrameGuards.bossContainerRemovedFromManaged = true
             local parent = BossTargetFrameContainer:GetParent()
@@ -351,17 +255,9 @@ function QUI_UF:HideBlizzardFrames()
             KillBlizzardFrame(bf, true)
         end
 
-        -- Fix Edit Mode crash: BossTargetFrameContainer.GetScaledSelectionSides() crashes
-        -- when GetRect() returns nil (children moved off-screen).
-        -- TAINT SAFETY: Do NOT replace GetScaledSelectionSides with an addon function.
-        -- Direct method replacement taints the method in Midnight's taint model,
-        -- causing ADDON_ACTION_FORBIDDEN when Edit Mode calls it in secure context.
-        -- Instead, ensure the container always has valid bounds so GetRect() never
-        -- returns nil, making the crash impossible.
         if BossTargetFrameContainer and not _blizzFrameGuards.bossContainerEditModeFixed then
             _blizzFrameGuards.bossContainerEditModeFixed = true
 
-            -- Give container valid size and position so GetRect() always returns values
             BossTargetFrameContainer:SetSize(1, 1)
             if not BossTargetFrameContainer:GetPoint() then
                 BossTargetFrameContainer:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
@@ -369,16 +265,3 @@ function QUI_UF:HideBlizzardFrames()
         end
     end
 end
-
----------------------------------------------------------------------------
--- HIDE BLIZZARD SELECTION FRAMES (Edit Mode)
----------------------------------------------------------------------------
-
--- Hide Blizzard's selection frames when QUI frames are enabled
--- Called during EnableEditMode() to prevent visual conflicts
--- TAINT SAFETY: All operations deferred to avoid tainting the secure frame context.
--- Selection frames are children of secure unit frames (PlayerFrame, TargetFrame, etc).
--- Synchronous Hide()/HookScript calls on these taint CompactUnitFrame values,
--- causing "secret number tainted by QUI" errors when Edit Mode reads them.
--- NOTE: Use SetAlpha(0) instead of Hide(). Hidden frames return nil from
--- GetRect(), crashing GetScaledSelectionSides() in Blizzard's magnetic snap loop.

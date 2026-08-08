@@ -1,16 +1,3 @@
----------------------------------------------------------------------------
--- Alts roster tab. Reads ns.Storage (Store + Bus), renders a sortable
--- column list with a totals footer. Row pool + wheel offset (no
--- ScrollFrame; rows are uniform and few — tens of characters). Column set
--- honors the profile alts.columns toggles; layout reflows on Refresh.
---
--- View contract: builder(parent) returns { frame, Refresh() } (window.lua).
--- Content fonts are owned here (the chassis reskins chrome + tab labels
--- only): every FontString sets its font at creation from the general font.
---
--- Pure helpers (CellText, BuildActiveColumns) are published on
--- Alts.RosterView for headless unit tests; the frame parts have no test.
----------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 
 local Shared = ns.AltsViewShared
@@ -29,11 +16,6 @@ Alts.RosterView = RosterView
 local ROW_H, HDR_H, FOOTER_H = 22, 20, 22
 local CELL_PAD = 6
 
--- Column catalog. `always` columns ignore the profile toggle; the rest are
--- gated by alts.columns[<toggleKey or id>]. `sortKey` maps to a details
--- field (BuildRows reads details[sortKey], "name" is special-cased there);
--- a column with no sortKey is non-sortable. `desc` = the default direction
--- when this header is first clicked.
 local COLUMNS = {
     { id = "name",        label = "Character",   width = 160, sortKey = "name",        always = true },
     { id = "level",       label = "Lvl",         width = 40,  sortKey = "level",       desc = true, always = true },
@@ -47,11 +29,6 @@ local COLUMNS = {
 }
 RosterView.COLUMNS = COLUMNS
 
---- Class token → r,g,b. RAID_CLASS_COLORS read directly (chat sender-recolor
---- precedent; routing through the CUSTOM-aware helper would drift here too).
-
---- Cell display text for a column over a built row (see RD.BuildRows shape:
---- { key, name, realm, details, record }). `now` for relative timestamps.
 function RosterView.CellText(col, row, now)
     local d = row.details or {}
     if col.id == "name" then
@@ -70,9 +47,6 @@ function RosterView.CellText(col, row, now)
         end
         return "—"
     elseif col.id == "professions" then
-        -- Compact: "Alch 75 · Herb 50" — primary professions, name truncated
-        -- to 4 chars. NOTE: :sub(1,4) is byte-wise (latin-only); acceptable
-        -- v1, cells also SetWordWrap(false) so the full string ellipsizes.
         local parts = {}
         local profs = (row.record and row.record.professions) or {}
         for _, p in ipairs(profs) do
@@ -89,9 +63,6 @@ function RosterView.CellText(col, row, now)
     return ""
 end
 
---- Filter the column catalog by the profile toggles. `always` columns are
---- always kept; the rest survive only if columnsCfg[id] is truthy. Order is
---- preserved. columnsCfg nil → all columns shown (defaults-on fallback).
 function RosterView.BuildActiveColumns(columnsCfg)
     local active = {}
     for _, col in ipairs(COLUMNS) do
@@ -102,28 +73,20 @@ function RosterView.BuildActiveColumns(columnsCfg)
     return active
 end
 
----------------------------------------------------------------------------
--- Frame parts (no headless test).
----------------------------------------------------------------------------
-
-
-
-
 local function Builder(parent)
     local Store = ns.Storage and ns.Storage.Store
     local Bus = ns.Storage and ns.Storage.Bus
 
     local frame = CreateFrame("Frame", nil, parent)
 
-    -- view state
     local view = { frame = frame }
     local sortKey, sortDesc = "name", false
     local offset = 0
-    local scrollbar          -- vertical scroll bar (created below)
-    local data = {}          -- last-built rows
-    local activeCols = {}    -- last active-column set
-    local headers = {}       -- pooled header buttons (one per COLUMNS slot)
-    local rowPool = {}       -- pooled row buttons
+    local scrollbar
+    local data = {}
+    local activeCols = {}
+    local headers = {}
+    local rowPool = {}
 
     local function ColumnsCfg()
         local s = Alts.GetSettings and Alts.GetSettings()
@@ -137,12 +100,10 @@ local function Builder(parent)
         return math.max(1, math.floor(usable / ROW_H))
     end
 
-    -- footer (bottom-left)
     local footer = MakeFS(frame, 11)
     footer:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", CELL_PAD, 4)
     footer:SetTextColor(0.8, 0.8, 0.8)
 
-    ---- header pool -------------------------------------------------------
     local function GetHeader(i)
         local h = headers[i]
         if h then return h end
@@ -151,10 +112,6 @@ local function Builder(parent)
         h._label = MakeFS(h, 11)
         h._label:SetPoint("LEFT", h, "LEFT", CELL_PAD, 0)
         h._label:SetTextColor(1, 0.82, 0)
-        -- Sort indicator: texture, not a ▲/▼ glyph — the QUI font lacks the
-        -- geometric-shape codepoints, so text arrows render as tofu boxes.
-        -- Blizzard's AH header atlas; texcoord flip = direction (Blizzard_
-        -- AuctionHouseTableBuilder SetArrowState precedent).
         h._arrow = h:CreateTexture(nil, "ARTWORK")
         h._arrow:SetAtlas("auctionhouse-ui-sortarrow", true)
         h._arrow:SetPoint("LEFT", h._label, "RIGHT", 3, 0)
@@ -174,10 +131,6 @@ local function Builder(parent)
         return h
     end
 
-    ---- row pool ----------------------------------------------------------
-    -- Each row owns a FIXED cell pool of #COLUMNS FontStrings; Refresh
-    -- positions/shows only the active columns (simplest correct approach for
-    -- a changing active-column set — no per-Refresh re-create).
     local function GetRow(i)
         local r = rowPool[i]
         if r then return r end
@@ -189,14 +142,10 @@ local function Builder(parent)
         end
         r:SetScript("OnClick", function(self, button)
             if button ~= "RightButton" then return end
-            -- snapshot at click time: the menu's title AND its delete
-            -- action both bind to what the user right-clicked, even if the
-            -- pooled row re-renders underneath while the menu is open
-            -- (DeleteCharacter no-ops on an already-gone key).
             local row = self._row
             if not row then return end
             local curKey = Store and Store.GetCurrentCharacterKey and Store.GetCurrentCharacterKey()
-            if row.key == curKey then return end -- never delete the current character
+            if row.key == curKey then return end
             if not (MenuUtil and MenuUtil.CreateContextMenu) then return end
             MenuUtil.CreateContextMenu(self, function(_, root)
                 root:CreateTitle(row.name or row.key)
@@ -210,18 +159,10 @@ local function Builder(parent)
         return r
     end
 
-    ---- layout / render ---------------------------------------------------
-    -- Effective per-active-column widths. With every column toggled on the
-    -- catalog is wider than the default window; squeeze proportionally to
-    -- the view width instead of bleeding past the border (cells ellipsize —
-    -- SetWordWrap(false)). Cached: wheel-scroll RenderRows reuses the last
-    -- Refresh's widths.
     local colWidths = {}
     local function ComputeColWidths()
         local total = 0
         for _, col in ipairs(activeCols) do total = total + col.width end
-        -- reserve the scrollbar gutter so columns squeeze instead of sliding
-        -- under the bar
         local avail = math.max(0, (frame:GetWidth() or 0) - Shared.SCROLLBAR_RESERVE)
         local scale = (avail > 0 and total > avail) and (avail / total) or 1
         for i, col in ipairs(activeCols) do
@@ -241,7 +182,6 @@ local function Builder(parent)
             h:SetWidth(colWidths[i])
             h._label:SetText(col.label)
             if col.sortKey == sortKey then
-                -- ascending = flipped (points up), descending = native
                 h._arrow:SetTexCoord(0, 1, sortDesc and 0 or 1, sortDesc and 1 or 0)
                 h._arrow:Show()
             else
@@ -250,7 +190,6 @@ local function Builder(parent)
             h:Show()
             x = x + colWidths[i]
         end
-        -- hide surplus headers
         for i = #activeCols + 1, #headers do
             headers[i]:Hide()
         end
@@ -269,7 +208,7 @@ local function Builder(parent)
             r:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -(HDR_H + (i - 1) * ROW_H))
             r:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -Shared.SCROLLBAR_RESERVE, -(HDR_H + (i - 1) * ROW_H))
             if not row then
-                r._row = nil -- hidden rows must not retain a clickable target
+                r._row = nil
                 r:Hide()
             else
                 r._row = row
@@ -297,7 +236,6 @@ local function Builder(parent)
                 r:Show()
             end
         end
-        -- hide surplus rows
         for i = visible + 1, #rowPool do
             rowPool[i]._row = nil
             rowPool[i]:Hide()
@@ -306,8 +244,6 @@ local function Builder(parent)
     end
 
     function view.Refresh()
-        -- pre-login / read-only store: render nothing rather than a
-        -- misleading "0 characters" roster
         if not (Store and Store.IsInitialized and Store.IsInitialized()) then return end
         activeCols = RosterView.BuildActiveColumns(ColumnsCfg())
 
@@ -328,7 +264,6 @@ local function Builder(parent)
             #data, RD.FormatGold(RD.TotalGold(chars))))
     end
 
-    -- vertical scroll bar: rows sit below the header row, above the footer line.
     scrollbar = Shared.CreateScrollBar(frame, {
         orientation = "vertical",
         onScroll = function(n) offset = n; RenderRows(time()) end,
@@ -336,7 +271,6 @@ local function Builder(parent)
     scrollbar.track:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -2, -HDR_H)
     scrollbar.track:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -2, FOOTER_H)
 
-    -- mouse-wheel scroll, clamped to #data - VisibleRows().
     frame:EnableMouseWheel(true)
     frame:SetScript("OnMouseWheel", function(_, delta)
         local maxOffset = math.max(0, #data - VisibleRows())
@@ -346,8 +280,6 @@ local function Builder(parent)
         RenderRows(time())
     end)
 
-    -- Bus: refresh only when visible (window.lua refreshes the active tab on
-    -- show; these keep an open roster live without churning hidden views).
     if Bus and Bus.Subscribe then
         local function OnBus()
             if frame:IsVisible() then view.Refresh() end

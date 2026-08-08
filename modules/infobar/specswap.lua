@@ -1,11 +1,3 @@
---- QUI Info Bar — spec switch widget: current spec icon + name in the slot;
---- left click opens a radio menu to change spec, right click a radio menu
---- to change loot spec. NOT secure — spec changes are plain API calls that
---- simply fail in combat (clicks are no-op'd via InCombatLockdown).
----
---- Display-only spec datatexts already exist (playerspec/lootspec); this
---- widget's value is the switch menus, so the id stays distinct.
-
 local _, ns = ...
 local QUICore = ns.Addon
 local Datatexts = QUICore and QUICore.Datatexts
@@ -16,14 +8,12 @@ local floor = math.floor
 
 local ICON_STRING = "|T%s:14:14:0:0:64:64:4:60:4:60|t"
 
--- File-local copy of the registry's color helper (locals there by design).
 local function GetValueColor()
     local db = QUICore.db and QUICore.db.profile
     local dt = db and db.datatext
     if dt and dt.useClassColor then
         local _, class = UnitClass("player")
         -- @secret-policy: collapse-only — UnitClass can return SECRET on 12.1 PTR7
-        -- (SecretWhenUnitIdentityRestricted); collapse so the valueColor fallback applies.
         if issecretvalue and issecretvalue(class) then class = nil end
         local color = class and RAID_CLASS_COLORS[class]
         if color then
@@ -60,8 +50,6 @@ Datatexts:Register("specswap", {
         local text = EnsureText(slotFrame)
 
         local function Update()
-            -- Spec APIs are nil-prone immediately at login; events below
-            -- re-drive this until they settle.
             local specIndex = GetSpecialization()
             if not specIndex then
                 text:SetText(ns.L["No Spec"])
@@ -76,8 +64,6 @@ Datatexts:Register("specswap", {
                 return
             end
 
-            -- hideIcon: per-widget host override. With noLabel too, fall
-            -- through to the name-only branch (never render an empty slot).
             local iconText = (not slotFrame.hideIcon) and format(ICON_STRING, icon) or nil
             if slotFrame.noLabel and iconText then
                 text:SetText(iconText)
@@ -101,14 +87,12 @@ Datatexts:Register("specswap", {
         frame:RegisterEvent("PLAYER_LOOT_SPEC_UPDATED")
         frame:SetScript("OnEvent", function(_, event)
             if event == "PLAYER_SPECIALIZATION_CHANGED" then
-                -- let the API settle after a spec change
                 C_Timer.After(0.1, Update)
             else
                 Update()
             end
         end)
 
-        -- Tooltip
         slotFrame:EnableMouse(true)
         slotFrame:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
@@ -155,7 +139,6 @@ Datatexts:Register("specswap", {
         end)
         slotFrame:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-        -- Clicks: radio menus (house pattern: gold/playerspec MenuUtil menus)
         slotFrame:RegisterForClicks("AnyUp")
         slotFrame:SetScript("OnClick", function(self, button)
             local specIndex = GetSpecialization()
@@ -175,7 +158,6 @@ Datatexts:Register("specswap", {
                     for i = 1, numSpecs do
                         local _, specName, _, icon = GetSpecializationInfo(i)
                         if specName then
-                            -- icon is Nilable (docs) — never format a nil
                             local prefix = icon and (format(ICON_STRING, icon) .. " ") or ""
                             root:CreateRadio(prefix .. specName,
                                 IsSelected, SetSelected, i)
@@ -192,7 +174,6 @@ Datatexts:Register("specswap", {
                         if InCombatLockdown() then return end
                         SetLootSpecialization(specID)
                     end
-                    -- 0 = follow the current spec
                     root:CreateRadio(ns.L["Current spec"], IsSelected, SetSelected, 0)
                     root:CreateDivider()
                     for i = 1, numSpecs do
@@ -207,9 +188,6 @@ Datatexts:Register("specswap", {
             end
         end)
 
-        -- Initial fill: spec APIs are unreliable before login completes
-        -- (CDM re-key latch precedent) — WhenLoggedIn fires immediately
-        -- when already logged in (the LOD attach case).
         if ns.WhenLoggedIn then
             ns.WhenLoggedIn(Update)
         else

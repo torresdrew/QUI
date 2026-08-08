@@ -1,43 +1,12 @@
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 
----------------------------------------------------------------------------
--- VENDOR SELL RULES
---
--- Rule-based auto-sell at merchants beyond grey junk: sells EQUIPPABLE
--- armor/weapons at/below a chosen quality (and optionally below an item
--- level), plus an explicit force-sell list. Ships with PREVIEW MODE ON —
--- until it's turned off, the engine only prints what it WOULD sell.
---
--- HARD PROTECTIONS (always on, not configurable):
---   * equipment-set members (C_Container.GetContainerItemEquipmentSetInfo)
---   * gear still on an upgrade track below its max (C_Item.GetItemUpgradeInfo)
---   * unbound BoE/BoA items (tradeable value; ContainerItemInfo.isBound)
---   * anything on the never-sell list
---   * items vendors pay nothing for (hasNoValue)
---   * quality above the rule cap, non-equippables (crafting mats etc. are
---     never rule-sold; only the force-sell list can sell arbitrary items)
---   * at most 12 sales per merchant visit (fits the buyback window)
---
--- All APIs doc-verified earlier in this suite: GetContainerItemInfo
--- (MayReturnNothing; quality Nilable, isBound/hasNoValue/itemID/hyperlink
--- fields), UseContainerItem (2-arg sell form), GetItemInfoInstant (classID
--- 6th return; 2 = Weapon, 4 = Armor), GetItemUpgradeInfo (Nilable return),
--- GetDetailedItemLevelInfo (MayReturnNothing).
----------------------------------------------------------------------------
-
 local GetSettings = Helpers.CreateDBGetter("general")
 
 local MAX_SALES_PER_VISIT = 12
 
 -- <<< QUI_TEST_EXTRACT decide_sale
--- Pure rule core. facts = { quality, classID, ilvl, inSet, upgradable,
--- unboundTradable, hasNoValue, forced, protected }; cfg = { maxQuality,
--- maxIlvl }. Returns true when the item should be sold.
--- Protections always beat rules; the force-sell list beats the
--- equippable-only restriction but never the protections.
 local function DecideSale(cfg, facts)
-    -- hard protections
     if facts.hasNoValue then return false end
     if facts.protected then return false end
     if facts.inSet then return false end
@@ -46,7 +15,6 @@ local function DecideSale(cfg, facts)
 
     if facts.forced then return true end
 
-    -- rules apply to equippable gear only (weapons/armor)
     if facts.classID ~= 2 and facts.classID ~= 4 then return false end
     if type(facts.quality) ~= "number" then return false end
     if facts.quality > (cfg.maxQuality or 0) then return false end
@@ -59,7 +27,6 @@ local function DecideSale(cfg, facts)
 end
 -- <<< QUI_TEST_EXTRACT decide_sale
 
--- Parse an itemID list ("123, 456" / newline separated) into a set.
 local function ParseIDList(text)
     local set = {}
     if type(text) == "string" then
@@ -105,11 +72,6 @@ local function GatherFacts(info, bag, slot, forceSet, neverSet)
         end
     end
 
-    -- Unbound gear that binds on equip / to account still has trade value.
-    -- ContainerItemInfo.isBound == false + a binding bindType. Details come
-    -- from GetItemInfo (12th/13th returns unused here; bindType is 14th) —
-    -- use the container flag + tooltip-free heuristic: unbound equippables
-    -- are protected outright (safest: worn gear is always bound).
     if info.isBound == false and (facts.classID == 2 or facts.classID == 4) then
         facts.unboundTradable = true
     end
@@ -124,13 +86,13 @@ local function RunRules()
 
     local forceSet = ParseIDList(cfg.forceSell)
     local neverSet = ParseIDList(cfg.neverSell)
-    local preview = cfg.previewOnly ~= false -- default true until explicitly off
+    local preview = cfg.previewOnly ~= false
     local sold = 0
 
     for bag = 0, 5 do
         for slot = 1, C_Container.GetContainerNumSlots(bag) do
             if sold >= MAX_SALES_PER_VISIT then break end
-            local info = C_Container.GetContainerItemInfo(bag, slot) -- MayReturnNothing
+            local info = C_Container.GetContainerItemInfo(bag, slot)
             if info and not info.isLocked then
                 local facts = GatherFacts(info, bag, slot, forceSet, neverSet)
                 if DecideSale(cfg, facts) then
@@ -158,11 +120,8 @@ local function RunRules()
 end
 
 local frame = CreateFrame("Frame")
--- Literal RegisterEvent call so tools/generate_event_allowlist.lua detects it.
 frame:RegisterEvent("MERCHANT_SHOW")
 frame:SetScript("OnEvent", function()
-    -- Defer a frame: let auto-repair/junk-sell (qol.lua MERCHANT_SHOW) run
-    -- first so the cap counts only rule sales.
     C_Timer.After(0, RunRules)
 end)
 

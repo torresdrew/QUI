@@ -22,10 +22,10 @@ end
 local source = readAll("QUI_UnitFrames/unitframes/unitframes.lua")
 
 local startPos = assert(
-    source:find("%-%- PURE: Frequent%-power coalescing decisions"),
+    source:find("QUI_UF.PowerCoalesce = {}", 1, true),
     "PowerCoalesce section should exist in unitframes.lua")
 local endPos = assert(
-    source:find("%-%-%-+%s*\n%-%- Force update ToT frame", startPos),
+    source:find("local function ForceUpdateToT(", startPos, true),
     "PowerCoalesce section should end before the ToT section")
 local body = source:sub(startPos, endPos - 1)
 

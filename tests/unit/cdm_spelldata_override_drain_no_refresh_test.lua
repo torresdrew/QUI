@@ -95,7 +95,9 @@ local ns = {
             lastHookRefreshMarkDirty = markDirty
         end,
     },
-    CDMComposer = {
+    -- Runtime reads ns.CDMCatalog directly; ns.CDMComposer is only the alias
+    -- that ships in the LoadOnDemand options addon.
+    CDMCatalog = {
         RebuildBlizzardCatalogMaps = function(spellToCDID, inCooldowns)
             mapRebuilds = mapRebuilds + 1
             for id in pairs(learnedCooldowns) do

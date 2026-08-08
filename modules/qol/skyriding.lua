@@ -1,7 +1,3 @@
----------------------------------------------------------------------------
--- QUI Skyriding Module
--- Unified continuous vigor bar with segment markers
----------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local QUI = ns.QUI or {}
 ns.QUI = QUI
@@ -11,8 +7,6 @@ local LSM = ns.LSM
 local Helpers = ns.Helpers
 local ApplyCooldownFromSpell = Helpers.ApplyCooldownFromSpell
 
--- CJK-safe font setter: preserves the roman font and only adds CJK fallback
--- members where available, degrading to plain SetFont otherwise.
 local function CJKFont(fs, p, s, f)
     if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
         ns.Helpers.ApplyFontWithFallback(fs, p, s, f)
@@ -21,7 +15,6 @@ local function CJKFont(fs, p, s, f)
     end
 end
 
--- Constants
 local VIGOR_SPELL_ID = 372608
 local SECOND_WIND_SPELL_ID = 425782
 local WHIRLING_SURGE_SPELL_ID = 361584
@@ -29,7 +22,6 @@ local THRILL_OF_THE_SKIES_BUFF_ID = 377234
 local DEFAULT_BASE_MOVEMENT_SPEED = 7
 local BASE_MOVEMENT_SPEED = BASE_MOVEMENT_SPEED or DEFAULT_BASE_MOVEMENT_SPEED
 
--- Frame references
 local skyridingFrame
 local vigorBar, vigorBackground, rechargeOverlay, shadowTexture
 local flashTexture, flashAnim
@@ -42,7 +34,6 @@ local swBackground, swBorder, swRechargeOverlay
 local swSegmentMarkers = {}
 local abilityIcon, abilityIconCooldown
 
--- State tracking
 local lastVigorCharges = -1
 local lastMaxCharges = -1
 local lastSecondWind = -1
@@ -57,33 +48,24 @@ local hasThrillOfTheSkiesBuff = false
 local isPreviewMode = false
 local farmHudHooked = false
 
--- Smooth animation state
 local targetBarValue = 0
 local currentBarValue = 0
 local swTargetValue = 0
 local swCurrentValue = 0
 local swMaxCharges = 0
-local LERP_SPEED = 8  -- Higher = faster animation
+local LERP_SPEED = 8
 
--- Dirty flags: set by event handlers, consumed by OnUpdate.
--- Only data-driven update functions are gated; animation functions
--- (recharge overlay, speed, fade, bar lerp) must run every tick.
 local _vigorDirty        = true
 local _secondWindDirty   = true
 local _abilityDirty      = true
 local _visibilityDirty   = true
 local _pendingWorldRefreshTimer
 
--- Update throttling
-local UPDATE_THROTTLE = 0.05  -- 50ms = 20 FPS
+local UPDATE_THROTTLE = 0.05
 local elapsed = 0
 
--- Texture paths
 local DOT_TEXTURE = Helpers.AssetPath .. "cursor\\qui_reticle_dot"
 
----------------------------------------------------------------------------
--- Settings Helper
----------------------------------------------------------------------------
 local GetSettings = Helpers.CreateDBGetter("skyriding")
 
 local function RoundToNearestInt(value)
@@ -91,9 +73,6 @@ local function RoundToNearestInt(value)
 end
 
 local function IsSafeNumber(value)
-    -- Probe FIRST: `value == nil` on a secret value is itself the throw
-    -- (GetUnitSpeed is SecretWhenUnitStatsRestricted and feeds this helper
-    -- from an every-frame path). issecretvalue(nil) is simply false.
     if Helpers.IsSecretValue and Helpers.IsSecretValue(value) then return false end -- @secret-policy: reject-secret-value
     if value == nil then return false end
     return type(value) == "number"
@@ -173,22 +152,13 @@ local function GetSegmentMarkerColor(settings, fallbackColor)
                configuredColor[4] or 1
     end
 
-    -- Default to high-contrast black dividers when no explicit segmentColor is set.
-    -- Soft tints can disappear against textured statusbars at some scales.
     return 0, 0, 0, 0.9
 end
 
----------------------------------------------------------------------------
--- API Wrappers
----------------------------------------------------------------------------
 local function GetVigorInfo()
     local data = C_Spell.GetSpellCharges(VIGOR_SPELL_ID)
     if not data then return 0, 6, 0, 0, 1 end -- @secret-safe: GetSpellCharges table ref is non-secret (only its fields are, probed below)
 
-    -- Restriction probe (API restriction when not skyriding): maxCharges is
-    -- NeverSecret (SpellSharedDocumentation SpellChargeInfo) so it can never
-    -- trip; every other field used below is secret-capable and the `or`
-    -- fallbacks would truth-test it and throw.
     if Helpers.IsSecretValue(data.currentCharges)
         or Helpers.IsSecretValue(data.cooldownStartTime)
         or Helpers.IsSecretValue(data.cooldownDuration)
@@ -207,9 +177,6 @@ local function GetSecondWindInfo()
     local data = C_Spell.GetSpellCharges(SECOND_WIND_SPELL_ID)
     if not data then return 0, 0, 0, 0, 1 end -- @secret-safe: GetSpellCharges table ref is non-secret (only its fields are, probed below)
 
-    -- Restriction probe: maxCharges is NeverSecret (SpellSharedDocumentation
-    -- SpellChargeInfo) so it can never trip; every other field used below is
-    -- secret-capable and the `or` fallbacks would truth-test it and throw.
     if Helpers.IsSecretValue(data.currentCharges)
         or Helpers.IsSecretValue(data.cooldownStartTime)
         or Helpers.IsSecretValue(data.cooldownDuration)
@@ -231,12 +198,8 @@ local function GetGlidingInfo()
 
     local gliding, canGlideNow, speed = C_PlayerInfo.GetGlidingInfo()
 
-    -- Extra safety: treat "can glide" as false when Vigor charges are protected.
-    -- This catches passenger/ride-along edge cases where glide state can be true
-    -- but the player cannot actually use skyriding abilities.
     if canGlideNow and not gliding and C_Spell and C_Spell.GetSpellCharges then
         local charges = C_Spell.GetSpellCharges(VIGOR_SPELL_ID)
-        -- Probe currentCharges: maxCharges is NeverSecret and never trips.
         if not charges or Helpers.IsSecretValue(charges.currentCharges) then -- @secret-safe: GetSpellCharges table ref is non-secret (currentCharges field probed here)
             return false, false, 0
         end
@@ -245,16 +208,7 @@ local function GetGlidingInfo()
     return gliding or false, canGlideNow or false, speed or 0
 end
 
----------------------------------------------------------------------------
--- Buff Detection Helper
--- Direct spellID lookup avoids the secret-value comparisons that the
--- iterating GetBuffDataByIndex path produced (40 blocked compares per call
--- in combat). The returned table reference itself is non-secret; only its
--- fields can be secret in combat, and we don't read any.
----------------------------------------------------------------------------
 local function RefreshThrillOfTheSkiesBuffState()
-    -- Restricted auras return a gated nil from the lookup below (gated nil
-    -- ≠ buff faded); clearing first would drop the Thrill color mid-combat.
     if C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret() then
         return hasThrillOfTheSkiesBuff
     end
@@ -282,7 +236,6 @@ local function GetVigorBarColor(settings)
 
     if settings.useClassColorVigor then
         local _, class = UnitClass("player")
-        -- Probe FIRST — a secret class throws on the RAID_CLASS_COLORS index.
         -- @secret-policy: collapse-only — settings.barColor fallback below
         if Helpers.IsSecretValue(class) then class = nil end
         local classColor = class and RAID_CLASS_COLORS[class]
@@ -304,19 +257,14 @@ local function GetRechargeOverlayColor(settings)
     return color[1], color[2], color[3], color[4] or 0.6
 end
 
----------------------------------------------------------------------------
--- Cooldown Font Helper
----------------------------------------------------------------------------
 local function ApplyCooldownFont(cooldown, fontSize)
     if not cooldown then return end
     local fontPath = Helpers.GetGeneralFont()
 
-    -- Method 1: Direct text property
     if cooldown.text then
         CJKFont(cooldown.text, fontPath, fontSize, "OUTLINE")
     end
 
-    -- Method 2: Iterate through cooldown regions
     local ok, regions = ns.SafeCall("best-effort-style", function() return { cooldown:GetRegions() } end)
     if ok and regions then
         for _, region in ipairs(regions) do
@@ -327,9 +275,6 @@ local function ApplyCooldownFont(cooldown, fontSize)
     end
 end
 
----------------------------------------------------------------------------
--- Frame Creation
----------------------------------------------------------------------------
 local function CreateSkyridingFrame()
     if skyridingFrame then return end
 
@@ -337,14 +282,12 @@ local function CreateSkyridingFrame()
     local width = settings and settings.width or 250
     local height = settings and settings.vigorHeight or 20
 
-    -- Main container frame
     skyridingFrame = CreateFrame("Frame", "QUI_Skyriding", UIParent)
     skyridingFrame:SetSize(width, height)
     skyridingFrame:SetPoint("CENTER", UIParent, "CENTER", 0, -150)
     skyridingFrame:SetFrameStrata("MEDIUM")
     skyridingFrame:SetClampedToScreen(true)
 
-    -- Shadow underneath (glass effect)
     shadowTexture = skyridingFrame:CreateTexture(nil, "BACKGROUND", nil, -2)
     shadowTexture:SetTexture("Interface\\Buttons\\WHITE8x8")
     shadowTexture:SetPoint("TOPLEFT", skyridingFrame, "BOTTOMLEFT", 2, 0)
@@ -354,12 +297,10 @@ local function CreateSkyridingFrame()
         CreateColor(0, 0, 0, 0.5)
     )
 
-    -- Background
     vigorBackground = skyridingFrame:CreateTexture(nil, "BACKGROUND")
     vigorBackground:SetAllPoints(skyridingFrame)
     vigorBackground:SetColorTexture(0.1, 0.1, 0.1, 0.8)
 
-    -- Main vigor bar (StatusBar)
     vigorBar = CreateFrame("StatusBar", nil, skyridingFrame)
     vigorBar:SetAllPoints(skyridingFrame)
     vigorBar:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
@@ -367,8 +308,6 @@ local function CreateSkyridingFrame()
     vigorBar:SetMinMaxValues(0, 1)
     vigorBar:SetValue(0)
 
-    -- Keep segment markers on a dedicated overlay frame so they are never occluded
-    -- by internal StatusBar texture layer ordering.
     vigorMarkerOverlay = CreateFrame("Frame", nil, skyridingFrame)
     vigorMarkerOverlay:SetAllPoints(vigorBar)
     vigorMarkerOverlay:SetFrameStrata(skyridingFrame:GetFrameStrata())
@@ -377,22 +316,18 @@ local function CreateSkyridingFrame()
         vigorMarkerOverlay:SetIgnoreParentScale(false)
     end
 
-    -- Recharge overlay (shows within current charging segment)
     rechargeOverlay = vigorBar:CreateTexture(nil, "OVERLAY")
     rechargeOverlay:SetTexture("Interface\\Buttons\\WHITE8x8")
     rechargeOverlay:SetVertexColor(0.4, 0.9, 1.0, 0.6)
     rechargeOverlay:SetHeight(height)
     rechargeOverlay:Hide()
 
-    -- Flash texture for charge complete animation (positioned dynamically per-segment)
     flashTexture = vigorBar:CreateTexture(nil, "OVERLAY", nil, 7)
     flashTexture:SetTexture("Interface\\Buttons\\WHITE8x8")
     flashTexture:SetBlendMode("ADD")
     flashTexture:SetVertexColor(1, 1, 1, 0)
     flashTexture:Hide()
-    -- Size/position set dynamically in UpdateVigorBar when a charge completes
 
-    -- Flash animation group
     flashAnim = flashTexture:CreateAnimationGroup()
     local fadeIn = flashAnim:CreateAnimation("Alpha")
     fadeIn:SetFromAlpha(0)
@@ -407,7 +342,6 @@ local function CreateSkyridingFrame()
     flashAnim:SetScript("OnPlay", function() flashTexture:Show() end)
     flashAnim:SetScript("OnFinished", function() flashTexture:Hide() end)
 
-    -- Border
     skyridingFrame.border = CreateFrame("Frame", nil, skyridingFrame, "BackdropTemplate")
     QUICore:SetPixelPerfectPoint(skyridingFrame.border, "TOPLEFT", skyridingFrame, "TOPLEFT", -1, 1)
     QUICore:SetPixelPerfectPoint(skyridingFrame.border, "BOTTOMRIGHT", skyridingFrame, "BOTTOMRIGHT", 1, -1)
@@ -416,26 +350,22 @@ local function CreateSkyridingFrame()
     skyridingFrame.border:SetFrameLevel(skyridingFrame:GetFrameLevel() + 4)
     if skyridingFrame.border.Center then skyridingFrame.border.Center:Hide() end
 
-    -- Vigor text (left side)
     vigorText = vigorBar:CreateFontString(nil, "OVERLAY")
     CJKFont(vigorText, Helpers.GetGeneralFont(), 11, "OUTLINE")
     vigorText:SetPoint("LEFT", vigorBar, "LEFT", 4, 0)
     vigorText:SetTextColor(1, 1, 1, 1)
 
-    -- Speed text (right side)
     speedText = vigorBar:CreateFontString(nil, "OVERLAY")
     CJKFont(speedText, Helpers.GetGeneralFont(), 11, "OUTLINE")
     speedText:SetPoint("RIGHT", vigorBar, "RIGHT", -4, 0)
     speedText:SetTextColor(1, 1, 1, 1)
 
-    -- Second Wind text (alternative display)
     secondWindText = skyridingFrame:CreateFontString(nil, "OVERLAY")
     CJKFont(secondWindText, Helpers.GetGeneralFont(), 10, "OUTLINE")
     secondWindText:SetPoint("TOP", skyridingFrame, "BOTTOM", 0, -2)
     secondWindText:SetTextColor(1, 0.8, 0.2, 1)
     secondWindText:Hide()
 
-    -- Create segment markers (up to 10 for flexibility)
     for i = 1, 10 do
         local marker = vigorMarkerOverlay:CreateTexture(nil, "OVERLAY", nil, 4)
         marker:SetTexture("Interface\\Buttons\\WHITE8x8")
@@ -448,9 +378,7 @@ local function CreateSkyridingFrame()
         segmentMarkers[i] = marker
     end
 
-    -- Create Second Wind pips (up to 5) with glow
     for i = 1, 5 do
-        -- Glow behind pip
         local glow = skyridingFrame:CreateTexture(nil, "ARTWORK", nil, -1)
         glow:SetTexture(DOT_TEXTURE)
         glow:SetBlendMode("ADD")
@@ -458,7 +386,6 @@ local function CreateSkyridingFrame()
         glow:SetVertexColor(1, 0.8, 0.2, 0.5)
         glow:Hide()
 
-        -- Main pip (circular)
         local pip = skyridingFrame:CreateTexture(nil, "OVERLAY")
         pip:SetTexture(DOT_TEXTURE)
         pip:SetSize(6, 6)
@@ -468,7 +395,6 @@ local function CreateSkyridingFrame()
         secondWindPips[i] = pip
     end
 
-    -- Second Wind mini bar (alternative display) with full visual treatment
     secondWindMiniBar = CreateFrame("StatusBar", nil, skyridingFrame)
     secondWindMiniBar:SetHeight(6)
     secondWindMiniBar:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
@@ -484,12 +410,10 @@ local function CreateSkyridingFrame()
         swMarkerOverlay:SetIgnoreParentScale(false)
     end
 
-    -- Second Wind background
     swBackground = secondWindMiniBar:CreateTexture(nil, "BACKGROUND")
     swBackground:SetAllPoints(secondWindMiniBar)
     swBackground:SetColorTexture(0.1, 0.1, 0.1, 0.8)
 
-    -- Second Wind border
     swBorder = CreateFrame("Frame", nil, secondWindMiniBar, "BackdropTemplate")
     QUICore:SetPixelPerfectPoint(swBorder, "TOPLEFT", secondWindMiniBar, "TOPLEFT", -1, 1)
     QUICore:SetPixelPerfectPoint(swBorder, "BOTTOMRIGHT", secondWindMiniBar, "BOTTOMRIGHT", 1, -1)
@@ -498,7 +422,6 @@ local function CreateSkyridingFrame()
     swBorder:SetFrameLevel(secondWindMiniBar:GetFrameLevel() + 4)
     if swBorder.Center then swBorder.Center:Hide() end
 
-    -- Second Wind segment markers (up to 5)
     for i = 1, 5 do
         local marker = swMarkerOverlay:CreateTexture(nil, "OVERLAY", nil, 4)
         marker:SetTexture("Interface\\Buttons\\WHITE8x8")
@@ -510,48 +433,41 @@ local function CreateSkyridingFrame()
         swSegmentMarkers[i] = marker
     end
 
-    -- Second Wind recharge overlay (shows progress within current charging segment)
     swRechargeOverlay = secondWindMiniBar:CreateTexture(nil, "OVERLAY")
     swRechargeOverlay:SetTexture("Interface\\Buttons\\WHITE8x8")
-    swRechargeOverlay:SetVertexColor(1, 0.9, 0.4, 0.6)  -- Slightly brighter gold
+    swRechargeOverlay:SetVertexColor(1, 0.9, 0.4, 0.6)
     swRechargeOverlay:SetHeight(6)
     swRechargeOverlay:Hide()
 
-    -- Whirling Surge ability icon (right side of bar)
     abilityIcon = CreateFrame("Frame", nil, skyridingFrame)
     abilityIcon:SetSize(height, height)
     abilityIcon:SetPoint("LEFT", skyridingFrame, "RIGHT", 2, 0)
 
-    -- Icon texture
     abilityIcon.texture = abilityIcon:CreateTexture(nil, "ARTWORK")
     abilityIcon.texture:SetAllPoints()
     local iconTexture = C_Spell.GetSpellTexture(WHIRLING_SURGE_SPELL_ID)
     abilityIcon.texture:SetTexture(iconTexture or 136116)
     abilityIcon.texture:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
-    -- Border (1px black, extends beyond icon)
     abilityIcon.border = CreateFrame("Frame", nil, abilityIcon, "BackdropTemplate")
     QUICore:SetPixelPerfectPoint(abilityIcon.border, "TOPLEFT", abilityIcon, "TOPLEFT", -1, 1)
     QUICore:SetPixelPerfectPoint(abilityIcon.border, "BOTTOMRIGHT", abilityIcon, "BOTTOMRIGHT", 1, -1)
     QUICore:SetPixelPerfectBackdrop(abilityIcon.border, 1, nil, 0, 0, 0, 1)
     if abilityIcon.border.Center then abilityIcon.border.Center:Hide() end
 
-    -- Cooldown overlay
     abilityIconCooldown = CreateFrame("Cooldown", nil, abilityIcon, "CooldownFrameTemplate")
     abilityIconCooldown:SetAllPoints(abilityIcon.texture)
     abilityIconCooldown:SetDrawEdge(true)
     abilityIconCooldown:SetHideCountdownNumbers(false)
 
-    -- Apply QUI font to cooldown text (deferred to ensure template is initialized)
     C_Timer.After(0, function()
         ApplyCooldownFont(abilityIconCooldown, 12)
     end)
 
-    abilityIcon:Hide()  -- Hidden until skyriding
+    abilityIcon:Hide()
 
-    -- Make draggable when unlocked
     skyridingFrame:SetMovable(true)
-    skyridingFrame:EnableMouse(false)  -- Disabled by default (locked)
+    skyridingFrame:EnableMouse(false)
     skyridingFrame:RegisterForDrag("LeftButton")
     skyridingFrame:SetScript("OnDragStart", function(self)
         if _G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("skyriding") then return end
@@ -562,7 +478,6 @@ local function CreateSkyridingFrame()
     end)
     skyridingFrame:SetScript("OnDragStop", function(self)
         self:StopMovingOrSizing()
-        -- Save position relative to UIParent center
         local settings = GetSettings()
         if settings then
             local centerX, centerY = self:GetCenter()
@@ -576,12 +491,6 @@ local function CreateSkyridingFrame()
     skyridingFrame:Hide()
 end
 
----------------------------------------------------------------------------
--- Shared segment-marker placement (vigor + Second Wind use identical math).
--- markers: array of marker textures; totalSlots: how many to iterate/hide.
--- segmentCount: number of charges (boundaries drawn for i < segmentCount).
--- ctx carries the precomputed pixel metrics and resolved marker color.
----------------------------------------------------------------------------
 local function PlaceSegmentMarkers(markers, totalSlots, segmentCount, showSegments, ctx)
     for i = 1, totalSlots do
         local marker = markers[i]
@@ -603,9 +512,6 @@ local function PlaceSegmentMarkers(markers, totalSlots, segmentCount, showSegmen
     end
 end
 
----------------------------------------------------------------------------
--- Update Segment Markers
----------------------------------------------------------------------------
 local function UpdateSegmentMarkers(maxCharges)
     local settings = GetSettings()
     if not settings or not skyridingFrame then return end
@@ -618,7 +524,6 @@ local function UpdateSegmentMarkers(maxCharges)
     local markerWidthPixels = math.max(1, math.min(barWidthPixels, thicknessPixels))
     local halfMarkerWidthPixels = math.floor(markerWidthPixels / 2)
 
-    -- Use soft colors: 30% of bar color instead of harsh black
     local barColor = settings.barColor or {0.2, 0.8, 1.0, 1}
     local softColor = {
         barColor[1] * 0.25,
@@ -640,21 +545,16 @@ local function UpdateSegmentMarkers(maxCharges)
 
 end
 
----------------------------------------------------------------------------
--- Update Second Wind Display
----------------------------------------------------------------------------
 local function UpdateSecondWind()
     local settings = GetSettings()
     if not settings or not skyridingFrame then return end
 
     local mode = settings.secondWindMode or "MINIBAR"
-    local current, max, _, _, _ = GetSecondWindInfo()  -- Ignore cooldown data here (used in recharge func)
+    local current, max, _, _, _ = GetSecondWindInfo()
 
-    -- Second Wind color (with class color support)
     local color
     if settings.useClassColorSecondWind then
         local _, class = UnitClass("player")
-        -- Probe FIRST — a secret class throws on the RAID_CLASS_COLORS index.
         -- @secret-policy: collapse-only — secondWindColor fallback below
         if Helpers.IsSecretValue(class) then class = nil end
         local classColor = class and RAID_CLASS_COLORS[class]
@@ -667,18 +567,15 @@ local function UpdateSecondWind()
         color = settings.secondWindColor or {1, 0.8, 0.2, 1}
     end
 
-    -- Hide all Second Wind elements first
     for i = 1, 5 do
         local pip = secondWindPips[i]
         pip:Hide()
         if pip.glow then pip.glow:Hide() end
-        -- Hide SW segment markers too
         if swSegmentMarkers[i] then swSegmentMarkers[i]:Hide() end
     end
     secondWindText:Hide()
     secondWindMiniBar:Hide()
 
-    -- If no Second Wind available, done
     if max == 0 then return end
 
     if mode == "PIPS" then
@@ -697,12 +594,10 @@ local function UpdateSecondWind()
             local pip = secondWindPips[i]
             local xPos = startX + ((i - 1) * (pipSize + pipGap))
 
-            -- Position main pip
             pip:ClearAllPoints()
             pip:SetPoint("BOTTOM", skyridingFrame, "TOP", xPos + (pipSize / 2), 3)
             pip:SetSize(pipSize, pipSize)
 
-            -- Position glow behind pip
             if pip.glow then
                 pip.glow:ClearAllPoints()
                 pip.glow:SetPoint("CENTER", pip, "CENTER", 0, 0)
@@ -710,7 +605,6 @@ local function UpdateSecondWind()
             end
 
             if i <= current then
-                -- Active: bright gold with glow
                 pip:SetVertexColor(color[1], color[2], color[3], color[4] or 1)
                 pip:Show()
                 if pip.glow then
@@ -718,7 +612,6 @@ local function UpdateSecondWind()
                     pip.glow:Show()
                 end
             else
-                -- Inactive: dim gray, no glow
                 pip:SetVertexColor(0.25, 0.25, 0.25, 0.5)
                 pip:Show()
                 if pip.glow then pip.glow:Hide() end
@@ -739,19 +632,16 @@ local function UpdateSecondWind()
         secondWindMiniBar:SetHeight(swHeight)
         secondWindMiniBar:SetMinMaxValues(0, max)
 
-        -- When charge completes: SNAP bar value (don't lerp)
         if current > lastSecondWind and lastSecondWind >= 0 then
             swCurrentValue = current / max
             secondWindMiniBar:SetValue(swCurrentValue * max)
         end
 
-        -- Set target for smooth animation (lerp only applies when NOT completing a charge)
         swTargetValue = current / max
         swMaxCharges = max
         secondWindMiniBar:SetStatusBarColor(color[1], color[2], color[3], color[4] or 1)
         secondWindMiniBar:Show()
 
-        -- Position segment markers for Second Wind
         local markerFrame = swMarkerOverlay or secondWindMiniBar or skyridingFrame
         local pixelContext = skyridingFrame or markerFrame
         local pixelSize, barWidthPixels = GetFramePixelMetrics(pixelContext)
@@ -777,35 +667,25 @@ local function UpdateSecondWind()
         })
 
     end
-    -- mode == "HIDDEN" does nothing (all hidden)
 
-    -- Track last value for snap detection
     lastSecondWind = current
 end
 
----------------------------------------------------------------------------
--- Update Vigor Bar
----------------------------------------------------------------------------
 local function UpdateVigorBar()
     local settings = GetSettings()
     if not settings or not skyridingFrame then return end
 
     local current, max, startTime, duration, modRate = GetVigorInfo()
 
-    -- Update segment markers if max changed
     if max ~= lastMaxCharges then
         UpdateSegmentMarkers(max)
         lastMaxCharges = max
     end
 
-    -- When charge completes: SNAP bar value (don't lerp) then flash
     if current > lastVigorCharges and lastVigorCharges >= 0 then
-        -- Snap the bar to include the completed segment immediately
-        -- (the recharge overlay already showed the progress visually)
         currentBarValue = current / max
         vigorBar:SetValue(currentBarValue)
 
-        -- Flash the completed segment
         if flashAnim and not flashAnim:IsPlaying() then
             local barWidth = skyridingFrame:GetWidth()
             local segmentWidth = barWidth / max
@@ -815,22 +695,19 @@ local function UpdateVigorBar()
             flashTexture:SetWidth(segmentWidth)
             flashTexture:SetHeight(skyridingFrame:GetHeight())
 
-            -- Use Thrill of the Skies color for flash if buff is active
             if ShouldUseThrillOfTheSkiesColor(settings) then
                 local thrillColor = settings.thrillOfTheSkiesColor
                 flashTexture:SetVertexColor(thrillColor[1], thrillColor[2], thrillColor[3], 0.5)
             else
-                flashTexture:SetVertexColor(1, 1, 1, 0.5)  -- Default white flash
+                flashTexture:SetVertexColor(1, 1, 1, 0.5)
             end
 
             flashAnim:Play()
         end
     end
 
-    -- Set target for smooth animation (lerp only applies when NOT completing a charge)
     targetBarValue = current / max
 
-    -- Update vigor text
     if settings.showVigorText ~= false then
         local format = settings.vigorTextFormat or "FRACTION"
         if format == "FRACTION" then
@@ -846,33 +723,26 @@ local function UpdateVigorBar()
     lastVigorCharges = current
 end
 
----------------------------------------------------------------------------
--- Update Recharge Animation
----------------------------------------------------------------------------
 local function UpdateRechargeAnimation(settings)
     settings = settings or GetSettings()
     if not settings or not skyridingFrame then return end
 
     local current, max, startTime, duration, modRate = GetVigorInfo()
 
-    -- If fully charged, hide overlay
     if current >= max or duration == 0 then
         rechargeOverlay:Hide()
         return
     end
 
-    -- Calculate progress of current charge
     local now = GetTime()
     local elapsedTime = (now - startTime) * modRate
     local progress = math.min(1, elapsedTime / duration)
 
-    -- Position recharge overlay within the current segment
     local barWidth = skyridingFrame:GetWidth()
     local segmentWidth = barWidth / max
     local segmentStart = current * segmentWidth
     local fillWidth = math.max(1, progress * segmentWidth)
 
-    -- Use Thrill of the Skies color for recharge if buff is active
     local red, green, blue, alpha = GetRechargeOverlayColor(settings)
 
     rechargeOverlay:ClearAllPoints()
@@ -880,20 +750,15 @@ local function UpdateRechargeAnimation(settings)
     rechargeOverlay:SetWidth(fillWidth)
     rechargeOverlay:SetHeight(skyridingFrame:GetHeight())
 
-    -- Pulse alpha for visual feedback
     local pulse = 0.7 + 0.3 * math.sin(now * 4)
     rechargeOverlay:SetVertexColor(red, green, blue, alpha * pulse)
     rechargeOverlay:Show()
 end
 
----------------------------------------------------------------------------
--- Update Second Wind Recharge Animation
----------------------------------------------------------------------------
 local function UpdateSecondWindRecharge(settings)
     settings = settings or GetSettings()
     if not settings or not secondWindMiniBar or not swRechargeOverlay then return end
 
-    -- Only show for MINIBAR mode
     local mode = settings.secondWindMode or "MINIBAR"
     if mode ~= "MINIBAR" then
         swRechargeOverlay:Hide()
@@ -902,29 +767,24 @@ local function UpdateSecondWindRecharge(settings)
 
     local current, max, startTime, duration, modRate = GetSecondWindInfo()
 
-    -- If no Second Wind available, fully charged, or not recharging, hide overlay
     if max == 0 or current >= max or duration == 0 then
         swRechargeOverlay:Hide()
         return
     end
 
-    -- Calculate progress of current charge
     local now = GetTime()
     local elapsedTime = (now - startTime) * modRate
     local progress = math.min(1, elapsedTime / duration)
 
-    -- Position recharge overlay within the current segment
     local barWidth = secondWindMiniBar:GetWidth()
     local barHeight = secondWindMiniBar:GetHeight()
     local segmentWidth = barWidth / max
     local segmentStart = current * segmentWidth
     local fillWidth = math.max(1, progress * segmentWidth)
 
-    -- Use SW color (with class color support)
     local color
     if settings.useClassColorSecondWind then
         local _, class = UnitClass("player")
-        -- Probe FIRST — a secret class throws on the RAID_CLASS_COLORS index.
         -- @secret-policy: collapse-only — gold fallback below
         if Helpers.IsSecretValue(class) then class = nil end
         local classColor = class and RAID_CLASS_COLORS[class]
@@ -934,7 +794,7 @@ local function UpdateSecondWindRecharge(settings)
             color = {1, 0.9, 0.4, 0.6}
         end
     else
-        color = {1, 0.9, 0.4, 0.6}  -- Slightly brighter gold
+        color = {1, 0.9, 0.4, 0.6}
     end
 
     swRechargeOverlay:ClearAllPoints()
@@ -942,15 +802,11 @@ local function UpdateSecondWindRecharge(settings)
     swRechargeOverlay:SetWidth(fillWidth)
     swRechargeOverlay:SetHeight(barHeight)
 
-    -- Pulse alpha for visual feedback
     local pulse = 0.7 + 0.3 * math.sin(now * 4)
     swRechargeOverlay:SetVertexColor(color[1], color[2], color[3], color[4] * pulse)
     swRechargeOverlay:Show()
 end
 
----------------------------------------------------------------------------
--- Update Speed Display
----------------------------------------------------------------------------
 local function UpdateSpeed(settings)
     settings = settings or GetSettings()
     if not settings or not skyridingFrame then return end
@@ -973,29 +829,22 @@ local function UpdateSpeed(settings)
     speedText:Show()
 end
 
----------------------------------------------------------------------------
--- Update Ability Icon (Whirling Surge)
----------------------------------------------------------------------------
 local function UpdateAbilityIcon()
     if not abilityIcon or not abilityIconCooldown then return end
 
     local settings = GetSettings()
     if not settings then return end
 
-    -- Check if ability icon is enabled (default true)
     if settings.showAbilityIcon == false then
         abilityIcon:Hide()
         return
     end
 
-    -- Only show when skyriding is available
-    -- Don't hide directly - let the parent frame's fade animation handle it
     local _, canGlideNow, _ = GetGlidingInfo()
     if not canGlideNow then
-        return  -- Skip update, fade animation controls visibility
+        return
     end
 
-    -- Calculate icon height to span both bars and center vertically
     local vigorHeight = settings.vigorHeight or 20
     local swHeight = settings.secondWindHeight or 20
     local swMode = settings.secondWindMode or "MINIBAR"
@@ -1004,8 +853,8 @@ local function UpdateAbilityIcon()
     local totalHeight = vigorHeight
     local yOffset = 0
     if swMode == "MINIBAR" and swMax > 0 then
-        totalHeight = vigorHeight + 2 + swHeight  -- 2px gap between bars
-        yOffset = -(2 + swHeight) / 2  -- Shift down to center on both bars
+        totalHeight = vigorHeight + 2 + swHeight
+        yOffset = -(2 + swHeight) / 2
     end
     abilityIcon:SetSize(totalHeight, totalHeight)
     abilityIcon:ClearAllPoints()
@@ -1019,9 +868,6 @@ local function UpdateAbilityIcon()
     abilityIcon:Show()
 end
 
----------------------------------------------------------------------------
--- Fade Animation (matches CDM/unitframes pattern)
----------------------------------------------------------------------------
 local function StartSkyridingFade(targetAlpha)
     if not skyridingFrame then return end
 
@@ -1033,14 +879,10 @@ local function StartSkyridingFade(targetAlpha)
     fadeTargetAlpha = targetAlpha
 end
 
----------------------------------------------------------------------------
--- Update Visibility
----------------------------------------------------------------------------
 local function UpdateVisibility()
     local settings = GetSettings()
     if not settings or not skyridingFrame then return end
 
-    -- Don't hide during preview mode
     if isPreviewMode then return end
 
     if not settings.enabled then
@@ -1060,7 +902,6 @@ local function UpdateVisibility()
     local visibility = settings.visibility or "FLYING_ONLY"
     local fadeDelay = settings.fadeDelay or 1
 
-    -- Hide when in combat with secret values (API limitation)
     if inCombat and canGlideNow then
         local current, max = GetVigorInfo()
         if current == 0 and max == 6 then
@@ -1083,11 +924,9 @@ local function UpdateVisibility()
 
     elseif visibility == "AUTO" then
         if isGliding then
-            -- Flying - show immediately (no fade)
             groundedTime = 0
-            fadeStart = 0  -- Cancel any fade in progress
+            fadeStart = 0
             skyridingFrame:SetAlpha(1)
-            -- Reset icon alpha (may have been faded)
             if abilityIcon then
                 abilityIcon:SetAlpha(1)
                 if abilityIconCooldown then
@@ -1096,7 +935,6 @@ local function UpdateVisibility()
             end
             skyridingFrame:Show()
         elseif canGlideNow then
-            -- Can fly but grounded - fade after delay
             if groundedTime >= fadeDelay then
                 StartSkyridingFade(0)
             else
@@ -1104,15 +942,11 @@ local function UpdateVisibility()
                 StartSkyridingFade(1)
             end
         else
-            -- Cannot fly here
             StartSkyridingFade(0)
         end
     end
 end
 
----------------------------------------------------------------------------
--- Apply All Settings
----------------------------------------------------------------------------
 local function ApplySettings()
     local settings = GetSettings()
     if not skyridingFrame then
@@ -1129,8 +963,6 @@ local function ApplySettings()
     local offsetY = settings.offsetY or 135
     local locked = settings.locked ~= false
 
-    -- Keep existing slider semantics (width/height are UI units, not physical pixels).
-    -- Divider math handles pixel snapping independently.
     skyridingFrame:SetSize(width, height)
     if not (_G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("skyriding")) then
         skyridingFrame:ClearAllPoints()
@@ -1141,7 +973,6 @@ local function ApplySettings()
         end
     end
 
-    -- Apply HUD layer priority
     local db = QUICore and QUICore.db and QUICore.db.profile
     local layerPriority = db and db.hudLayering and db.hudLayering.skyridingHUD or 5
     if QUICore and QUICore.GetHUDFrameLevel then
@@ -1165,10 +996,8 @@ local function ApplySettings()
         swMarkerOverlay:SetFrameLevel(secondWindMiniBar:GetFrameLevel() + 2)
     end
 
-    -- Draggable state
     skyridingFrame:EnableMouse(not locked)
 
-    -- Bar texture
     local textureName = settings.barTexture or "Quazii v4"
     local texturePath = LSM:Fetch("statusbar", textureName) or "Interface\\Buttons\\WHITE8x8"
     vigorBar:SetStatusBarTexture(texturePath)
@@ -1178,46 +1007,37 @@ local function ApplySettings()
 
     RefreshThrillOfTheSkiesBuffState()
 
-    -- Bar colors (with class color support and Thrill of the Skies buff)
     local barColor = GetVigorBarColor(settings)
     vigorBar:SetStatusBarColor(barColor[1], barColor[2], barColor[3], barColor[4] or 1)
 
-    -- Background color
     local bgColor = settings.backgroundColor or {0.102, 0.102, 0.102, 0.353}
     vigorBackground:SetColorTexture(bgColor[1], bgColor[2], bgColor[3], bgColor[4] or 0.8)
 
-    -- Second Wind background color (separate setting)
     local swBgColor = settings.secondWindBackgroundColor or bgColor
     if swBackground then
         swBackground:SetColorTexture(swBgColor[1], swBgColor[2], swBgColor[3], swBgColor[4] or 0.8)
     end
 
-    -- Border
     local borderSize = settings.borderSize or 1
     local bR, bG, bB, bA = Helpers.GetSkinBorderColor(settings, "")
     QUICore:SetPixelPerfectBackdrop(skyridingFrame.border, borderSize, nil, bR, bG, bB, bA)
     if skyridingFrame.border.Center then skyridingFrame.border.Center:Hide() end
 
-    -- Recharge overlay height
     rechargeOverlay:SetHeight(height)
 
-    -- Font sizes
     local vigorFontSize = settings.vigorFontSize or 11
     local speedFontSize = settings.speedFontSize or 11
     local fontPath = Helpers.GetGeneralFont()
     CJKFont(vigorText, fontPath, vigorFontSize, "OUTLINE")
     CJKFont(speedText, fontPath, speedFontSize, "OUTLINE")
 
-    -- Refresh ability icon cooldown font
     if abilityIconCooldown then
         ApplyCooldownFont(abilityIconCooldown, vigorFontSize)
     end
 
-    -- Update segment markers
     local _, max = GetVigorInfo()
     UpdateSegmentMarkers(max)
 
-    -- Update all displays
     UpdateVigorBar()
     UpdateRechargeAnimation()
     UpdateSecondWind()
@@ -1226,9 +1046,6 @@ local function ApplySettings()
     UpdateVisibility()
 end
 
----------------------------------------------------------------------------
--- OnUpdate Handler (Throttled)
----------------------------------------------------------------------------
 local function OnUpdate(self, delta)
     elapsed = elapsed + delta
     if elapsed < UPDATE_THROTTLE then return end
@@ -1236,19 +1053,15 @@ local function OnUpdate(self, delta)
 
     local settings = GetSettings()
     if not settings or not settings.enabled then
-        -- Still allow preview mode even when disabled
         if not isPreviewMode then return end
     end
 
-    -- Skip data-driven updates in preview mode
     if isPreviewMode then return end
 
-    -- Track grounded time for auto-fade
     local gliding, canGlideNow, _ = GetGlidingInfo()
     if not gliding and canGlideNow then
         local prevGroundedTime = groundedTime
         groundedTime = groundedTime + UPDATE_THROTTLE
-        -- Re-evaluate visibility once grounded time crosses the fade delay threshold
         local fadeDelay = settings.fadeDelay or 1
         if prevGroundedTime < fadeDelay and groundedTime >= fadeDelay then
             _visibilityDirty = true
@@ -1257,31 +1070,25 @@ local function OnUpdate(self, delta)
         groundedTime = 0
     end
 
-    -- Smooth bar animation (lerp toward target)
     if currentBarValue ~= targetBarValue then
         local diff = targetBarValue - currentBarValue
         if math.abs(diff) < 0.005 then
-            -- Snap when very close
             currentBarValue = targetBarValue
         else
-            -- Smooth interpolation
             currentBarValue = currentBarValue + diff * LERP_SPEED * UPDATE_THROTTLE
         end
         vigorBar:SetValue(currentBarValue)
     end
 
-    -- Time-based fade animation (matches CDM/unitframes pattern)
     if fadeStart > 0 then
         local now = GetTime()
         local elapsedTime = now - fadeStart
         local fadeDuration = settings.fadeDuration or 0.3
         local progress = math.min(elapsedTime / fadeDuration, 1)
 
-        -- Linear interpolation
         local alpha = fadeStartAlpha + (fadeTargetAlpha - fadeStartAlpha) * progress
         skyridingFrame:SetAlpha(alpha)
 
-        -- Explicitly fade icon components (CooldownFrameTemplate may not inherit parent alpha)
         if abilityIcon then
             abilityIcon:SetAlpha(alpha)
             if abilityIconCooldown then
@@ -1289,29 +1096,24 @@ local function OnUpdate(self, delta)
             end
         end
 
-        -- Check if fade complete
         if progress >= 1 then
-            fadeStart = 0  -- Stop fading
+            fadeStart = 0
             if fadeTargetAlpha < 0.01 then
                 skyridingFrame:Hide()
             end
         end
     end
 
-    -- Smooth Second Wind bar animation (lerp toward target)
     if swCurrentValue ~= swTargetValue and swMaxCharges > 0 then
         local diff = swTargetValue - swCurrentValue
         if math.abs(diff) < 0.005 then
-            -- Snap when very close
             swCurrentValue = swTargetValue
         else
-            -- Smooth interpolation
             swCurrentValue = swCurrentValue + diff * LERP_SPEED * UPDATE_THROTTLE
         end
         secondWindMiniBar:SetValue(swCurrentValue * swMaxCharges)
     end
 
-    -- Data-driven updates: only run when corresponding event set the dirty flag
     if _vigorDirty then
         _vigorDirty = false
         UpdateVigorBar()
@@ -1329,26 +1131,17 @@ local function OnUpdate(self, delta)
         UpdateVisibility()
     end
 
-    -- Animation-driven updates: must run every tick for smooth visuals.
-    -- Thread the settings we already fetched above so these helpers don't each
-    -- re-walk the profile chain on every tick.
     UpdateRechargeAnimation(settings)
     UpdateSecondWindRecharge(settings)
     UpdateSpeed(settings)
 
 end
 
----------------------------------------------------------------------------
--- World/Zone Refresh
----------------------------------------------------------------------------
--- Forward declaration; EnsureSkyridingFrame is defined below after
--- ScheduleSkyridingWorldRefresh so it has access to ApplySettings/OnUpdate.
 local EnsureSkyridingFrame
 
 local function RefreshSkyridingState()
     groundedTime = 0
     fadeStart = 0
-    -- Force marker recalculation on next UpdateVigorBar.
     lastMaxCharges = -1
 
     _vigorDirty = true
@@ -1356,8 +1149,6 @@ local function RefreshSkyridingState()
     _abilityDirty = true
     _visibilityDirty = true
 
-    -- Lazy-init guard: PEW into a glide-capable zone (e.g. logging back in
-    -- where the player can already glide) may not fire PLAYER_CAN_GLIDE_CHANGED.
     if not skyridingFrame then
         local _, canGlideNow = GetGlidingInfo()
         if canGlideNow and EnsureSkyridingFrame then
@@ -1385,11 +1176,6 @@ local function ScheduleSkyridingWorldRefresh(delay)
     end)
 end
 
--- Lazy frame creation. Skyriding allocates ~7 frames + 20 textures up front;
--- non-skyriding characters never need them. This is invoked from the first
--- event that proves the player is in a glide-capable context (or from preview
--- mode). ApplySettings creates the frame when missing; we then attach OnUpdate.
--- Assigns to the forward-declared local above RefreshSkyridingState.
 function EnsureSkyridingFrame()
     if skyridingFrame then return true end
 
@@ -1403,11 +1189,6 @@ function EnsureSkyridingFrame()
     return true
 end
 
----------------------------------------------------------------------------
--- External HUD Integration
--- Hook a third-party fullscreen HUD frame so we can yield to it without
--- polling. The external frame hides our skyriding display while visible.
----------------------------------------------------------------------------
 local function TryHookFarmHud()
     if farmHudHooked then return end
     local externalFrame = _G.FarmHud
@@ -1424,9 +1205,6 @@ local function TryHookFarmHud()
     farmHudHooked = true
 end
 
----------------------------------------------------------------------------
--- Event Handling
----------------------------------------------------------------------------
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
@@ -1440,27 +1218,21 @@ eventFrame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
 eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 eventFrame:RegisterEvent("UI_SCALE_CHANGED")
-eventFrame:RegisterUnitEvent("UNIT_AURA", "player")  -- Only player auras (Thrill of the Skies buff)
+eventFrame:RegisterUnitEvent("UNIT_AURA", "player")
 
 eventFrame:SetScript("OnEvent", function(self, event, arg1)
     if event == "ADDON_LOADED" then
         if arg1 ~= ADDON_NAME then return end
         self:UnregisterEvent("ADDON_LOADED")
-        -- Frame creation is deferred to the first PLAYER_CAN_GLIDE_CHANGED
-        -- (truthy) or preview-mode entry. Non-skyriding characters never
-        -- allocate the ~27 frame/texture objects.
     elseif event == "PLAYER_ENTERING_WORLD" then
         TryHookFarmHud()
         RefreshSkyridingState()
-        -- Loading screens can briefly preserve the pre-instance mount/glide state.
-        -- Recheck once Blizzard has finished updating player movement state.
         ScheduleSkyridingWorldRefresh(0.75)
     elseif event == "ZONE_CHANGED_NEW_AREA" or event == "PLAYER_MOUNT_DISPLAY_CHANGED" then
         RefreshSkyridingState()
     elseif event == "PLAYER_CAN_GLIDE_CHANGED" then
         canGlide = arg1
         if arg1 then EnsureSkyridingFrame() end
-        -- Must call directly: OnUpdate doesn't fire when frame is hidden
         if skyridingFrame then UpdateVisibility() end
     elseif event == "PLAYER_IS_GLIDING_CHANGED" then
         isGliding = arg1
@@ -1479,20 +1251,12 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
         inCombat = false
         if skyridingFrame then UpdateVisibility() end
     elseif event == "UI_SCALE_CHANGED" then
-        -- UI scale can be finalized after ADDON_LOADED/PLAYER_ENTERING_WORLD.
-        -- Defer one tick so all handlers apply scale first, then re-run full layout.
         C_Timer.After(0, function()
             if not skyridingFrame then return end
             lastMaxCharges = -1
             ApplySettings()
         end)
     elseif event == "UNIT_AURA" then
-        -- Player-only registration (:1414) — never read the payload unit
-        -- (arg1 here); the C-level filter already restricts delivery to
-        -- "player". PTR 68569 marks UNIT_AURA event-wide
-        -- SecretWhenAurasRestricted, so arg1 may arrive as an opaque
-        -- secret value in combat; updateInfo is never consumed by this
-        -- branch so no probe is needed for it.
         local settings = GetSettings()
         if not settings or settings.enabled == false then
             return
@@ -1504,7 +1268,6 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
             return
         end
 
-        -- Update colors only when Thrill state changes.
         if skyridingFrame and vigorBar then
             local barColor = GetVigorBarColor(settings)
             vigorBar:SetStatusBarColor(barColor[1], barColor[2], barColor[3], barColor[4] or 1)
@@ -1519,9 +1282,6 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
     end
 end)
 
--- LOD catch-up: first PEW already fired before this module loads.
--- ns.WhenLoggedIn is nil only in the headless test harness, where the old
--- never-firing PEW registration was equally inert.
 if ns.WhenLoggedIn then
     ns.WhenLoggedIn(function()
         TryHookFarmHud()
@@ -1530,9 +1290,6 @@ if ns.WhenLoggedIn then
     end)
 end
 
----------------------------------------------------------------------------
--- Toggle Preview Mode (for Unlock/Edit Mode)
----------------------------------------------------------------------------
 local function ToggleSkyridingPreview(enable)
     CreateSkyridingFrame()
     if not skyridingFrame then return end
@@ -1541,19 +1298,16 @@ local function ToggleSkyridingPreview(enable)
     isPreviewMode = enable
 
     if enable then
-        -- Show preview with simulated vigor data
         ApplySettings()
         skyridingFrame:SetAlpha(1)
         fadeStart = 0
 
-        -- Simulated bar: 3/6 charges (50% fill)
         vigorBar:SetMinMaxValues(0, 1)
         vigorBar:SetValue(0.5)
         currentBarValue = 0.5
         targetBarValue = 0.5
         UpdateSegmentMarkers(6)
 
-        -- Vigor text
         local settings = GetSettings()
         if settings and settings.showVigorText ~= false then
             local format = settings and settings.vigorTextFormat or "FRACTION"
@@ -1565,27 +1319,18 @@ local function ToggleSkyridingPreview(enable)
             vigorText:Show()
         end
 
-        -- Speed text
         if settings and settings.showSpeed then
             speedText:SetText("100%")
             speedText:Show()
         end
 
-        -- Hide recharge overlay in preview
         rechargeOverlay:Hide()
 
         skyridingFrame:Show()
     else
-        -- Exit preview
         local settings = GetSettings()
         if settings and settings.enabled then
-            -- Re-apply live state
             RefreshSkyridingState()
-            -- Instant hide on Layout Mode exit: RefreshSkyridingState resolves
-            -- the live visibility but expresses a hide as a fade-to-0, which
-            -- leaves the bar lingering as it fades. Cancel the in-progress fade
-            -- and snap straight to the resolved alpha so it disappears at once.
-            -- Normal gameplay fades (mount/dismount) are unaffected.
             fadeStart = 0
             skyridingFrame:SetAlpha(fadeTargetAlpha)
         else
@@ -1594,9 +1339,6 @@ local function ToggleSkyridingPreview(enable)
     end
 end
 
----------------------------------------------------------------------------
--- Global Refresh Function for GUI
----------------------------------------------------------------------------
 _G.QUI_RefreshSkyriding = ApplySettings
 _G.QUI_ToggleSkyridingPreview = ToggleSkyridingPreview
 
@@ -1609,9 +1351,6 @@ if ns.Registry then
     })
 end
 
----------------------------------------------------------------------------
--- Public API
----------------------------------------------------------------------------
 QUI.Skyriding = {
     Refresh = ApplySettings,
     Create = CreateSkyridingFrame,

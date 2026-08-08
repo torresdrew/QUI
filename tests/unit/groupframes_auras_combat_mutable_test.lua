@@ -18,6 +18,7 @@ local function readAll(path)
 end
 
 local src = readAll("QUI_GroupFrames/groupframes/groupframes_auras.lua")
+local coreSrc = readAll("core/aura_surface.lua")
 
 local function slice(marker)
     local startPos = src:find(marker, 1, true)
@@ -31,39 +32,51 @@ end
 local pass = slice("local function ApplyElementPass(frame, allowCreate)")
 
 -- CREATION is allowCreate-gated only — no combat condition (PTR7 68914).
-assert(pass:find("if allowCreate and CreateFrame then", 1, true),
-    "container creation must be gated on allowCreate only (combat-legal)")
-assert(not pass:find("allowCreate and not InCombatLockdown()", 1, true),
-    "no stale combat condition may remain on container creation")
-assert(pass:find('CreateFrame("AuraContainer", nil, frame, "CustomAuraContainerTemplate")', 1, true),
-    "creation uses the CustomAuraContainerTemplate")
+assert(not coreSrc:find("allowCreate and not InCombatLockdown()", 1, true),
+    "no stale combat condition may remain on container creation in core/aura_surface.lua")
+assert(coreSrc:find("if allowCreate and CreateFrame then", 1, true),
+    "core/aura_surface.lua must gate container creation on allowCreate only (combat-legal)")
+assert(coreSrc:find('CreateFrame("AuraContainer", nil, host, "CustomAuraContainerTemplate")', 1, true),
+    "core/aura_surface.lua creation uses the CustomAuraContainerTemplate")
+assert(pass:find("AuraSurface.ApplyElementPass(frame, elems, {", 1, true),
+    "ApplyElementPass must delegate the per-element pass to AuraSurface.ApplyElementPass")
+assert(pass:find("allowCreate = allowCreate == true,", 1, true),
+    "allowCreate must be forwarded through opts (combat-legal creation is core's responsibility now)")
 
 -- Container anchoring (SetPoint) runs unconditionally — proven combat-legal
 -- pre- and post-group registration; SetUnit likewise.
-assert(pass:find("AnchorElementContainer(container, frame, element)", 1, true),
-    "AnchorElementContainer runs on the pass")
-assert(not pass:find("InCombatLockdown() then\n                AnchorElementContainer", 1, true),
-    "container anchoring must not be combat-gated")
-assert(pass:find("container:SetUnit(unit)", 1, true),
-    "SetUnit is combat-legal mutation and runs unconditionally")
+assert(pass:find("anchorContainer = function(container, host, element)", 1, true)
+    and pass:find("AnchorElementContainer(container, host, element)", 1, true),
+    "AnchorElementContainer runs on the pass via the anchorContainer opts callback")
+assert(coreSrc:find("container:SetUnit(unit)", 1, true),
+    "SetUnit is a combat-legal mutation and runs unconditionally in core/aura_surface.lua")
 
 -- Group / slot reconcile flows through the shared core glue; the combat
 -- pcall(Configure)/Restyle fallback lives INSIDE AuraGlue.RunConfigPass, so
 -- this file just threads allowCreate through — it never pcalls Configure itself.
-assert(pass:find("AuraGlue.RunConfigPass(container, profile, groups, allowCreate)", 1, true),
-    "filter strips reconcile groups via AuraGlue.RunConfigPass(..., allowCreate)")
-assert(pass:find("AuraGlue.ElementGroups(unit, element, profile, false)", 1, true),
-    "filter strips build descriptors via AuraGlue.ElementGroups")
-assert(pass:find("AuraSlots.Sync(container, element, allowCreate, profileOverrides)", 1, true),
-    "tracked elements reconcile slots with the shared group-aura visual profile")
-assert(not pass:find("pcall(AuraSkin", 1, true),
-    "the combat Configure guard lives in core (AuraGlue.RunConfigPass), not here")
+assert(coreSrc:find("AuraGlue.RunConfigPass(container, profile, groups, allowCreate)", 1, true),
+    "core/aura_surface.lua reconciles filter-strip groups via AuraGlue.RunConfigPass(..., allowCreate)")
+assert(coreSrc:find("AuraGlue.ElementGroups(unit, element, profile, cancelEligible)", 1, true),
+    "core/aura_surface.lua builds filter-strip descriptors via AuraGlue.ElementGroups")
+assert(pass:find("cancelEligible = false,", 1, true),
+    "group frames hardcode cancelEligible false (no right-click cancel on group strips)")
+assert(coreSrc:find("AuraSlots.Sync(container, element, allowCreate, opts.profileOverrides)", 1, true),
+    "core/aura_surface.lua reconciles tracked slots with the forwarded opts.profileOverrides")
+assert(pass:find("profileOverrides = profileOverrides,", 1, true),
+    "ApplyElementPass must forward profileOverrides through opts so AuraSlots.Sync gets the group-aura visual profile")
+assert(not pass:find("pcall(AuraSkin", 1, true) and not coreSrc:find("pcall(AuraSkin", 1, true),
+    "the combat Configure guard lives in core (AuraGlue.RunConfigPass), not in either surface-glue layer")
 assert(not pass:find("AuraSkin.Reflow", 1, true),
     "AuraSkin.Reflow no longer exists")
 
 -- Skipped restricted work (secrecy-gated child access) queues a regen replay.
-assert(pass:find("QueueContainerCombatWork(frame)", 1, true),
-    "incomplete (restricted work skipped) must queue a regen replay")
+assert(pass:find("onIncomplete = QueueContainerCombatWork,", 1, true),
+    "incomplete (restricted work skipped) must queue a regen replay via the onIncomplete opts callback")
+
+assert(pass:find("onContainerReady = function(container, host)", 1, true)
+    and pass:find("if not InCombatLockdown() then", 1, true)
+    and pass:find("return container:GetFrameLevel() == desiredLevel", 1, true),
+    "the frame-level pass must be combat-gated via the onContainerReady opts callback")
 
 -- The public full-pass name survives (forward-declared) and always creates.
 assert(src:find("function ApplyStripContainers(frame)", 1, true),

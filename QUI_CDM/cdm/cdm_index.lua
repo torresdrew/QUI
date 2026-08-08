@@ -1,44 +1,5 @@
 local _, ns = ...
 
----------------------------------------------------------------------------
--- CDM Index — single source of truth for CDM spell-ID alias walking,
--- base-ID normalization, cross-event invalidation, and the
--- RefreshLayout silent-mutation gap.
---
--- Loads early in cdm.xml so every other CDM file can depend on it.
---
--- API:
---   ns.CDMIndex.ForEachCooldownInfoID(info, callback)
---     Walks overrideTooltipSpellID, overrideSpellID, spellID, then every
---     linkedSpellIDs[i]. Single canonical alias walk; every consumer
---     uses this so no field can be silently missed.
---
---   ns.CDMIndex.IsUsableID(id) -> bool
---     Returns false for nil, non-number, <= 0, or secret-tagged IDs.
---     Used as a key-validity gate at index-build time only — never on
---     a per-tick combat path.
---
---   ns.CDMIndex.ToBaseSpellID(id) -> baseID or nil
---     source-facade base spell lookup with raw-id fallback. Returns
---     nil if the input is not usable.
---
---   ns.CDMIndex.Get(spellID) -> entry or nil
---     entry = { cooldownID, category, primarySpellID, aliases = {} }.
---     Every aliased spellID for one cooldown returns the SAME entry
---     table (identity equality), so callers can compare entries with ==.
---
---   ns.CDMIndex.Version() -> number
---     Monotonic counter; increments on every wipe so consumers can
---     detect staleness.
---
---   ns.CDMIndex.Subscribe(name, callback, priority)
---   ns.CDMIndex.Unsubscribe(name)
---     Single broker for COOLDOWN_VIEWER_TABLE_HOTFIXED,
---     COOLDOWN_VIEWER_SPELL_OVERRIDE_UPDATED, COOLDOWN_VIEWER_DATA_LOADED,
---     and CooldownViewerSettings:RefreshLayout (no public event).
---     Subscribers fire in ascending priority order on each invalidation.
----------------------------------------------------------------------------
-
 local CDMIndex = {}
 ns.CDMIndex = CDMIndex
 
@@ -47,8 +8,6 @@ local pairs = pairs
 local type = type
 local wipe = wipe
 
--- issecretvalue is global on 12.0+. Stub when running outside WoW (the
--- profile test harness loads no CDM code, so this is defensive only).
 local issecretvalue = issecretvalue or function() return false end
 
 local function GetCooldownViewerAPI()
@@ -59,13 +18,7 @@ local function GetSources()
     return ns.CDMSources
 end
 
----------------------------------------------------------------------------
--- Helpers
----------------------------------------------------------------------------
-
 function CDMIndex.IsUsableID(id)
-    -- type() is secret-safe; `id == nil` is not (== on a secret throws), so
-    -- the nil case must ride the type check like CDMCatalog.IsUsableID.
     if type(id) ~= "number" then return false end
     if issecretvalue(id) then return false end -- @secret-policy: reject-secret-ids
     return id > 0
@@ -79,9 +32,6 @@ function CDMIndex.ToBaseSpellID(id)
     return base
 end
 
--- Centralized alias walk. Order matters for some callers (icon factory
--- probes overrideTooltipSpellID first as the "preferred display" ID);
--- preserve override -> tooltip -> spell -> linked.
 function CDMIndex.ForEachCooldownInfoID(info, callback)
     if not info then return end
     callback(info.overrideTooltipSpellID)
@@ -108,13 +58,9 @@ local function SelectPrimaryCooldownInfoID(info)
     return nil
 end
 
----------------------------------------------------------------------------
--- Index — populated lazily and on broker invalidation
----------------------------------------------------------------------------
-
-local _spellIndex = {}      -- baseID -> entry (entry shared across aliases)
-local _equipSlotIndex = {}  -- equipSlot luaIndex -> entry (item-only cooldowns)
-local _categoryIndex = {}   -- spellCategoryID -> entry (consumable cooldowns)
+local _spellIndex = {}
+local _equipSlotIndex = {}
+local _categoryIndex = {}
 local _version = 0
 local _built = false
 local _orderedSpellMap = nil
@@ -127,23 +73,17 @@ local _orderedMapsVersion = -1
 
 function CDMIndex.Version() return _version end
 
-local CATEGORIES_FOR_INDEX = nil  -- populated lazily once Enum is available
+local CATEGORIES_FOR_INDEX = nil
 
 local function GetIndexCategories()
     if CATEGORIES_FOR_INDEX then return CATEGORIES_FOR_INDEX end
     if not (Enum and Enum.CooldownViewerCategory) then return nil end
     local E = Enum.CooldownViewerCategory
-    -- Tracked first so they claim canonical entries before Essential/Utility
-    -- duplicates: the same spell can appear in Essential as a cooldown and
-    -- in TrackedBuff as its buff. The buff entry is the one consumers
-    -- usually want when they ask "what does this aura belong to".
     CATEGORIES_FOR_INDEX = {
         E.TrackedBuff,
         E.TrackedBar,
         E.Essential,
         E.Utility,
-        -- Equipped-item / spec-agnostic categories (12.x). nil on older clients;
-        -- the `if cat ~= nil` filter in Rebuild() drops any that are absent.
         E.SpecAgnosticTracked,
         E.SpecAgnosticEssential,
         E.EquipSlotTracked,
@@ -193,7 +133,7 @@ function CDMIndex.Rebuild()
                                 local entry = {
                                     cooldownID     = cdID,
                                     category       = cat,
-                                    primarySpellID = primaryBase,  -- nil for pure item cooldowns
+                                    primarySpellID = primaryBase,
                                     aliases        = {},
                                 }
                                 if primaryBase then
@@ -243,12 +183,6 @@ function CDMIndex.GetByCategory(spellCategoryID)
     return _categoryIndex[spellCategoryID]
 end
 
----------------------------------------------------------------------------
--- Broker — subscribers fire in ascending priority on every invalidation
----------------------------------------------------------------------------
-
--- Subscribers: { name = string, cb = function, priority = number }
--- Sorted on every insert; sweep on every notify.
 local _subs = {}
 
 local function SortSubs()
@@ -262,7 +196,6 @@ end
 
 function CDMIndex.Subscribe(name, callback, priority)
     if type(name) ~= "string" or type(callback) ~= "function" then return end
-    -- Replace if same name already subscribed (idempotent during reload-paths).
     for i = 1, #_subs do
         if _subs[i].name == name then
             _subs[i].cb = callback
@@ -284,11 +217,7 @@ function CDMIndex.Unsubscribe(name)
     end
 end
 
--- Reason is a short string ("hotfix", "override", "data_loaded",
--- "refresh_layout", "manual"). Subscribers may inspect it.
 local function Notify(reason, ...)
-    -- Wipe BEFORE notifying so subscribers' first lookup repopulates
-    -- with a coherent index. _built=false forces lazy rebuild on next Get.
     _built = false
     _version = _version + 1
     for i = 1, #_subs do
@@ -303,10 +232,6 @@ end
 
 CDMIndex.Notify = Notify
 
----------------------------------------------------------------------------
--- Event sources — fan out to the broker
----------------------------------------------------------------------------
-
 local _eventFrame = CreateFrame("Frame")
 _eventFrame:RegisterEvent("COOLDOWN_VIEWER_DATA_LOADED")
 _eventFrame:RegisterEvent("COOLDOWN_VIEWER_TABLE_HOTFIXED")
@@ -317,23 +242,10 @@ _eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
     elseif event == "COOLDOWN_VIEWER_TABLE_HOTFIXED" then
         Notify("hotfix")
     elseif event == "COOLDOWN_VIEWER_SPELL_OVERRIDE_UPDATED" then
-        -- arg1, arg2 = baseSpellID, overrideSpellID
         Notify("override", arg1, arg2)
     end
 end)
 
----------------------------------------------------------------------------
--- RefreshLayout silent-mutation hook
----------------------------------------------------------------------------
--- CDM's settings UI fires no public event for category drag-drop, and
--- programmatic SetCooldownToCategory calls are similarly silent. Both
--- routes go through CooldownViewerSettings:RefreshLayout. Hooking it
--- closes the gap so the broker invalidates on those mutations the same
--- as it does for hotfix / override events.
--- securecall the hook body: RefreshLayout fires mid settings-mutation (drag-drop /
--- SetCooldownToCategory), inside the same SettingsLayoutManager cascade that calls the
--- protected SetHiddenGroupBuffs. A bare post-hook leaks this addon's taint into
--- Blizzard's continuation -> secret-value throw + ADDON_ACTION_BLOCKED. Isolate it.
 local _securecall = securecallfunction or function(fn, ...) return fn(...) end
 local function _OnSettingsRefreshLayout() Notify("refresh_layout") end
 
@@ -357,37 +269,11 @@ _hookFrame:SetScript("OnEvent", function(self)
     end
 end)
 
----------------------------------------------------------------------------
--- Ordered map — what CDM is currently RENDERING (per the user's ordering
--- and visibility), as distinct from CDMIndex.Get above which answers
--- "what does CDM KNOW about" (incl. HiddenSpell / HiddenAura entries
--- the user has hidden).
---
--- Use ordered for icon-binding and overlay decisions ("is this cooldown
--- visible to the user right now?"). Use the index for spell-metadata
--- and override resolution ("does this cooldown exist at all?").
---
--- Returned spell map: baseID -> { cooldownID, category }. Item maps key by
--- equipSlot / spellCategoryID. Built fresh after each broker invalidation.
----------------------------------------------------------------------------
 local function BuildOrderedMaps()
     if _orderedSpellMap and _orderedMapsVersion == _version then
         return
     end
 
-    -- Cold-boot taint gate: consume Blizzard's settings data provider only
-    -- AFTER one of its own secure consumers has built the lazy displayData
-    -- cache. Every provider getter routes through CheckBuildDisplayData; if
-    -- QUI is the first caller after COOLDOWN_VIEWER_DATA_LOADED (the viewers
-    -- are still hidden on a cold login, so none of them is listening), QUI
-    -- execution builds the shared cooldownInfo/order tables -- QUI-tainted --
-    -- and the viewer's later secure RefreshData/GetCooldownIDs read poisons
-    -- the whole item mint: aura reads go secret, the DisallowTaintedAccess
-    -- aura map rejects registration, and every buff item is born inactive
-    -- until /reload (a SHOWN viewer rebuilds the cache securely first, which
-    -- is why /reload always healed). Read the memo fields RAW -- never via
-    -- the getters, which build -- and bail WITHOUT latching the version so
-    -- the next call retries once a shown viewer has built the cache.
     if CooldownViewerSettings and CooldownViewerSettings.GetDataProvider then
         local provider = CooldownViewerSettings:GetDataProvider()
         if provider and (provider.displayDataDirty or provider.displayData == nil) then
@@ -486,7 +372,6 @@ function CDMIndex.GetOrderedSpellMap()
     return _orderedSpellMap
 end
 
--- Convenience: return the ordered entry for a single spellID, or nil.
 function CDMIndex.GetOrdered(spellID)
     local base = CDMIndex.ToBaseSpellID(spellID)
     if not base then return nil end
@@ -511,13 +396,6 @@ function CDMIndex.GetOrderedForContainer(containerKey, spellID)
     BuildOrderedMaps()
     local byCategory = _orderedSpellMapByCategory and _orderedSpellMapByCategory[cat]
     return byCategory and byCategory[base] or nil
-end
-
--- Cheap "is this cooldown actually being rendered to the user right
--- now?" check used by overlay/binding decisions that should not act on
--- hidden cooldowns.
-function CDMIndex.IsRendered(spellID)
-    return CDMIndex.GetOrdered(spellID) ~= nil
 end
 
 function CDMIndex.GetOrderedByEquipSlot(equipSlot)

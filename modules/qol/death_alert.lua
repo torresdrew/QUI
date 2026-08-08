@@ -1,29 +1,13 @@
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 
----------------------------------------------------------------------------
--- GROUP DEATH ALERT (GRP-01)
---
--- On-screen text (+ optional sound) when a party/raid member dies.
---
--- Detection (12.x, CLEU-free): UNIT_HEALTH / UNIT_FLAGS for group units →
--- UnitIsDeadOrGhost(unit) — doc-verified PLAIN bool return (health VALUES
--- are secret in combat; death STATE is not). A false→true flip = death;
--- UnitIsFeignDeath (also plain bool) filters hunter feigns. State lives in
--- a token-keyed table; the alert renders on QUI's own frame (own-frame
--- SetText/Show are legal in combat). Names render secret-guarded (pcall +
--- IsSecretValue) with an "An ally died" fallback.
---
--- Sound via LSM:Fetch("sound") -> PlaySoundFile (the event_sounds path).
----------------------------------------------------------------------------
-
 local GetSettings = Helpers.CreateDBGetter("general")
 
-local ALERT_HOLD = 3 -- seconds the text stays up
+local ALERT_HOLD = 3
 
 local alertFrame, alertText
-local deadState = {}   -- unit token -> bool (last known dead state)
-local tracked = {}     -- unit token -> true
+local deadState = {}
+local tracked = {}
 local hideTimer = 0
 
 local function Cfg()
@@ -85,7 +69,6 @@ end
 local function ShowAlert(unit)
     EnsureFrame()
     ApplyPosition()
-    -- Secret-guarded name; fall back rather than leak or error.
     local who = ns.L["An ally"]
     local okName, name = pcall(UnitName, unit)
     name = Helpers.SafeValue(name)
@@ -105,10 +88,9 @@ local function CheckUnit(unit)
     dead = dead and true or false
 
     if dead and not deadState[unit] then
-        -- Skip feigns (plain bool, doc-verified).
         local okFeign, feign = pcall(UnitIsFeignDeath, unit)
         if okFeign and not Helpers.IsSecretValue(feign) and feign then
-            return -- leave deadState false; real death flips it later
+            return
         end
         deadState[unit] = true
         if Enabled() then ShowAlert(unit) end
@@ -130,7 +112,6 @@ local function RebuildRoster()
     for _, unit in ipairs(units) do
         if UnitExists(unit) then
             tracked[unit] = true
-            -- Seed current state so mid-fight joins of dead players don't alert.
             local okDead, dead = pcall(UnitIsDeadOrGhost, unit)
             deadState[unit] = (okDead and not Helpers.IsSecretValue(dead) and dead) and true or false
         end
@@ -138,7 +119,6 @@ local function RebuildRoster()
 end
 
 local frame = CreateFrame("Frame")
--- Literal RegisterEvent calls so tools/generate_event_allowlist.lua detects them.
 frame:RegisterEvent("GROUP_ROSTER_UPDATE")
 frame:RegisterEvent("PLAYER_ENTERING_WORLD")
 frame:RegisterEvent("UNIT_HEALTH")
@@ -156,7 +136,6 @@ ns.RefreshDeathAlert = function()
     if alertFrame then ApplyPosition() end
 end
 
--- Layout-mode preview.
 ns.ToggleDeathAlertPreview = function(show)
     EnsureFrame()
     ApplyPosition()
